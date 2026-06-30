@@ -1,7 +1,7 @@
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use std::path::{Path, PathBuf};
-use tracing::{info, error};
+use tracing::{error, info};
 
 pub struct SettingsApp {
     app: gtk::Application,
@@ -35,7 +35,11 @@ impl SettingsApp {
         self.app.run_with_args::<String>(&[]).into()
     }
 
-    fn activate_ui(app: &gtk::Application, menu_path: PathBuf, config_path: PathBuf) -> anyhow::Result<()> {
+    fn activate_ui(
+        app: &gtk::Application,
+        menu_path: PathBuf,
+        config_path: PathBuf,
+    ) -> anyhow::Result<()> {
         let window = gtk::ApplicationWindow::new(app);
         window.set_title(Some("Radial Launcher Settings"));
         window.set_default_size(800, 500);
@@ -106,7 +110,7 @@ impl SettingsApp {
 
         // Buttons under TreeView
         let btn_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-        
+
         let btn_add_item = gtk::Button::with_label("Add Item");
         let btn_add_sub = gtk::Button::with_label("Add Submenu");
         let btn_delete = gtk::Button::with_label("Delete");
@@ -172,10 +176,10 @@ impl SettingsApp {
 
         // Theme and Global settings Box
         let settings_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        
+
         let lbl_theme = gtk::Label::new(Some("Theme:"));
         let combo_theme = gtk::ComboBoxText::new();
-        
+
         // Populate available themes
         let themes = Self::get_available_themes(&config_path);
         for theme in &themes {
@@ -183,7 +187,7 @@ impl SettingsApp {
         }
         combo_theme.set_active_id(Some(&ui_config.ui.theme));
 
-        let lbl_extra_radius = gtk::Label::new(Some("Interactivity Margin (px):"));
+        let lbl_extra_radius = gtk::Label::new(Some("Active Margin (px):"));
         let spin_extra_radius = gtk::SpinButton::with_range(0.0, 300.0, 5.0);
         spin_extra_radius.set_value(ui_config.ui.extra_radius);
 
@@ -199,7 +203,7 @@ impl SettingsApp {
         btn_save.set_hexpand(true);
         btn_save.add_css_class("suggested-action");
         bottom_hbox.append(&btn_save);
-        
+
         right_vbox.append(&bottom_hbox);
         main_box.append(&right_vbox);
 
@@ -226,7 +230,7 @@ impl SettingsApp {
         let sel_icon = entry_icon.clone();
         let sel_type = combo_type.clone();
         let sel_cmd = entry_cmd.clone();
-        
+
         selection.connect_changed(move |sel| {
             if let Some((model, iter)) = sel.selected() {
                 let icon: String = model.get(&iter, 0);
@@ -289,7 +293,7 @@ impl SettingsApp {
                     (1, &"New Item".to_value()),
                     (2, &"exec".to_value()),
                     (3, &"".to_value()),
-                ]
+                ],
             );
             selection_add.select_iter(&new_iter);
         });
@@ -307,7 +311,7 @@ impl SettingsApp {
                     (1, &"New Submenu".to_value()),
                     (2, &"submenu".to_value()),
                     (3, &"".to_value()),
-                ]
+                ],
             );
             // Insert a dummy item to make it a subdirectory
             store_sub.insert_with_values(
@@ -318,7 +322,7 @@ impl SettingsApp {
                     (1, &"Placeholder Item".to_value()),
                     (2, &"exec".to_value()),
                     (3, &"".to_value()),
-                ]
+                ],
             );
             selection_sub.select_iter(&new_iter);
         });
@@ -381,7 +385,7 @@ impl SettingsApp {
                 };
                 cfg.ui.theme = theme_id.to_string();
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
-                
+
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();
                 if let Err(e) = std::fs::write(&config_path_save, content) {
@@ -400,7 +404,11 @@ impl SettingsApp {
                     .build()
                     .unwrap();
                 let _ = rt.block_on(async {
-                    let _ = launcher_ipc::send_message(&socket_path, &launcher_ipc::IpcMessage::ReloadConfig).await;
+                    let _ = launcher_ipc::send_message(
+                        &socket_path,
+                        &launcher_ipc::IpcMessage::ReloadConfig,
+                    )
+                    .await;
                 });
             }
         });
@@ -409,7 +417,11 @@ impl SettingsApp {
         Ok(())
     }
 
-    fn populate_store(store: &gtk::TreeStore, parent_iter: Option<&gtk::TreeIter>, items: &[launcher_core::MenuItem]) {
+    fn populate_store(
+        store: &gtk::TreeStore,
+        parent_iter: Option<&gtk::TreeIter>,
+        items: &[launcher_core::MenuItem],
+    ) {
         for item in items {
             let current_iter = store.insert_with_values(
                 parent_iter,
@@ -417,32 +429,41 @@ impl SettingsApp {
                 &[
                     (0, &item.icon.clone().unwrap_or_default().to_value()),
                     (1, &item.label.to_value()),
-                    (2, &match &item.action {
-                        Some(launcher_core::Action::Exec { .. }) => "exec".to_value(),
-                        Some(launcher_core::Action::Shell { .. }) => "shell".to_value(),
-                        None => {
-                            if item.children.is_empty() {
-                                "exec".to_value()
-                            } else {
-                                "submenu".to_value()
+                    (
+                        2,
+                        &match &item.action {
+                            Some(launcher_core::Action::Exec { .. }) => "exec".to_value(),
+                            Some(launcher_core::Action::Shell { .. }) => "shell".to_value(),
+                            None => {
+                                if item.children.is_empty() {
+                                    "exec".to_value()
+                                } else {
+                                    "submenu".to_value()
+                                }
                             }
-                        }
-                    }),
-                    (3, &match &item.action {
-                        Some(launcher_core::Action::Exec { cmd }) => cmd.to_value(),
-                        Some(launcher_core::Action::Shell { cmd }) => cmd.to_value(),
-                        None => "".to_value(),
-                    }),
-                ]
+                        },
+                    ),
+                    (
+                        3,
+                        &match &item.action {
+                            Some(launcher_core::Action::Exec { cmd }) => cmd.to_value(),
+                            Some(launcher_core::Action::Shell { cmd }) => cmd.to_value(),
+                            None => "".to_value(),
+                        },
+                    ),
+                ],
             );
-            
+
             if !item.children.is_empty() {
                 Self::populate_store(store, Some(&current_iter), &item.children);
             }
         }
     }
 
-    fn serialize_store(store: &gtk::TreeStore, parent_iter: Option<&gtk::TreeIter>) -> Vec<launcher_core::MenuItem> {
+    fn serialize_store(
+        store: &gtk::TreeStore,
+        parent_iter: Option<&gtk::TreeIter>,
+    ) -> Vec<launcher_core::MenuItem> {
         let mut items = vec![];
         let mut iter = if let Some(parent) = parent_iter {
             store.iter_children(Some(parent))
