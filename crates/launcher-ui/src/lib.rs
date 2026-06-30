@@ -261,7 +261,7 @@ impl LauncherApp {
 
         // Initialize state
         let state = Rc::new(RefCell::new(MenuState {
-            current_items: menu_config.menu,
+            current_items: menu_config.menu.clone(),
             history: vec![],
             hovered_index: None,
             is_opening: true,
@@ -600,24 +600,25 @@ impl LauncherApp {
                 let my = y - cy;
                 let dist = (mx * mx + my * my).sqrt();
 
-                // Center hub click - goes back in history if not at root
-                if dist < BASE_R && !state.history.is_empty() {
-                    if let Some(prev) = state.history.pop() {
-                        state.current_items = prev;
-                        state.hovered_index = None;
-                        if let Some(display) = gdk::Display::default() {
-                            state.preload_icons(&display);
-                        }
-                        area_clone_click.queue_draw();
-                    }
-                    return;
-                }
-
                 let display_items = state.get_display_items();
                 let display_items_count = display_items.len();
                 let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
+                let mut activated = false;
 
-                if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
+                // Center hub click - goes back in history if not at root
+                if dist < BASE_R {
+                    if !state.history.is_empty() {
+                        if let Some(prev) = state.history.pop() {
+                            state.current_items = prev;
+                            state.hovered_index = None;
+                            if let Some(display) = gdk::Display::default() {
+                                state.preload_icons(&display);
+                            }
+                            area_clone_click.queue_draw();
+                            activated = true;
+                        }
+                    }
+                } else if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
                     let mut angle = my.atan2(mx) + PI / 2.0;
                     if angle < 0.0 {
                         angle += 2.0 * PI;
@@ -628,10 +629,13 @@ impl LauncherApp {
 
                     if index < display_items_count {
                         activate_index(&mut state, index, &area_clone_click);
+                        activated = true;
                     }
-                } else if dist > max_interactive_dist {
-                    // Clicked outside completely
-                    debug!("Clicked outside menu bounds, closing");
+                }
+
+                if !activated {
+                    // Clicked outside active zones (outside max_interactive_dist or center hub when at root)
+                    debug!("Clicked outside active area, closing");
                     state.is_closing = true;
                     state.is_opening = false;
                 }
@@ -745,8 +749,9 @@ impl LauncherApp {
         // 10. Setup main context tick callback to drive open/close and hover lerps
         let tick_state = state.clone();
         let area_clone_tick = drawing_area.clone();
-        let window_clone = window.clone();
+        let window_clone_tick = window.clone();
         let last_frame_time = Rc::new(RefCell::new(None));
+        let menu_config_tick = menu_config.clone();
         
         drawing_area.add_tick_callback(move |_widget, frame_clock| {
             let mut state = tick_state.borrow_mut();
@@ -777,8 +782,16 @@ impl LauncherApp {
                 if state.open_progress <= 0.0 {
                     state.open_progress = 0.0;
                     state.is_closing = false;
-                    window_clone.close();
-                    return glib::ControlFlow::Break;
+                    window_clone_tick.hide();
+                    
+                    // Reset to root menu
+                    state.current_items = menu_config_tick.menu.clone();
+                    state.history.clear();
+                    state.hovered_index = None;
+                    if let Some(display) = gdk::Display::default() {
+                        state.preload_icons(&display);
+                    }
+                    return glib::ControlFlow::Continue;
                 }
                 needs_redraw = true;
             }
@@ -826,19 +839,62 @@ impl LauncherApp {
         let theme_provider_clone = theme_provider.clone();
         let config_path_clone = config_path.clone();
         let menu_path_clone = menu_path.clone();
-
+        let menu_config_ipc = menu_config.clone();
+ 
+        let window_clone_ipc = window.clone();
         glib::MainContext::default().spawn_local(async move {
             while let Some(msg) = ipc_rx.recv().await {
                 debug!("Received IPC message in UI thread: {:?}", msg);
                 match msg {
-                    IpcMessage::Close | IpcMessage::Toggle => {
-                        info!("Closing launcher via IPC request");
+                    IpcMessage::Toggle => {
+                        let is_visible = window_clone_ipc.is_visible();
                         let mut state = ipc_state.borrow_mut();
-                        state.is_closing = true;
-                        state.is_opening = false;
+                        if is_visible && !state.is_closing {
+                            info!("Hiding window via IPC Toggle");
+                            state.is_closing = true;
+                            state.is_opening = false;
+                        } else {
+                            info!("Showing window via IPC Toggle");
+                            state.current_items = menu_config_ipc.menu.clone();
+                            state.history.clear();
+                            state.hovered_index = None;
+                            if let Some(display) = gdk::Display::default() {
+                                state.preload_icons(&display);
+                            }
+                            state.is_opening = true;
+                            state.is_closing = false;
+                            state.open_progress = 0.0;
+                            drop(state);
+                            window_clone_ipc.present();
+                            area_clone_ipc.queue_draw();
+                        }
+                    }
+                    IpcMessage::Close => {
+                        let mut state = ipc_state.borrow_mut();
+                        if window_clone_ipc.is_visible() && !state.is_closing {
+                            info!("Hiding window via IPC Close");
+                            state.is_closing = true;
+                            state.is_opening = false;
+                        }
                     }
                     IpcMessage::Open => {
-                        info!("Launcher is already open (Open request ignored)");
+                        let is_visible = window_clone_ipc.is_visible();
+                        if !is_visible {
+                            info!("Showing window via IPC Open");
+                            let mut state = ipc_state.borrow_mut();
+                            state.current_items = menu_config_ipc.menu.clone();
+                            state.history.clear();
+                            state.hovered_index = None;
+                            if let Some(display) = gdk::Display::default() {
+                                state.preload_icons(&display);
+                            }
+                            state.is_opening = true;
+                            state.is_closing = false;
+                            state.open_progress = 0.0;
+                            drop(state);
+                            window_clone_ipc.present();
+                            area_clone_ipc.queue_draw();
+                        }
                     }
                     IpcMessage::ReloadConfig => {
                         info!("Reload config request received via IPC");
@@ -879,6 +935,13 @@ impl LauncherApp {
             }
         });
 
+        // Intercept close-request from compositor to hide window instead of destroying
+        window.connect_close_request(move |w| {
+            debug!("Close request received, hiding window instead");
+            w.hide();
+            glib::Propagation::Stop
+        });
+ 
         window.present();
         Ok(())
     }
