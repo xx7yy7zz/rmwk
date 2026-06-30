@@ -1,0 +1,18 @@
+[package]
+name = "launcher-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gtk4.workspace = true
+gdk4.workspace = true
+glib.workspace = true
+cairo-rs.workspace = true
+gtk4-layer-shell.workspace = true
+
+launcher-core.workspace = true
+launcher-ipc.workspace = true
+tokio.workspace = true
+
+anyhow.workspace = true
+tracing.workspace = true

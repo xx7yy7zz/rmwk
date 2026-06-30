@@ -1,0 +1,23 @@
+[package]
+name = "launcher-bin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "radial-launcher"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tokio.workspace = true
+glib.workspace = true
+
+launcher-core.workspace = true
+launcher-ipc.workspace = true
+launcher-ui.workspace = true
+launcher-settings-ui.workspace = true
+dirs.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

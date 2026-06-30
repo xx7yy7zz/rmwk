@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/launcher-core",
+    "crates/launcher-ipc",
+    "crates/launcher-ui",
+    "crates/launcher-settings-ui",
+    "crates/launcher-bin",
+]
+
+[workspace.dependencies]
+# GTK & Wayland
+gtk4 = { version = "0.11.4" }
+gdk4 = { version = "0.11.4" }
+glib = { version = "0.22.8" }
+cairo-rs = { version = "0.22.0", features = ["use_glib"] }
+gtk4-layer-shell = { version = "0.8.0" }
+
+# Serialization / Config
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+dirs = "5.0"
+
+# CLI & Async / IPC
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.40", features = ["full"] }
+
+# Utilities / Logging
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Internal workspace crates
+launcher-core = { path = "crates/launcher-core" }
+launcher-ipc = { path = "crates/launcher-ipc" }
+launcher-ui = { path = "crates/launcher-ui" }
+launcher-settings-ui = { path = "crates/launcher-settings-ui" }
