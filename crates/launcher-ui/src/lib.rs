@@ -174,10 +174,11 @@ pub struct LauncherApp {
     app: gtk::Application,
     menu_path: PathBuf,
     config_path: PathBuf,
+    start_hidden: bool,
 }
 
 impl LauncherApp {
-    pub fn new(menu_path: PathBuf, config_path: PathBuf) -> Self {
+    pub fn new(menu_path: PathBuf, config_path: PathBuf, start_hidden: bool) -> Self {
         let app = gtk::Application::builder()
             .application_id("org.radial_launcher.launcher")
             .build();
@@ -186,15 +187,17 @@ impl LauncherApp {
             app,
             menu_path,
             config_path,
+            start_hidden,
         }
     }
 
     pub fn run(&self) -> i32 {
         let menu_path = self.menu_path.clone();
         let config_path = self.config_path.clone();
+        let start_hidden = self.start_hidden;
 
         self.app.connect_activate(move |app| {
-            if let Err(e) = Self::activate_ui(app, menu_path.clone(), config_path.clone()) {
+            if let Err(e) = Self::activate_ui(app, menu_path.clone(), config_path.clone(), start_hidden) {
                 tracing::error!("Failed to activate UI: {}", e);
             }
         });
@@ -203,7 +206,7 @@ impl LauncherApp {
         self.app.run_with_args::<String>(&[]).into()
     }
 
-    fn activate_ui(app: &gtk::Application, menu_path: PathBuf, config_path: PathBuf) -> anyhow::Result<()> {
+    fn activate_ui(app: &gtk::Application, menu_path: PathBuf, config_path: PathBuf, start_hidden: bool) -> anyhow::Result<()> {
         // Load the menu config from disk
         let menu_config = match launcher_core::load_menu(&menu_path) {
             Ok(m) => m,
@@ -222,8 +225,11 @@ impl LauncherApp {
         window.set_keyboard_mode(KeyboardMode::Exclusive);
         window.set_exclusive_zone(-1);
 
-        // 2. Set dimensions and center
-        window.set_default_size(600, 600);
+        // 2. Anchor to all four edges so the transparent window spans the whole monitor
+        window.set_anchor(gtk4_layer_shell::Edge::Top, true);
+        window.set_anchor(gtk4_layer_shell::Edge::Bottom, true);
+        window.set_anchor(gtk4_layer_shell::Edge::Left, true);
+        window.set_anchor(gtk4_layer_shell::Edge::Right, true);
 
         // 3. Make window background transparent using CSS style provider
         let base_provider = gtk::CssProvider::new();
@@ -942,7 +948,21 @@ impl LauncherApp {
             glib::Propagation::Stop
         });
  
-        window.present();
+        if !start_hidden {
+            if let Ok(mut state_mut) = state.try_borrow_mut() {
+                state_mut.is_opening = true;
+                state_mut.is_closing = false;
+                state_mut.open_progress = 0.0;
+            }
+            window.present();
+        } else {
+            if let Ok(mut state_mut) = state.try_borrow_mut() {
+                state_mut.is_opening = false;
+                state_mut.is_closing = false;
+                state_mut.open_progress = 0.0;
+            }
+            window.hide();
+        }
         Ok(())
     }
 }

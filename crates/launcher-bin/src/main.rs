@@ -30,6 +30,8 @@ enum Commands {
     Settings,
     /// Reload config and themes of the running instance
     Reload,
+    /// Start the radial launcher daemon explicitly (starts hidden)
+    Daemon,
 }
 
 fn init_logging() {
@@ -146,7 +148,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             info!("Starting new launcher window...");
-            let app = launcher_ui::LauncherApp::new(menu_path, config_path);
+            let app = launcher_ui::LauncherApp::new(menu_path, config_path, false);
             let exit_code = app.run();
             if exit_code != 0 {
                 std::process::exit(exit_code);
@@ -179,6 +181,28 @@ fn main() -> anyhow::Result<()> {
                     error!("No running instance socket found at {:?}", socket_path);
                 }
             });
+        }
+        Commands::Daemon => {
+            let socket_path = launcher_ipc::get_socket_path();
+            if socket_path.exists() {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                let is_alive = rt.block_on(async {
+                    launcher_ipc::send_message(&socket_path, &IpcMessage::Open).await.is_ok()
+                });
+                if is_alive {
+                    error!("Daemon is already running!");
+                    std::process::exit(1);
+                }
+            }
+
+            info!("Starting radial launcher daemon...");
+            let app = launcher_ui::LauncherApp::new(menu_path, config_path, true);
+            let exit_code = app.run();
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
         }
     }
 
