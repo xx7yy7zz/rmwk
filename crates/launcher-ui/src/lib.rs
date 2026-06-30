@@ -32,6 +32,9 @@ struct MenuState {
     
     // Extra interactivity margin beyond slices
     extra_radius: f64,
+
+    // Material Symbols codepoints index
+    codepoints: HashMap<String, char>,
 }
 
 impl MenuState {
@@ -60,6 +63,9 @@ impl MenuState {
         let display_items = self.get_display_items();
         for item in &display_items {
             if let Some(icon_name) = &item.icon {
+                if self.codepoints.contains_key(icon_name) {
+                    continue;
+                }
                 if !self.icon_cache.contains_key(icon_name) {
                     let pixbuf = load_icon_pixbuf(display, icon_name, 24);
                     self.icon_cache.insert(icon_name.clone(), pixbuf);
@@ -245,6 +251,19 @@ impl LauncherApp {
         let theme_provider = gtk::CssProvider::new();
         load_and_apply_theme(&config_path, &theme_provider);
 
+        let font_path = config_path.parent()
+            .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
+            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/radial-launcher/fonts/MaterialSymbolsRounded.ttf"));
+        
+        let font_provider = gtk::CssProvider::new();
+        let font_css = format!("
+            @font-face {{
+                font-family: 'Material Symbols Rounded';
+                src: url('{}');
+            }}
+        ", font_path.to_string_lossy());
+        font_provider.load_from_data(&font_css);
+
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,
@@ -254,6 +273,11 @@ impl LauncherApp {
             gtk::style_context_add_provider_for_display(
                 &display,
                 &theme_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &font_provider,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
@@ -267,6 +291,8 @@ impl LauncherApp {
             }
         };
 
+        let codepoints = launcher_core::load_material_codepoints(&config_path);
+
         // Initialize state
         let state = Rc::new(RefCell::new(MenuState {
             current_items: menu_config.menu.clone(),
@@ -278,6 +304,7 @@ impl LauncherApp {
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
+            codepoints,
         }));
 
         if let Some(display) = gdk::Display::default() {
@@ -423,7 +450,37 @@ impl LauncherApp {
                     
                     let mut drew_icon = false;
                     if let Some(icon_name) = &item.icon {
-                        if let Some(Some(pixbuf)) = state_ref.icon_cache.get(icon_name) {
+                        if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                            let ix = cx + r_icon * mid_angle.cos();
+                            let iy = cy + r_icon * mid_angle.sin();
+                            let _ = cr.save();
+                            cr.select_font_face("Material Symbols Rounded", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+                            cr.set_font_size(24.0 * ease_progress);
+                            let glyph_str = codepoint.to_string();
+                            if let Ok(extents) = cr.text_extents(&glyph_str) {
+                                let rx = ix - extents.width() / 2.0 - extents.x_bearing();
+                                let ry = iy - extents.height() / 2.0 - extents.y_bearing();
+                                cr.move_to(rx, ry);
+                                if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                                    cr.set_source_rgba(
+                                        hover_label_color.red() as f64,
+                                        hover_label_color.green() as f64,
+                                        hover_label_color.blue() as f64,
+                                        hover_label_color.alpha() as f64 * ease_progress
+                                    );
+                                } else {
+                                    cr.set_source_rgba(
+                                        label_color.red() as f64,
+                                        label_color.green() as f64,
+                                        label_color.blue() as f64,
+                                        label_color.alpha() as f64 * ease_progress
+                                    );
+                                }
+                                let _ = cr.show_text(&glyph_str);
+                                drew_icon = true;
+                            }
+                            let _ = cr.restore();
+                        } else if let Some(Some(pixbuf)) = state_ref.icon_cache.get(icon_name) {
                             let ix = cx + r_icon * mid_angle.cos() - 12.0;
                             let iy = cy + r_icon * mid_angle.sin() - 12.0;
                             cr.set_source_pixbuf(pixbuf, ix, iy);
@@ -911,6 +968,7 @@ impl LauncherApp {
 
                         // 2. Reload the menu TOML config from file
                         let mut state = ipc_state.borrow_mut();
+                        state.codepoints = launcher_core::load_material_codepoints(&config_path_clone);
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.extra_radius = cfg.ui.extra_radius;
                             info!("Reloaded extra_radius: {}", state.extra_radius);

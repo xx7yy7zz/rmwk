@@ -670,6 +670,7 @@ name = "launcher-settings-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "gdk4",
  "glib",
  "gtk4",

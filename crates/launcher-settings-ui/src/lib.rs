@@ -1,12 +1,15 @@
-use gtk::prelude::*;
 use gtk4 as gtk;
+use gtk::prelude::*;
+use gtk::gdk;
 use std::path::{Path, PathBuf};
-use tracing::{error, info};
+use std::sync::{Arc, Mutex};
+use tracing::{info, error};
 
 pub struct SettingsApp {
     app: gtk::Application,
     menu_path: PathBuf,
     config_path: PathBuf,
+    system_icons: Arc<Mutex<Vec<String>>>,
 }
 
 impl SettingsApp {
@@ -15,19 +18,31 @@ impl SettingsApp {
             .application_id("org.radial_launcher.settings")
             .build();
 
+        let system_icons = Arc::new(Mutex::new(vec![]));
+        let system_icons_clone = system_icons.clone();
+        
+        std::thread::spawn(move || {
+            let icons = scan_system_icons();
+            if let Ok(mut lock) = system_icons_clone.lock() {
+                *lock = icons;
+            }
+        });
+
         Self {
             app,
             menu_path,
             config_path,
+            system_icons,
         }
     }
 
     pub fn run(&self) -> i32 {
         let menu_path = self.menu_path.clone();
         let config_path = self.config_path.clone();
+        let system_icons = self.system_icons.clone();
 
         self.app.connect_activate(move |app| {
-            if let Err(e) = Self::activate_ui(app, menu_path.clone(), config_path.clone()) {
+            if let Err(e) = Self::activate_ui(app, menu_path.clone(), config_path.clone(), system_icons.clone()) {
                 error!("Failed to activate settings UI: {}", e);
             }
         });
@@ -39,10 +54,36 @@ impl SettingsApp {
         app: &gtk::Application,
         menu_path: PathBuf,
         config_path: PathBuf,
+        system_icons: Arc<Mutex<Vec<String>>>,
     ) -> anyhow::Result<()> {
         let window = gtk::ApplicationWindow::new(app);
         window.set_title(Some("Radial Launcher Settings"));
         window.set_default_size(800, 500);
+
+        let font_path = config_path.parent()
+            .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
+            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/radial-launcher/fonts/MaterialSymbolsRounded.ttf"));
+        
+        let font_provider = gtk::CssProvider::new();
+        let font_css = format!("
+            @font-face {{
+                font-family: 'Material Symbols Rounded';
+                src: url('{}');
+            }}
+            .material-icon-glyph {{
+                font-family: 'Material Symbols Rounded';
+                font-size: 24px;
+            }}
+        ", font_path.to_string_lossy());
+        font_provider.load_from_data(&font_css);
+
+        if let Some(display) = gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &font_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
 
         // Load current config and menu
         let menu_config = match launcher_core::load_menu(&menu_path) {
@@ -147,12 +188,27 @@ impl SettingsApp {
         prop_grid.attach(&lbl_label, 0, 0, 1, 1);
         prop_grid.attach(&entry_label, 1, 0, 1, 1);
 
-        // 2. Icon Entry
+        // 2. Icon Entry & Picker Button
         let lbl_icon = gtk::Label::new(Some("Icon:"));
         lbl_icon.set_halign(gtk::Align::End);
+        
+        let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         let entry_icon = gtk::Entry::new();
+        entry_icon.set_hexpand(true);
+        let btn_pick_icon = gtk::Button::with_label("🔍 Select");
+        icon_box.append(&entry_icon);
+        icon_box.append(&btn_pick_icon);
+        
         prop_grid.attach(&lbl_icon, 0, 1, 1, 1);
-        prop_grid.attach(&entry_icon, 1, 1, 1, 1);
+        prop_grid.attach(&icon_box, 1, 1, 1, 1);
+
+        let entry_icon_clone = entry_icon.clone();
+        let window_clone = window.clone();
+        let system_icons_clone = system_icons.clone();
+        let config_path_clone = config_path.clone();
+        btn_pick_icon.connect_clicked(move |_| {
+            Self::show_icon_picker(&window_clone, &entry_icon_clone, system_icons_clone.clone(), config_path_clone.clone());
+        });
 
         // 3. Type Dropdown
         let lbl_type = gtk::Label::new(Some("Type:"));
@@ -531,4 +587,230 @@ impl SettingsApp {
         }
         themes
     }
+
+    fn show_icon_picker(
+        parent_window: &gtk::ApplicationWindow,
+        entry_icon: &gtk::Entry,
+        system_icons: Arc<Mutex<Vec<String>>>,
+        config_path: PathBuf,
+    ) {
+        let dialog = gtk::Window::builder()
+            .title("Select Icon")
+            .transient_for(parent_window)
+            .modal(true)
+            .default_width(500)
+            .default_height(400)
+            .build();
+
+        let main_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        main_box.set_margin_start(10);
+        main_box.set_margin_end(10);
+        main_box.set_margin_top(10);
+        main_box.set_margin_bottom(10);
+
+        // Search entry
+        let search_entry = gtk::SearchEntry::new();
+        main_box.append(&search_entry);
+
+        // Tabs
+        let notebook = gtk::Notebook::new();
+        
+        // Tab 1: Material Symbols
+        let material_scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .build();
+        let material_flow = gtk::FlowBox::new();
+        material_flow.set_max_children_per_line(8);
+        material_flow.set_selection_mode(gtk::SelectionMode::None);
+        material_scrolled.set_child(Some(&material_flow));
+        notebook.append_page(&material_scrolled, Some(&gtk::Label::new(Some("Material Symbols"))));
+
+        // Tab 2: System Icons
+        let system_scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .build();
+        let system_flow = gtk::FlowBox::new();
+        system_flow.set_max_children_per_line(8);
+        system_flow.set_selection_mode(gtk::SelectionMode::None);
+        system_scrolled.set_child(Some(&system_flow));
+        notebook.append_page(&system_scrolled, Some(&gtk::Label::new(Some("System Icons"))));
+
+        main_box.append(&notebook);
+        dialog.set_child(Some(&main_box));
+
+        // Populate Material icons
+        let codepoints = launcher_core::load_material_codepoints(&config_path);
+        let mut material_items = vec![];
+        let mut count = 0;
+        for (name, glyph) in &codepoints {
+            let btn = gtk::Button::builder().has_frame(false).build();
+            let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            
+            let lbl_glyph = gtk::Label::new(Some(&glyph.to_string()));
+            lbl_glyph.add_css_class("material-icon-glyph");
+            
+            let lbl_name = gtk::Label::new(Some(name));
+            lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lbl_name.set_max_width_chars(10);
+            
+            btn_box.append(&lbl_glyph);
+            btn_box.append(&lbl_name);
+            btn.set_child(Some(&btn_box));
+            
+            material_flow.insert(&btn, -1);
+            
+            let name_clone = name.clone();
+            let entry_clone = entry_icon.clone();
+            let dialog_clone = dialog.clone();
+            btn.connect_clicked(move |_| {
+                entry_clone.set_text(&name_clone);
+                dialog_clone.close();
+            });
+
+            if count >= 200 {
+                btn.set_visible(false);
+            }
+            count += 1;
+
+            material_items.push((name.clone(), btn));
+        }
+
+        // Populate System icons
+        let mut system_items = vec![];
+        let icons_list = {
+            if let Ok(lock) = system_icons.lock() {
+                lock.clone()
+            } else {
+                vec![]
+            }
+        };
+
+        let mut sys_count = 0;
+        for name in &icons_list {
+            let btn = gtk::Button::builder().has_frame(false).build();
+            let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            
+            let img = gtk::Image::from_icon_name(name);
+            img.set_icon_size(gtk::IconSize::Large);
+            
+            let lbl_name = gtk::Label::new(Some(name));
+            lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            lbl_name.set_max_width_chars(10);
+            
+            btn_box.append(&img);
+            btn_box.append(&lbl_name);
+            btn.set_child(Some(&btn_box));
+            
+            system_flow.insert(&btn, -1);
+            
+            let name_clone = name.clone();
+            let entry_clone = entry_icon.clone();
+            let dialog_clone = dialog.clone();
+            btn.connect_clicked(move |_| {
+                entry_clone.set_text(&name_clone);
+                dialog_clone.close();
+            });
+
+            if sys_count >= 200 {
+                btn.set_visible(false);
+            }
+            sys_count += 1;
+
+            system_items.push((name.clone(), btn));
+        }
+
+        // Search filter
+        let material_items_clone = material_items.clone();
+        let system_items_clone = system_items.clone();
+        search_entry.connect_search_changed(move |entry| {
+            let text = entry.text().to_lowercase();
+            
+            let mut mat_shown = 0;
+            for (name, widget) in &material_items_clone {
+                let matches = text.is_empty() || name.to_lowercase().contains(&text);
+                if matches {
+                    if text.is_empty() {
+                        widget.set_visible(mat_shown < 200);
+                        mat_shown += 1;
+                    } else {
+                        widget.show();
+                    }
+                } else {
+                    widget.hide();
+                }
+            }
+
+            let mut sys_shown = 0;
+            for (name, widget) in &system_items_clone {
+                let matches = text.is_empty() || name.to_lowercase().contains(&text);
+                if matches {
+                    if text.is_empty() {
+                        widget.set_visible(sys_shown < 200);
+                        sys_shown += 1;
+                    } else {
+                        widget.show();
+                    }
+                } else {
+                    widget.hide();
+                }
+            }
+        });
+
+        dialog.present();
+    }
+}
+
+fn scan_system_icons() -> Vec<String> {
+    let paths = vec![
+        PathBuf::from("/usr/share/icons"),
+        dirs::home_dir().unwrap_or_default().join(".local/share/icons"),
+        PathBuf::from("/usr/share/pixmaps"),
+    ];
+
+    let mut icons = std::collections::HashSet::new();
+    
+    // Fallback standard icons
+    for name in &["firefox", "chromium", "google-chrome", "utilities-terminal", "terminal", 
+                 "folder", "document", "preferences-desktop", "system-shutdown", 
+                 "system-reboot", "go-previous", "view-refresh", "edit-copy"] {
+        icons.insert(name.to_string());
+    }
+
+    for base_path in paths {
+        if !base_path.exists() {
+            continue;
+        }
+        
+        let mut stack = vec![(base_path, 0)];
+        while let Some((dir, depth)) = stack.pop() {
+            if depth > 4 {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push((path, depth + 1));
+                    } else if path.is_file() {
+                        if let Some(ext) = path.extension() {
+                            if ext == "png" || ext == "svg" {
+                                if let Some(stem) = path.file_stem() {
+                                    let name = stem.to_string_lossy().into_owned();
+                                    if !name.contains('@') && name.len() > 2 {
+                                        icons.insert(name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut result: Vec<String> = icons.into_iter().collect();
+    result.sort();
+    result
 }

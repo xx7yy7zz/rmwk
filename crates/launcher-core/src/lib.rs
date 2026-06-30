@@ -112,3 +112,25 @@ pub fn run_action(action: &Action) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn load_material_codepoints<P: AsRef<Path>>(config_path: P) -> std::collections::HashMap<String, char> {
+    let mut map = std::collections::HashMap::new();
+    let path = config_path.as_ref().parent()
+        .unwrap_or_else(|| Path::new("/home/karim/.config/radial-launcher"))
+        .join("MaterialSymbolsRounded.codepoints");
+    
+    if let Ok(content) = fs::read_to_string(&path) {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() == 2 {
+                let name = parts[0].to_string();
+                if let Ok(code_val) = u32::from_str_radix(parts[1], 16) {
+                    if let Some(c) = char::from_u32(code_val) {
+                        map.insert(name, c);
+                    }
+                }
+            }
+        }
+    }
+    map
+}
