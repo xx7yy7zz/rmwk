@@ -197,6 +197,8 @@ impl LauncherApp {
         let start_hidden = self.start_hidden;
 
         self.app.connect_activate(move |app| {
+            let guard = app.hold(); // Hold application alive even when windows are hidden
+            std::mem::forget(guard); // Keep the hold active for the lifecycle of the daemon
             if let Err(e) = Self::activate_ui(app, menu_path.clone(), config_path.clone(), start_hidden) {
                 tracing::error!("Failed to activate UI: {}", e);
             }
