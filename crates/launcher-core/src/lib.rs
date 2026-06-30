@@ -23,6 +23,8 @@ pub struct UiConfig {
     pub theme: String,
     #[serde(default = "default_font")]
     pub font: String,
+    #[serde(default = "default_extra_radius")]
+    pub extra_radius: f64,
 }
 
 impl Default for UiConfig {
@@ -30,6 +32,7 @@ impl Default for UiConfig {
         Self {
             theme: default_theme(),
             font: default_font(),
+            extra_radius: default_extra_radius(),
         }
     }
 }
@@ -40,6 +43,10 @@ fn default_theme() -> String {
 
 fn default_font() -> String {
     "Sans 11".to_string()
+}
+
+fn default_extra_radius() -> f64 {
+    50.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

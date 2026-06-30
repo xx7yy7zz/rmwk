@@ -183,8 +183,14 @@ impl SettingsApp {
         }
         combo_theme.set_active_id(Some(&ui_config.ui.theme));
 
+        let lbl_extra_radius = gtk::Label::new(Some("Interactivity Margin (px):"));
+        let spin_extra_radius = gtk::SpinButton::with_range(0.0, 300.0, 5.0);
+        spin_extra_radius.set_value(ui_config.ui.extra_radius);
+
         settings_hbox.append(&lbl_theme);
         settings_hbox.append(&combo_theme);
+        settings_hbox.append(&lbl_extra_radius);
+        settings_hbox.append(&spin_extra_radius);
         right_vbox.append(&settings_hbox);
 
         // Save & Save/Reload buttons at the bottom
@@ -356,6 +362,7 @@ impl SettingsApp {
         let store_save = store.clone();
         let config_path_save = config_path.clone();
         let combo_theme_save = combo_theme.clone();
+        let spin_extra_radius_save = spin_extra_radius.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu
             let items = Self::serialize_store(&store_save, None);
@@ -366,13 +373,14 @@ impl SettingsApp {
                 info!("Menu config saved successfully to {:?}", menu_path);
             }
 
-            // 2. Save active theme back to config.toml
+            // 2. Save active theme & extra_radius back to config.toml
             if let Some(theme_id) = combo_theme_save.active_id() {
                 let mut cfg = match launcher_core::load_config(&config_path_save) {
                     Ok(c) => c,
                     Err(_) => launcher_core::Config::default(),
                 };
                 cfg.ui.theme = theme_id.to_string();
+                cfg.ui.extra_radius = spin_extra_radius_save.value();
                 
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();

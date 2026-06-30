@@ -29,6 +29,9 @@ struct MenuState {
     
     // Cached icons to avoid loading on every frame tick
     icon_cache: HashMap<String, Option<gtk::gdk_pixbuf::Pixbuf>>,
+    
+    // Extra interactivity margin beyond slices
+    extra_radius: f64,
 }
 
 impl MenuState {
@@ -248,6 +251,14 @@ impl LauncherApp {
         }
         window.add_css_class("radial-surface");
 
+        let ui_config = match launcher_core::load_config(&config_path) {
+            Ok(cfg) => cfg.ui,
+            Err(e) => {
+                warn!("Failed to load config: {}. Using default UI settings", e);
+                launcher_core::UiConfig::default()
+            }
+        };
+
         // Initialize state
         let state = Rc::new(RefCell::new(MenuState {
             current_items: menu_config.menu,
@@ -258,6 +269,7 @@ impl LauncherApp {
             open_progress: 0.0,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
+            extra_radius: ui_config.extra_radius,
         }));
 
         if let Some(display) = gdk::Display::default() {
@@ -516,8 +528,9 @@ impl LauncherApp {
             let dist = (mx * mx + my * my).sqrt();
 
             let display_items_count = state.get_display_items_count();
+            let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
 
-            if display_items_count > 0 && dist >= BASE_R && dist <= (BASE_R + SLICE_WIDTH + HOVER_GROW) {
+            if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
                 let mut angle = my.atan2(mx) + PI / 2.0;
                 if angle < 0.0 {
                     angle += 2.0 * PI;
@@ -602,8 +615,9 @@ impl LauncherApp {
 
                 let display_items = state.get_display_items();
                 let display_items_count = display_items.len();
+                let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
 
-                if display_items_count > 0 && dist >= BASE_R && dist <= (BASE_R + SLICE_WIDTH + HOVER_GROW) {
+                if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
                     let mut angle = my.atan2(mx) + PI / 2.0;
                     if angle < 0.0 {
                         angle += 2.0 * PI;
@@ -615,7 +629,7 @@ impl LauncherApp {
                     if index < display_items_count {
                         activate_index(&mut state, index, &area_clone_click);
                     }
-                } else if dist > (BASE_R + SLICE_WIDTH + HOVER_GROW) {
+                } else if dist > max_interactive_dist {
                     // Clicked outside completely
                     debug!("Clicked outside menu bounds, closing");
                     state.is_closing = true;
@@ -833,6 +847,10 @@ impl LauncherApp {
 
                         // 2. Reload the menu TOML config from file
                         let mut state = ipc_state.borrow_mut();
+                        if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
+                            state.extra_radius = cfg.ui.extra_radius;
+                            info!("Reloaded extra_radius: {}", state.extra_radius);
+                        }
                         match launcher_core::load_menu(&menu_path_clone) {
                             Ok(m) => {
                                 state.current_items = m.menu;
