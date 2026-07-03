@@ -1,4 +1,4 @@
-# Radial Launcher
+# rmwk
 
 A fast, lightweight, and highly customizable native radial application launcher designed for wlr-based Wayland compositors (such as Sway, River, and Wayfire). Built with **Rust**, **GTK4 (gtk-rs)**, **cairo-rs**, and **wlr-layer-shell**.
 
@@ -49,7 +49,7 @@ sudo pacman -S gtk4 gtk4-layer-shell
 cargo build --release
 ```
 
-The compiled binary will be located at `target/release/radial-launcher`.
+The compiled binary will be located at `target/release/rmwk`.
 
 ---
 
@@ -57,13 +57,13 @@ The compiled binary will be located at `target/release/radial-launcher`.
 
 ```bash
 # Open the launcher menu (Default)
-radial-launcher open
+rmwk open
 
 # Open the GUI settings editor
-radial-launcher settings
+rmwk settings
 
 # Hot-reload themes and menu config on a running instance
-radial-launcher reload
+rmwk reload
 ```
 
 ---
@@ -76,14 +76,14 @@ Bind the launcher to a hotkey in your compositor config:
 
 ```sway
 # Toggle launcher
-bindsym $mod+Space exec /path/to/radial-launcher open
+bindsym $mod+Space exec /path/to/rmwk open
 ```
 
 ### 2. River (`~/.config/river/init`)
 
 ```bash
 # Toggle launcher
-riverctl map normal Super Space spawn "/path/to/radial-launcher open"
+riverctl map normal Super Space spawn "/path/to/rmwk open"
 ```
 
 ### 3. Wayfire (`~/.config/wayfire.ini`)
@@ -91,7 +91,7 @@ riverctl map normal Super Space spawn "/path/to/radial-launcher open"
 ```ini
 [command]
 binding_launcher = <super> KEY_SPACE
-command_launcher = /path/to/radial-launcher open
+command_launcher = /path/to/rmwk open
 ```
 
 ---
@@ -99,9 +99,9 @@ command_launcher = /path/to/radial-launcher open
 ## Customization
 
 Config files are automatically generated on first launch under:
-*   Menu Layout: `~/.config/radial-launcher/menu.toml`
-*   UI Configuration: `~/.config/radial-launcher/config.toml`
-*   Custom Themes: `~/.config/radial-launcher/themes/`
+*   Menu Layout: `~/.config/rmwk/menu.toml`
+*   UI Configuration: `~/.config/rmwk/config.toml`
+*   Custom Themes: `~/.config/rmwk/themes/`
 
 ### Example `menu.toml`
 
