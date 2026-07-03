@@ -3,6 +3,7 @@ use gdk4 as gdk;
 use gdk::prelude::*;
 use gtk::prelude::*;
 use gtk4_layer_shell::{Layer, KeyboardMode, LayerShell};
+use pangocairo;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
@@ -17,6 +18,7 @@ const SLICE_WIDTH: f64 = 110.0;
 const HOVER_GROW: f64 = 15.0;
 
 struct MenuState {
+    root_items: Vec<launcher_core::MenuItem>,
     current_items: Vec<launcher_core::MenuItem>,
     history: Vec<Vec<launcher_core::MenuItem>>,
     hovered_index: Option<usize>,
@@ -295,6 +297,7 @@ impl LauncherApp {
 
         // Initialize state
         let state = Rc::new(RefCell::new(MenuState {
+            root_items: menu_config.menu.clone(),
             current_items: menu_config.menu.clone(),
             history: vec![],
             hovered_index: None,
@@ -454,31 +457,39 @@ impl LauncherApp {
                             let ix = cx + r_icon * mid_angle.cos();
                             let iy = cy + r_icon * mid_angle.sin();
                             let _ = cr.save();
-                            cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-                            cr.set_font_size(24.0 * ease_progress);
-                            let glyph_str = icon_name.clone();
-                            if let Ok(extents) = cr.text_extents(&glyph_str) {
-                                let rx = ix - extents.width() / 2.0 - extents.x_bearing();
-                                let ry = iy - extents.height() / 2.0 - extents.y_bearing();
-                                cr.move_to(rx, ry);
-                                if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
-                                    cr.set_source_rgba(
-                                        hover_label_color.red() as f64,
-                                        hover_label_color.green() as f64,
-                                        hover_label_color.blue() as f64,
-                                        hover_label_color.alpha() as f64 * ease_progress
-                                    );
-                                } else {
-                                    cr.set_source_rgba(
-                                        label_color.red() as f64,
-                                        label_color.green() as f64,
-                                        label_color.blue() as f64,
-                                        label_color.alpha() as f64 * ease_progress
-                                    );
-                                }
-                                let _ = cr.show_text(&glyph_str);
-                                drew_icon = true;
+                            
+                            if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                                cr.set_source_rgba(
+                                    hover_label_color.red() as f64,
+                                    hover_label_color.green() as f64,
+                                    hover_label_color.blue() as f64,
+                                    hover_label_color.alpha() as f64 * ease_progress
+                                );
+                            } else {
+                                cr.set_source_rgba(
+                                    label_color.red() as f64,
+                                    label_color.green() as f64,
+                                    label_color.blue() as f64,
+                                    label_color.alpha() as f64 * ease_progress
+                                );
                             }
+
+                            let glyph_str = icon_name.clone();
+                            let layout = area.create_pango_layout(Some(&glyph_str));
+                            let mut font_desc = gtk::pango::FontDescription::new();
+                            font_desc.set_family("Sans");
+                            font_desc.set_weight(gtk::pango::Weight::Bold);
+                            font_desc.set_size(gtk::pango::units_from_double(24.0 * ease_progress));
+                            layout.set_font_description(Some(&font_desc));
+
+                            let (pango_w, pango_h) = layout.pixel_size();
+                            let rx = ix - (pango_w as f64 / 2.0);
+                            let ry = iy - (pango_h as f64 / 2.0);
+                            
+                            cr.move_to(rx, ry);
+                            pangocairo::functions::show_layout(&cr, &layout);
+                            drew_icon = true;
+                            
                             let _ = cr.restore();
                         } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
                             let ix = cx + r_icon * mid_angle.cos();
@@ -934,7 +945,6 @@ impl LauncherApp {
         let theme_provider_clone = theme_provider.clone();
         let config_path_clone = config_path.clone();
         let menu_path_clone = menu_path.clone();
-        let menu_config_ipc = menu_config.clone();
  
         let window_clone_ipc = window.clone();
         glib::MainContext::default().spawn_local(async move {
@@ -950,7 +960,7 @@ impl LauncherApp {
                             state.is_opening = false;
                         } else {
                             info!("Showing window via IPC Toggle");
-                            state.current_items = menu_config_ipc.menu.clone();
+                            state.current_items = state.root_items.clone();
                             state.history.clear();
                             state.hovered_index = None;
                             if let Some(display) = gdk::Display::default() {
@@ -977,7 +987,7 @@ impl LauncherApp {
                         if !is_visible {
                             info!("Showing window via IPC Open");
                             let mut state = ipc_state.borrow_mut();
-                            state.current_items = menu_config_ipc.menu.clone();
+                            state.current_items = state.root_items.clone();
                             state.history.clear();
                             state.hovered_index = None;
                             if let Some(display) = gdk::Display::default() {
@@ -1005,6 +1015,7 @@ impl LauncherApp {
                         }
                         match launcher_core::load_menu(&menu_path_clone) {
                             Ok(m) => {
+                                state.root_items = m.menu.clone();
                                 state.current_items = m.menu;
                                 state.history.clear();
                                 state.hovered_index = None;

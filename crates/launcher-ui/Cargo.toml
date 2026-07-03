@@ -8,6 +8,8 @@ gtk4.workspace = true
 gdk4.workspace = true
 glib.workspace = true
 cairo-rs.workspace = true
+pango.workspace = true
+pangocairo.workspace = true
 gtk4-layer-shell.workspace = true
 
 launcher-core.workspace = true
