@@ -450,7 +450,37 @@ impl LauncherApp {
                     
                     let mut drew_icon = false;
                     if let Some(icon_name) = &item.icon {
-                        if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                        if icon_name.chars().count() == 1 {
+                            let ix = cx + r_icon * mid_angle.cos();
+                            let iy = cy + r_icon * mid_angle.sin();
+                            let _ = cr.save();
+                            cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+                            cr.set_font_size(24.0 * ease_progress);
+                            let glyph_str = icon_name.clone();
+                            if let Ok(extents) = cr.text_extents(&glyph_str) {
+                                let rx = ix - extents.width() / 2.0 - extents.x_bearing();
+                                let ry = iy - extents.height() / 2.0 - extents.y_bearing();
+                                cr.move_to(rx, ry);
+                                if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                                    cr.set_source_rgba(
+                                        hover_label_color.red() as f64,
+                                        hover_label_color.green() as f64,
+                                        hover_label_color.blue() as f64,
+                                        hover_label_color.alpha() as f64 * ease_progress
+                                    );
+                                } else {
+                                    cr.set_source_rgba(
+                                        label_color.red() as f64,
+                                        label_color.green() as f64,
+                                        label_color.blue() as f64,
+                                        label_color.alpha() as f64 * ease_progress
+                                    );
+                                }
+                                let _ = cr.show_text(&glyph_str);
+                                drew_icon = true;
+                            }
+                            let _ = cr.restore();
+                        } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
                             let ix = cx + r_icon * mid_angle.cos();
                             let iy = cy + r_icon * mid_angle.sin();
                             let _ = cr.save();

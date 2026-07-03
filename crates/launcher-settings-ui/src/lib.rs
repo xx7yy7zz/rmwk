@@ -173,7 +173,17 @@ impl SettingsApp {
         prop_grid.attach(&lbl_label, 0, 0, 1, 1);
         prop_grid.attach(&entry_label, 1, 0, 1, 1);
 
-        // 2. Icon Entry & Picker Button
+        // 2. Icon Type Dropdown
+        let lbl_icon_type = gtk::Label::new(Some("Icon Type:"));
+        lbl_icon_type.set_halign(gtk::Align::End);
+        let combo_icon_type = gtk::ComboBoxText::new();
+        combo_icon_type.append(Some("picker"), "Icon Picker");
+        combo_icon_type.append(Some("char"), "Single Character");
+        combo_icon_type.set_active_id(Some("picker"));
+        prop_grid.attach(&lbl_icon_type, 0, 1, 1, 1);
+        prop_grid.attach(&combo_icon_type, 1, 1, 1, 1);
+
+        // 3. Icon Entry & Picker Button
         let lbl_icon = gtk::Label::new(Some("Icon:"));
         lbl_icon.set_halign(gtk::Align::End);
         
@@ -184,8 +194,8 @@ impl SettingsApp {
         icon_box.append(&entry_icon);
         icon_box.append(&btn_pick_icon);
         
-        prop_grid.attach(&lbl_icon, 0, 1, 1, 1);
-        prop_grid.attach(&icon_box, 1, 1, 1, 1);
+        prop_grid.attach(&lbl_icon, 0, 2, 1, 1);
+        prop_grid.attach(&icon_box, 1, 2, 1, 1);
 
         let entry_icon_clone = entry_icon.clone();
         let window_clone = window.clone();
@@ -194,22 +204,45 @@ impl SettingsApp {
             Self::show_icon_picker(&window_clone, &entry_icon_clone, config_path_clone.clone());
         });
 
-        // 3. Type Dropdown
+        // Icon Type Changed signal connection
+        let btn_pick_icon_toggle = btn_pick_icon.clone();
+        let entry_icon_toggle = entry_icon.clone();
+        combo_icon_type.connect_changed(move |combo| {
+            let active_id = combo.active_id().map(|s| s.to_string()).unwrap_or_else(|| "picker".to_string());
+            if active_id == "char" {
+                entry_icon_toggle.set_max_length(1);
+                entry_icon_toggle.set_placeholder_text(Some("e.g. A, 🚀"));
+                btn_pick_icon_toggle.set_visible(false);
+                
+                let txt = entry_icon_toggle.text().to_string();
+                if txt.chars().count() > 1 {
+                    if let Some(first_char) = txt.chars().next() {
+                        entry_icon_toggle.set_text(&first_char.to_string());
+                    }
+                }
+            } else {
+                entry_icon_toggle.set_max_length(0); // unlimited
+                entry_icon_toggle.set_placeholder_text(None);
+                btn_pick_icon_toggle.set_visible(true);
+            }
+        });
+
+        // 4. Type Dropdown
         let lbl_type = gtk::Label::new(Some("Type:"));
         lbl_type.set_halign(gtk::Align::End);
         let combo_type = gtk::ComboBoxText::new();
         combo_type.append(Some("exec"), "Execute Process");
         combo_type.append(Some("shell"), "Shell Command");
         combo_type.append(Some("submenu"), "Submenu Directory");
-        prop_grid.attach(&lbl_type, 0, 2, 1, 1);
-        prop_grid.attach(&combo_type, 1, 2, 1, 1);
+        prop_grid.attach(&lbl_type, 0, 3, 1, 1);
+        prop_grid.attach(&combo_type, 1, 3, 1, 1);
 
-        // 4. Command Entry
+        // 5. Command Entry
         let lbl_cmd = gtk::Label::new(Some("Command:"));
         lbl_cmd.set_halign(gtk::Align::End);
         let entry_cmd = gtk::Entry::new();
-        prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
-        prop_grid.attach(&entry_cmd, 1, 3, 1, 1);
+        prop_grid.attach(&lbl_cmd, 0, 4, 1, 1);
+        prop_grid.attach(&entry_cmd, 1, 4, 1, 1);
 
         prop_frame.set_child(Some(&prop_grid));
         right_vbox.append(&prop_frame);
@@ -270,6 +303,7 @@ impl SettingsApp {
         let sel_icon = entry_icon.clone();
         let sel_type = combo_type.clone();
         let sel_cmd = entry_cmd.clone();
+        let sel_icon_type = combo_icon_type.clone();
 
         selection.connect_changed(move |sel| {
             if let Some((model, iter)) = sel.selected() {
@@ -279,6 +313,13 @@ impl SettingsApp {
                 let cmd: String = model.get(&iter, 3);
 
                 sel_label.set_text(&label);
+                
+                if icon.chars().count() == 1 {
+                    sel_icon_type.set_active_id(Some("char"));
+                } else {
+                    sel_icon_type.set_active_id(Some("picker"));
+                }
+                
                 sel_icon.set_text(&icon);
                 sel_type.set_active_id(Some(&act_type));
                 sel_cmd.set_text(&cmd);
