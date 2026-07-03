@@ -17,9 +17,9 @@ pub enum IpcMessage {
 
 pub fn get_socket_path() -> PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        Path::new(&runtime_dir).join("radial-launcher.sock")
+        Path::new(&runtime_dir).join("rmwk.sock")
     } else {
-        Path::new("/tmp").join("radial-launcher.sock")
+        Path::new("/tmp").join("rmwk.sock")
     }
 }
 

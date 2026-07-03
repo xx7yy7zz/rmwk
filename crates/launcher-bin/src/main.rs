@@ -6,9 +6,9 @@ use tracing_subscriber::EnvFilter;
 use launcher_ipc::IpcMessage;
 
 #[derive(Parser)]
-#[command(name = "radial-launcher")]
+#[command(name = "rmwk")]
 #[command(version)]
-#[command(about = "A fast, native radial launcher for Wayland", long_about = None)]
+#[command(about = "A fast, native radial launcher for Wayland (rmwk)", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -24,13 +24,13 @@ struct Cli {
 
 #[derive(Subcommand, Clone)]
 enum Commands {
-    /// Open the radial launcher menu (default)
+    /// Open the rmwk menu (default)
     Open,
     /// Open the settings GUI editor
     Settings,
     /// Reload config and themes of the running instance
     Reload,
-    /// Start the radial launcher daemon explicitly (starts hidden)
+    /// Start the rmwk daemon explicitly (starts hidden)
     Daemon,
 }
 
@@ -47,7 +47,7 @@ fn init_logging() {
 fn get_default_paths() -> (PathBuf, PathBuf) {
     let base_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/home/karim/.config"))
-        .join("radial-launcher");
+        .join("rmwk");
     
     (
         base_dir.join("menu.toml"),
@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
                     debug!("Socket file exists at {:?}, attempting to send Toggle command", socket_path);
                     match launcher_ipc::send_message(&socket_path, &IpcMessage::Toggle).await {
                         Ok(_) => {
-                            info!("Toggled running instance of radial-launcher");
+                            info!("Toggled running instance of rmwk");
                             true
                         }
                         Err(e) => {
@@ -197,7 +197,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            info!("Starting radial launcher daemon...");
+            info!("Starting rmwk daemon...");
             let app = launcher_ui::LauncherApp::new(menu_path, config_path, true);
             let exit_code = app.run();
             if exit_code != 0 {

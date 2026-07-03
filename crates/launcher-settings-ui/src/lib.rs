@@ -13,7 +13,7 @@ pub struct SettingsApp {
 impl SettingsApp {
     pub fn new(menu_path: PathBuf, config_path: PathBuf) -> Self {
         let app = gtk::Application::builder()
-            .application_id("org.radial_launcher.settings")
+            .application_id("org.rmwk.settings")
             .build();
 
         Self {
@@ -42,12 +42,12 @@ impl SettingsApp {
         config_path: PathBuf,
     ) -> anyhow::Result<()> {
         let window = gtk::ApplicationWindow::new(app);
-        window.set_title(Some("Radial Launcher Settings"));
+        window.set_title(Some("rmwk Settings"));
         window.set_default_size(800, 500);
 
         let font_path = config_path.parent()
             .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
-            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/radial-launcher/fonts/MaterialSymbolsRounded.ttf"));
+            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/rmwk/fonts/MaterialSymbolsRounded.ttf"));
         
         let font_provider = gtk::CssProvider::new();
         let font_css = format!("

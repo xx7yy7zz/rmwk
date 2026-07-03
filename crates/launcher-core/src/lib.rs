@@ -116,7 +116,7 @@ pub fn run_action(action: &Action) -> Result<()> {
 pub fn load_material_codepoints<P: AsRef<Path>>(config_path: P) -> std::collections::HashMap<String, char> {
     let mut map = std::collections::HashMap::new();
     let path = config_path.as_ref().parent()
-        .unwrap_or_else(|| Path::new("/home/karim/.config/radial-launcher"))
+        .unwrap_or_else(|| Path::new("/home/karim/.config/rmwk"))
         .join("MaterialSymbolsRounded.codepoints");
     
     if let Ok(content) = fs::read_to_string(&path) {

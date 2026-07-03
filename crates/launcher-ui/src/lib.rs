@@ -106,7 +106,7 @@ fn load_and_apply_theme(config_path: &Path, theme_provider: &gtk::CssProvider) {
     let theme_file = config_path
         .parent()
         .map(|p| p.join("themes").join(format!("{}.css", theme_name)))
-        .unwrap_or_else(|| PathBuf::from("/home/karim/.config/radial-launcher/themes").join(format!("{}.css", theme_name)));
+        .unwrap_or_else(|| PathBuf::from("/home/karim/.config/rmwk/themes").join(format!("{}.css", theme_name)));
 
     debug!("Loading theme from {:?}", theme_file);
     if theme_file.exists() {
@@ -186,7 +186,7 @@ pub struct LauncherApp {
 impl LauncherApp {
     pub fn new(menu_path: PathBuf, config_path: PathBuf, start_hidden: bool) -> Self {
         let app = gtk::Application::builder()
-            .application_id("org.radial_launcher.launcher")
+            .application_id("org.rmwk.launcher")
             .build();
 
         Self {
@@ -225,7 +225,7 @@ impl LauncherApp {
         };
 
         let window = gtk::ApplicationWindow::new(app);
-        window.set_title(Some("Radial Launcher"));
+        window.set_title(Some("rmwk"));
 
         // 1. Initialize Layer Shell before realizing the window
         window.init_layer_shell();
@@ -253,7 +253,7 @@ impl LauncherApp {
 
         let font_path = config_path.parent()
             .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
-            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/radial-launcher/fonts/MaterialSymbolsRounded.ttf"));
+            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/rmwk/fonts/MaterialSymbolsRounded.ttf"));
         
         let font_provider = gtk::CssProvider::new();
         let font_css = format!("
