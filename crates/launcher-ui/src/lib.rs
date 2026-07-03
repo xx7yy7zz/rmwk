@@ -37,6 +37,11 @@ struct MenuState {
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
+
+    // FPS counter state
+    fps_last_time: std::time::Instant,
+    fps_frame_count: u32,
+    fps_current: f64,
 }
 
 impl MenuState {
@@ -308,6 +313,9 @@ impl LauncherApp {
             icon_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
             codepoints,
+            fps_last_time: std::time::Instant::now(),
+            fps_frame_count: 0,
+            fps_current: 0.0,
         }));
 
         if let Some(display) = gdk::Display::default() {
@@ -321,7 +329,18 @@ impl LauncherApp {
             let cx = width as f64 / 2.0;
             let cy = height as f64 / 2.0;
 
-            let state_ref = draw_state.borrow();
+            let mut state_ref = draw_state.borrow_mut();
+            
+            // Update FPS counter
+            let now = std::time::Instant::now();
+            state_ref.fps_frame_count += 1;
+            let elapsed = now.duration_since(state_ref.fps_last_time).as_secs_f64();
+            if elapsed >= 0.5 {
+                state_ref.fps_current = state_ref.fps_frame_count as f64 / elapsed;
+                state_ref.fps_frame_count = 0;
+                state_ref.fps_last_time = now;
+            }
+
             let display_items = state_ref.get_display_items();
             let n = display_items.len();
 
@@ -611,6 +630,26 @@ impl LauncherApp {
                 );
                 let _ = cr.show_text(center_text);
             }
+
+            // Draw FPS counter (bright green, centered below the menu)
+            let outer_radius = BASE_R + SLICE_WIDTH;
+            let fps_str = format!("FPS: {:.1}", state_ref.fps_current);
+            let layout = area.create_pango_layout(Some(&fps_str));
+            let mut font_desc = gtk::pango::FontDescription::new();
+            font_desc.set_family("Sans");
+            font_desc.set_weight(gtk::pango::Weight::Bold);
+            font_desc.set_size(gtk::pango::units_from_double(14.0 * ease_progress));
+            layout.set_font_description(Some(&font_desc));
+
+            let (pango_w, _pango_h) = layout.pixel_size();
+            let rx = cx - (pango_w as f64 / 2.0);
+            let ry = cy + (outer_radius + 40.0) * ease_progress;
+
+            let _ = cr.save();
+            cr.set_source_rgba(0.0, 0.8, 0.0, 1.0 * ease_progress);
+            cr.move_to(rx, ry);
+            pangocairo::functions::show_layout(&cr, &layout);
+            let _ = cr.restore();
         });
         window.set_child(Some(&drawing_area));
 
