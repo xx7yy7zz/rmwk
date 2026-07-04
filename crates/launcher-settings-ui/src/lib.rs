@@ -114,6 +114,7 @@ impl SettingsApp {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .propagate_natural_height(false)
+            .height_request(200)
             .vexpand(false)
             .build();
 
@@ -176,9 +177,15 @@ impl SettingsApp {
         window.connect_map(move |win| {
             if let Some(surface) = win.surface() {
                 let scroll_win_c = scroll_win_clone.clone();
-                scroll_win_c.set_height_request((surface.height() / 2) - 15);
+                let initial_h = (surface.height() / 2) - 15;
+                if initial_h >= 100 {
+                    scroll_win_c.set_height_request(initial_h);
+                }
                 surface.connect_notify_local(Some("height"), move |surf, _| {
-                    scroll_win_c.set_height_request((surf.height() / 2) - 15);
+                    let dynamic_h = (surf.height() / 2) - 15;
+                    if dynamic_h >= 100 {
+                        scroll_win_c.set_height_request(dynamic_h);
+                    }
                 });
             }
         });
