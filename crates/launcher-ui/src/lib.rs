@@ -544,12 +544,14 @@ impl LauncherApp {
                             let current_w = pixbuf.width() as f64;
                             let current_h = pixbuf.height() as f64;
                             let scale = (icon_size * ease_progress) / current_w.max(current_h).max(1.0);
-                            let _ = cr.save();
-                            cr.translate(cx + r_center * mid_angle.cos(), cy + r_center * mid_angle.sin());
-                            cr.scale(scale, scale);
-                            cr.set_source_pixbuf(pixbuf, -current_w / 2.0, -current_h / 2.0);
-                            let _ = cr.paint();
-                            let _ = cr.restore();
+                            if scale > 0.001 {
+                                let _ = cr.save();
+                                cr.translate(cx + r_center * mid_angle.cos(), cy + r_center * mid_angle.sin());
+                                cr.scale(scale, scale);
+                                cr.set_source_pixbuf(pixbuf, -current_w / 2.0, -current_h / 2.0);
+                                let _ = cr.paint();
+                                let _ = cr.restore();
+                            }
                         }
                     }
                 }
