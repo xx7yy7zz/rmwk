@@ -464,17 +464,19 @@ impl LauncherApp {
                     }
                     cr.stroke().unwrap();
 
-                    // Draw label & icon if present
+                    // Draw icon if present (labels are only in the center hub now)
                     let mid_angle = start_angle + angle_per_slice / 2.0;
+                    let r_center = (inner_radius + outer_radius) / 2.0;
                     
-                    let r_icon = (inner_radius + outer_radius) / 2.0 - 15.0;
-                    let r_text = (inner_radius + outer_radius) / 2.0 + 15.0;
-                    
-                    let mut drew_icon = false;
+                    let arc_width = r_center * angle_per_slice;
+                    let radial_depth = outer_radius - inner_radius;
+                    let max_space = arc_width.min(radial_depth);
+                    let icon_size = (max_space * 0.5).clamp(16.0, 64.0);
+
                     if let Some(icon_name) = &item.icon {
                         if icon_name.chars().count() == 1 {
-                            let ix = cx + r_icon * mid_angle.cos();
-                            let iy = cy + r_icon * mid_angle.sin();
+                            let ix = cx + r_center * mid_angle.cos();
+                            let iy = cy + r_center * mid_angle.sin();
                             let _ = cr.save();
                             
                             if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
@@ -498,7 +500,7 @@ impl LauncherApp {
                             let mut font_desc = gtk::pango::FontDescription::new();
                             font_desc.set_family("Sans");
                             font_desc.set_weight(gtk::pango::Weight::Bold);
-                            font_desc.set_size(gtk::pango::units_from_double(24.0 * ease_progress));
+                            font_desc.set_size(gtk::pango::units_from_double(icon_size * ease_progress));
                             layout.set_font_description(Some(&font_desc));
 
                             let (pango_w, pango_h) = layout.pixel_size();
@@ -507,15 +509,14 @@ impl LauncherApp {
                             
                             cr.move_to(rx, ry);
                             pangocairo::functions::show_layout(&cr, &layout);
-                            drew_icon = true;
                             
                             let _ = cr.restore();
                         } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                            let ix = cx + r_icon * mid_angle.cos();
-                            let iy = cy + r_icon * mid_angle.sin();
+                            let ix = cx + r_center * mid_angle.cos();
+                            let iy = cy + r_center * mid_angle.sin();
                             let _ = cr.save();
                             cr.select_font_face("Material Symbols Rounded", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
-                            cr.set_font_size(24.0 * ease_progress);
+                            cr.set_font_size(icon_size * ease_progress);
                             let glyph_str = codepoint.to_string();
                             if let Ok(extents) = cr.text_extents(&glyph_str) {
                                 let rx = ix - extents.width() / 2.0 - extents.x_bearing();
@@ -537,46 +538,19 @@ impl LauncherApp {
                                     );
                                 }
                                 let _ = cr.show_text(&glyph_str);
-                                drew_icon = true;
                             }
                             let _ = cr.restore();
                         } else if let Some(Some(pixbuf)) = state_ref.icon_cache.get(icon_name) {
-                            let ix = cx + r_icon * mid_angle.cos() - 12.0;
-                            let iy = cy + r_icon * mid_angle.sin() - 12.0;
-                            cr.set_source_pixbuf(pixbuf, ix, iy);
+                            let current_w = pixbuf.width() as f64;
+                            let current_h = pixbuf.height() as f64;
+                            let scale = (icon_size * ease_progress) / current_w.max(current_h).max(1.0);
+                            let _ = cr.save();
+                            cr.translate(cx + r_center * mid_angle.cos(), cy + r_center * mid_angle.sin());
+                            cr.scale(scale, scale);
+                            cr.set_source_pixbuf(pixbuf, -current_w / 2.0, -current_h / 2.0);
                             let _ = cr.paint();
-                            drew_icon = true;
+                            let _ = cr.restore();
                         }
-                    }
-
-                    let tx = cx + (if drew_icon { r_text } else { (inner_radius + outer_radius) / 2.0 }) * mid_angle.cos();
-                    let ty = cy + (if drew_icon { r_text } else { (inner_radius + outer_radius) / 2.0 }) * mid_angle.sin();
-
-                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
-                        cr.set_source_rgba(
-                            hover_label_color.red() as f64,
-                            hover_label_color.green() as f64,
-                            hover_label_color.blue() as f64,
-                            hover_label_color.alpha() as f64 * ease_progress
-                        );
-                        cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-                    } else {
-                        cr.set_source_rgba(
-                            label_color.red() as f64,
-                            label_color.green() as f64,
-                            label_color.blue() as f64,
-                            label_color.alpha() as f64 * ease_progress
-                        );
-                        cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
-                    }
-                    cr.set_font_size(13.0 * ease_progress);
-
-                    let label = &item.label;
-                    if let Ok(extents) = cr.text_extents(label) {
-                        let rx = tx - extents.width() / 2.0 - extents.x_bearing();
-                        let ry = ty - extents.height() / 2.0 - extents.y_bearing();
-                        cr.move_to(rx, ry);
-                        let _ = cr.show_text(label);
                     }
                 }
             }
