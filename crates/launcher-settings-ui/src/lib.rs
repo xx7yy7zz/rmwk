@@ -2,7 +2,18 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk::gdk;
 use std::path::{Path, PathBuf};
+use std::cell::RefCell;
+use std::rc::Rc;
 use tracing::{info, error};
+
+#[derive(Clone, Debug)]
+struct CopiedNode {
+    label: String,
+    icon: String,
+    action_type: String,
+    action_cmd: String,
+    children: Vec<CopiedNode>,
+}
 
 pub struct SettingsApp {
     app: gtk::Application,
@@ -110,9 +121,21 @@ impl SettingsApp {
             glib::Type::STRING,
         ]);
 
-        Self::populate_store(&store, None, &menu_config.menu);
+        let root_iter = store.insert_with_values(
+            None,
+            None,
+            &[
+                (0, &"menu".to_value()),
+                (1, &"Menu (Root)".to_value()),
+                (2, &"root".to_value()),
+                (3, &"".to_value()),
+            ],
+        );
+        Self::populate_store(&store, Some(&root_iter), &menu_config.menu);
 
         let tree_view = gtk::TreeView::with_model(&store);
+        let path = store.path(&root_iter);
+        tree_view.expand_row(&path, false);
         tree_view.set_headers_visible(true);
 
         // Col 1: Label
@@ -139,12 +162,17 @@ impl SettingsApp {
 
         let btn_add_item = gtk::Button::with_label("Add Command");
         let btn_add_sub = gtk::Button::with_label("Add Submenu");
+        let btn_copy = gtk::Button::with_label("Copy");
+        let btn_paste = gtk::Button::with_label("Paste");
+        btn_paste.set_sensitive(false);
         let btn_delete = gtk::Button::with_label("Delete");
         let btn_up = gtk::Button::with_label("▲");
         let btn_down = gtk::Button::with_label("▼");
 
         btn_hbox.append(&btn_add_item);
         btn_hbox.append(&btn_add_sub);
+        btn_hbox.append(&btn_copy);
+        btn_hbox.append(&btn_paste);
         btn_hbox.append(&btn_delete);
         btn_hbox.append(&btn_up);
         btn_hbox.append(&btn_down);
@@ -283,6 +311,10 @@ impl SettingsApp {
 
         let lbl_cmd_clone = lbl_cmd.clone();
         let entry_cmd_clone = entry_cmd.clone();
+        let btn_pick_icon_clone = btn_pick_icon.clone();
+        let btn_delete_clone = btn_delete.clone();
+        let btn_up_clone = btn_up.clone();
+        let btn_down_clone = btn_down.clone();
 
         selection.connect_changed(move |sel| {
             if let Some((model, iter)) = sel.selected() {
@@ -290,6 +322,40 @@ impl SettingsApp {
                 let label: String = model.get(&iter, 1);
                 let act_type: String = model.get(&iter, 2);
                 let cmd: String = model.get(&iter, 3);
+
+                if act_type == "root" {
+                    // Disable editing controls for Root node
+                    sel_label.set_sensitive(false);
+                    sel_icon.set_sensitive(false);
+                    sel_icon_type.set_sensitive(false);
+                    sel_cmd.set_sensitive(false);
+                    btn_pick_icon_clone.set_sensitive(false);
+                    btn_delete_clone.set_sensitive(false);
+                    btn_up_clone.set_sensitive(false);
+                    btn_down_clone.set_sensitive(false);
+
+                    lbl_cmd_clone.set_visible(false);
+                    entry_cmd_clone.set_visible(false);
+                } else {
+                    // Enable editing controls for other nodes
+                    sel_label.set_sensitive(true);
+                    sel_icon.set_sensitive(true);
+                    sel_icon_type.set_sensitive(true);
+                    sel_cmd.set_sensitive(true);
+                    btn_pick_icon_clone.set_sensitive(true);
+                    btn_delete_clone.set_sensitive(true);
+                    btn_up_clone.set_sensitive(true);
+                    btn_down_clone.set_sensitive(true);
+
+                    // Show/hide command input dynamically
+                    if act_type == "submenu" {
+                        lbl_cmd_clone.set_visible(false);
+                        entry_cmd_clone.set_visible(false);
+                    } else {
+                        lbl_cmd_clone.set_visible(true);
+                        entry_cmd_clone.set_visible(true);
+                    }
+                }
 
                 sel_label.set_text(&label);
                 
@@ -301,15 +367,6 @@ impl SettingsApp {
                 
                 sel_icon.set_text(&icon);
                 sel_cmd.set_text(&cmd);
-
-                // Show/hide command input dynamically
-                if act_type == "submenu" {
-                    lbl_cmd_clone.set_visible(false);
-                    entry_cmd_clone.set_visible(false);
-                } else {
-                    lbl_cmd_clone.set_visible(true);
-                    entry_cmd_clone.set_visible(true);
-                }
             }
         });
 
@@ -342,17 +399,12 @@ impl SettingsApp {
         let store_add = store.clone();
         let selection_add = tree_view.selection();
         btn_add_item.connect_clicked(move |_| {
-            let parent_iter = selection_add.selected().map(|(_, iter)| iter);
-            let new_iter = store_add.insert_with_values(
-                parent_iter.as_ref(),
-                None,
-                &[
-                    (0, &"application-x-executable".to_value()),
-                    (1, &"New Command".to_value()),
-                    (2, &"command".to_value()),
-                    (3, &"".to_value()),
-                ],
-            );
+            let (parent, sibling) = Self::resolve_insertion_coords(&store_add, &selection_add);
+            let new_iter = store_add.insert_after(parent.as_ref(), sibling.as_ref());
+            store_add.set_value(&new_iter, 0, &"application-x-executable".to_value());
+            store_add.set_value(&new_iter, 1, &"New Command".to_value());
+            store_add.set_value(&new_iter, 2, &"command".to_value());
+            store_add.set_value(&new_iter, 3, &"".to_value());
             selection_add.select_iter(&new_iter);
         });
 
@@ -360,17 +412,12 @@ impl SettingsApp {
         let store_sub = store.clone();
         let selection_sub = tree_view.selection();
         btn_add_sub.connect_clicked(move |_| {
-            let parent_iter = selection_sub.selected().map(|(_, iter)| iter);
-            let new_iter = store_sub.insert_with_values(
-                parent_iter.as_ref(),
-                None,
-                &[
-                    (0, &"folder".to_value()),
-                    (1, &"New Submenu".to_value()),
-                    (2, &"submenu".to_value()),
-                    (3, &"".to_value()),
-                ],
-            );
+            let (parent, sibling) = Self::resolve_insertion_coords(&store_sub, &selection_sub);
+            let new_iter = store_sub.insert_after(parent.as_ref(), sibling.as_ref());
+            store_sub.set_value(&new_iter, 0, &"folder".to_value());
+            store_sub.set_value(&new_iter, 1, &"New Submenu".to_value());
+            store_sub.set_value(&new_iter, 2, &"submenu".to_value());
+            store_sub.set_value(&new_iter, 3, &"".to_value());
             // Insert a dummy item to make it a subdirectory
             store_sub.insert_with_values(
                 Some(&new_iter),
@@ -420,14 +467,52 @@ impl SettingsApp {
             }
         });
 
+        // Copy & Paste Handlers
+        let clipboard = Rc::new(RefCell::new(None::<CopiedNode>));
+        
+        let store_copy = store.clone();
+        let selection_copy = tree_view.selection();
+        let clipboard_copy = clipboard.clone();
+        let btn_paste_enable = btn_paste.clone();
+        btn_copy.connect_clicked(move |_| {
+            if let Some((_, selected_iter)) = selection_copy.selected() {
+                let act_type: String = store_copy.get(&selected_iter, 2);
+                if act_type == "root" {
+                    return; // Cannot copy root
+                }
+                let copied = Self::copy_node_recursive(&store_copy, &selected_iter);
+                *clipboard_copy.borrow_mut() = Some(copied);
+                btn_paste_enable.set_sensitive(true);
+            }
+        });
+
+        let store_paste = store.clone();
+        let selection_paste = tree_view.selection();
+        let clipboard_paste = clipboard.clone();
+        let tree_view_paste = tree_view.clone();
+        btn_paste.connect_clicked(move |_| {
+            let copied_opt = clipboard_paste.borrow().clone();
+            if let Some(node) = copied_opt {
+                let (parent, sibling) = Self::resolve_insertion_coords(&store_paste, &selection_paste);
+                let pasted_iter = Self::paste_node_recursive(&store_paste, parent.as_ref(), sibling.as_ref(), &node);
+                
+                selection_paste.select_iter(&pasted_iter);
+                let path = store_paste.path(&pasted_iter);
+                tree_view_paste.expand_row(&path, true);
+            }
+        });
+
         // Save Button Handler
         let store_save = store.clone();
         let config_path_save = config_path.clone();
         let combo_theme_save = combo_theme.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
         btn_save.connect_clicked(move |_| {
-            // 1. Serialize and save the menu
-            let items = Self::serialize_store(&store_save, None);
+            // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
+            let mut items = vec![];
+            if let Some(root_iter) = store_save.iter_children(None) {
+                items = Self::serialize_store(&store_save, Some(&root_iter));
+            }
             let menu_config = launcher_core::MenuConfig { menu: items };
             if let Err(e) = launcher_core::save_menu(&menu_path, &menu_config) {
                 error!("Failed to save menu configuration: {}", e);
@@ -783,5 +868,78 @@ impl SettingsApp {
         });
 
         dialog.present();
+    }
+
+    fn resolve_insertion_coords(
+        store: &gtk::TreeStore,
+        selection: &gtk::TreeSelection,
+    ) -> (Option<gtk::TreeIter>, Option<gtk::TreeIter>) {
+        if let Some((_, selected_iter)) = selection.selected() {
+            let act_type: String = store.get(&selected_iter, 2);
+            if act_type == "submenu" || act_type == "root" {
+                (Some(selected_iter), None)
+            } else {
+                let parent = store.iter_parent(&selected_iter);
+                (parent, Some(selected_iter))
+            }
+        } else {
+            if let Some(root_iter) = store.iter_children(None) {
+                (Some(root_iter), None)
+            } else {
+                (None, None)
+            }
+        }
+    }
+
+    fn copy_node_recursive(store: &gtk::TreeStore, iter: &gtk::TreeIter) -> CopiedNode {
+        let icon: String = store.get(iter, 0);
+        let label: String = store.get(iter, 1);
+        let action_type: String = store.get(iter, 2);
+        let action_cmd: String = store.get(iter, 3);
+        
+        let mut children = vec![];
+        if let Some(child_iter) = store.iter_children(Some(iter)) {
+            let mut current = child_iter;
+            loop {
+                children.push(Self::copy_node_recursive(store, &current));
+                if !store.iter_next(&mut current) {
+                    break;
+                }
+            }
+        }
+        
+        CopiedNode {
+            label,
+            icon,
+            action_type,
+            action_cmd,
+            children,
+        }
+    }
+
+    fn paste_node_recursive(
+        store: &gtk::TreeStore,
+        parent: Option<&gtk::TreeIter>,
+        sibling: Option<&gtk::TreeIter>,
+        node: &CopiedNode,
+    ) -> gtk::TreeIter {
+        let new_iter = store.insert_after(parent, sibling);
+        store.set_value(&new_iter, 0, &node.icon.to_value());
+        store.set_value(&new_iter, 1, &node.label.to_value());
+        store.set_value(&new_iter, 2, &node.action_type.to_value());
+        store.set_value(&new_iter, 3, &node.action_cmd.to_value());
+        
+        let mut prev_child = None;
+        for child in &node.children {
+            let inserted_child = Self::paste_node_recursive(
+                store,
+                Some(&new_iter),
+                prev_child.as_ref(),
+                child,
+            );
+            prev_child = Some(inserted_child);
+        }
+        
+        new_iter
     }
 }
