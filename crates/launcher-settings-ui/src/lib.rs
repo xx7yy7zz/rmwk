@@ -106,7 +106,6 @@ impl SettingsApp {
 
         // --- LEFT COLUMN ---
         let left_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        left_vbox.set_width_request(350);
         left_vbox.set_vexpand(true);
 
         // Scrollable window for TreeView
@@ -155,8 +154,6 @@ impl SettingsApp {
         label_column.pack_start(&label_renderer, true);
         label_column.add_attribute(&label_renderer, "text", 1);
         label_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
-        label_column.set_fixed_width(225);
-        label_column.set_resizable(true);
         tree_view.append_column(&label_column);
 
         // Col 2: Action Type
@@ -167,15 +164,17 @@ impl SettingsApp {
         type_column.pack_start(&type_renderer, true);
         type_column.add_attribute(&type_renderer, "text", 2);
         type_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
-        type_column.set_fixed_width(75);
-        type_column.set_resizable(true);
         tree_view.append_column(&type_column);
 
         scroll_win.set_child(Some(&tree_view));
         left_vbox.append(&scroll_win);
 
-        // Dynamically resize the tree panel to exactly 50% of the window's height
+        // Dynamically resize the tree panel to exactly 50% of the window's height and width
         let scroll_win_clone = scroll_win.clone();
+        let left_vbox_clone = left_vbox.clone();
+        let label_col_clone = label_column.clone();
+        let type_col_clone = type_column.clone();
+
         window.connect_map(move |win| {
             if let Some(surface) = win.surface() {
                 let scroll_win_c = scroll_win_clone.clone();
@@ -183,10 +182,33 @@ impl SettingsApp {
                 if initial_h >= 100 {
                     scroll_win_c.set_height_request(initial_h);
                 }
+
+                let left_vbox_c = left_vbox_clone.clone();
+                let label_col_c = label_col_clone.clone();
+                let type_col_c = type_col_clone.clone();
+                let initial_w = (surface.width() / 2) - 15;
+                if initial_w >= 100 {
+                    left_vbox_c.set_width_request(initial_w);
+                    label_col_c.set_fixed_width((initial_w * 3) / 4);
+                    type_col_c.set_fixed_width(initial_w / 4);
+                }
+
                 surface.connect_notify_local(Some("height"), move |surf, _| {
                     let dynamic_h = (surf.height() / 2) - 15;
                     if dynamic_h >= 100 {
                         scroll_win_c.set_height_request(dynamic_h);
+                    }
+                });
+
+                let left_vbox_c2 = left_vbox_clone.clone();
+                let label_col_c2 = label_col_clone.clone();
+                let type_col_c2 = type_col_clone.clone();
+                surface.connect_notify_local(Some("width"), move |surf, _| {
+                    let dynamic_w = (surf.width() / 2) - 15;
+                    if dynamic_w >= 100 {
+                        left_vbox_c2.set_width_request(dynamic_w);
+                        label_col_c2.set_fixed_width((dynamic_w * 3) / 4);
+                        type_col_c2.set_fixed_width(dynamic_w / 4);
                     }
                 });
             }
