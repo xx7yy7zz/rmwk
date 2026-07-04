@@ -154,7 +154,9 @@ impl SettingsApp {
         label_column.set_title("Menu Item");
         label_column.pack_start(&label_renderer, true);
         label_column.add_attribute(&label_renderer, "text", 1);
-        label_column.set_expand(true);
+        label_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
+        label_column.set_fixed_width(225);
+        label_column.set_resizable(true);
         tree_view.append_column(&label_column);
 
         // Col 2: Action Type
@@ -165,7 +167,7 @@ impl SettingsApp {
         type_column.pack_start(&type_renderer, true);
         type_column.add_attribute(&type_renderer, "text", 2);
         type_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
-        type_column.set_fixed_width(80);
+        type_column.set_fixed_width(75);
         type_column.set_resizable(true);
         tree_view.append_column(&type_column);
 
