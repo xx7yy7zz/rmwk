@@ -1,10 +1,10 @@
-use gtk4 as gtk;
-use gtk::prelude::*;
 use gtk::gdk;
-use std::path::{Path, PathBuf};
+use gtk::prelude::*;
+use gtk4 as gtk;
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[derive(Clone, Debug)]
 struct CopiedNode {
@@ -56,12 +56,16 @@ impl SettingsApp {
         window.set_title(Some("rmwk Settings"));
         window.set_default_size(800, 500);
 
-        let font_path = config_path.parent()
+        let font_path = config_path
+            .parent()
             .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
-            .unwrap_or_else(|| PathBuf::from("/home/karim/.config/rmwk/fonts/MaterialSymbolsRounded.ttf"));
-        
+            .unwrap_or_else(|| {
+                PathBuf::from("/home/karim/.config/rmwk/fonts/MaterialSymbolsRounded.ttf")
+            });
+
         let font_provider = gtk::CssProvider::new();
-        let font_css = format!("
+        let font_css = format!(
+            "
             @font-face {{
                 font-family: 'Material Symbols Rounded';
                 src: url('{}');
@@ -70,7 +74,9 @@ impl SettingsApp {
                 font-family: 'Material Symbols Rounded';
                 font-size: 24px;
             }}
-        ", font_path.to_string_lossy());
+        ",
+            font_path.to_string_lossy()
+        );
         font_provider.load_from_data(&font_css);
 
         if let Some(display) = gdk::Display::default() {
@@ -108,8 +114,7 @@ impl SettingsApp {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .propagate_natural_height(false)
-            .height_request(200)
-            .vexpand(true)
+            .vexpand(false)
             .build();
 
         // Create TreeStore:
@@ -165,6 +170,18 @@ impl SettingsApp {
 
         scroll_win.set_child(Some(&tree_view));
         left_vbox.append(&scroll_win);
+
+        // Dynamically resize the tree panel to exactly 50% of the window's height
+        let scroll_win_clone = scroll_win.clone();
+        window.connect_map(move |win| {
+            if let Some(surface) = win.surface() {
+                let scroll_win_c = scroll_win_clone.clone();
+                scroll_win_c.set_height_request((surface.height() / 2) - 15);
+                surface.connect_notify_local(Some("height"), move |surf, _| {
+                    scroll_win_c.set_height_request((surf.height() / 2) - 15);
+                });
+            }
+        });
 
         // Buttons under TreeView
         let btn_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
@@ -223,14 +240,14 @@ impl SettingsApp {
         // 3. Icon Entry & Picker Button
         let lbl_icon = gtk::Label::new(Some("Icon:"));
         lbl_icon.set_halign(gtk::Align::End);
-        
+
         let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         let entry_icon = gtk::Entry::new();
         entry_icon.set_hexpand(true);
         let btn_pick_icon = gtk::Button::with_label("🔍 Select");
         icon_box.append(&entry_icon);
         icon_box.append(&btn_pick_icon);
-        
+
         prop_grid.attach(&lbl_icon, 0, 2, 1, 1);
         prop_grid.attach(&icon_box, 1, 2, 1, 1);
 
@@ -245,12 +262,15 @@ impl SettingsApp {
         let btn_pick_icon_toggle = btn_pick_icon.clone();
         let entry_icon_toggle = entry_icon.clone();
         combo_icon_type.connect_changed(move |combo| {
-            let active_id = combo.active_id().map(|s| s.to_string()).unwrap_or_else(|| "picker".to_string());
+            let active_id = combo
+                .active_id()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "picker".to_string());
             if active_id == "char" {
                 entry_icon_toggle.set_max_length(1);
                 entry_icon_toggle.set_placeholder_text(Some("e.g. A, 🚀"));
                 btn_pick_icon_toggle.set_visible(false);
-                
+
                 let txt = entry_icon_toggle.text().to_string();
                 if txt.chars().count() > 1 {
                     if let Some(first_char) = txt.chars().next() {
@@ -367,13 +387,13 @@ impl SettingsApp {
                 }
 
                 sel_label.set_text(&label);
-                
+
                 if icon.chars().count() == 1 {
                     sel_icon_type.set_active_id(Some("char"));
                 } else {
                     sel_icon_type.set_active_id(Some("picker"));
                 }
-                
+
                 sel_icon.set_text(&icon);
                 sel_cmd.set_text(&cmd);
             }
@@ -478,7 +498,7 @@ impl SettingsApp {
 
         // Copy & Paste Handlers
         let clipboard = Rc::new(RefCell::new(None::<CopiedNode>));
-        
+
         let store_copy = store.clone();
         let selection_copy = tree_view.selection();
         let clipboard_copy = clipboard.clone();
@@ -502,9 +522,15 @@ impl SettingsApp {
         btn_paste.connect_clicked(move |_| {
             let copied_opt = clipboard_paste.borrow().clone();
             if let Some(node) = copied_opt {
-                let (parent, sibling) = Self::resolve_insertion_coords(&store_paste, &selection_paste);
-                let pasted_iter = Self::paste_node_recursive(&store_paste, parent.as_ref(), sibling.as_ref(), &node);
-                
+                let (parent, sibling) =
+                    Self::resolve_insertion_coords(&store_paste, &selection_paste);
+                let pasted_iter = Self::paste_node_recursive(
+                    &store_paste,
+                    parent.as_ref(),
+                    sibling.as_ref(),
+                    &node,
+                );
+
                 selection_paste.select_iter(&pasted_iter);
                 let path = store_paste.path(&pasted_iter);
                 tree_view_paste.expand_row(&path, true);
@@ -700,20 +726,20 @@ impl SettingsApp {
             if search_lower.is_empty() || name.to_lowercase().contains(&search_lower) {
                 let btn = gtk::Button::builder().has_frame(false).build();
                 let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                
+
                 let lbl_glyph = gtk::Label::new(Some(&glyph.to_string()));
                 lbl_glyph.add_css_class("material-icon-glyph");
-                
+
                 let lbl_name = gtk::Label::new(Some(name));
                 lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 lbl_name.set_max_width_chars(10);
-                
+
                 btn_box.append(&lbl_glyph);
                 btn_box.append(&lbl_name);
                 btn.set_child(Some(&btn_box));
-                
+
                 flow_box.insert(&btn, -1);
-                
+
                 let name_clone = name.clone();
                 let entry_clone = entry_icon.clone();
                 let dialog_clone = dialog.clone();
@@ -749,20 +775,20 @@ impl SettingsApp {
             if search_lower.is_empty() || name.to_lowercase().contains(&search_lower) {
                 let btn = gtk::Button::builder().has_frame(false).build();
                 let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                
+
                 let img = gtk::Image::from_icon_name(name);
                 img.set_icon_size(gtk::IconSize::Large);
-                
+
                 let lbl_name = gtk::Label::new(Some(name));
                 lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 lbl_name.set_max_width_chars(10);
-                
+
                 btn_box.append(&img);
                 btn_box.append(&lbl_name);
                 btn.set_child(Some(&btn_box));
-                
+
                 flow_box.insert(&btn, -1);
-                
+
                 let name_clone = name.clone();
                 let entry_clone = entry_icon.clone();
                 let dialog_clone = dialog.clone();
@@ -808,7 +834,7 @@ impl SettingsApp {
         let notebook = gtk::Notebook::new();
         notebook.set_vexpand(true);
         notebook.set_hexpand(true);
-        
+
         // Tab 1: Material Symbols
         let material_scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -823,7 +849,10 @@ impl SettingsApp {
         material_flow.set_vexpand(true);
         material_flow.set_hexpand(true);
         material_scrolled.set_child(Some(&material_flow));
-        notebook.append_page(&material_scrolled, Some(&gtk::Label::new(Some("Material Symbols"))));
+        notebook.append_page(
+            &material_scrolled,
+            Some(&gtk::Label::new(Some("Material Symbols"))),
+        );
 
         // Tab 2: System Icons
         let system_scrolled = gtk::ScrolledWindow::builder()
@@ -839,7 +868,10 @@ impl SettingsApp {
         system_flow.set_vexpand(true);
         system_flow.set_hexpand(true);
         system_scrolled.set_child(Some(&system_flow));
-        notebook.append_page(&system_scrolled, Some(&gtk::Label::new(Some("System Icons"))));
+        notebook.append_page(
+            &system_scrolled,
+            Some(&gtk::Label::new(Some("System Icons"))),
+        );
 
         main_box.append(&notebook);
         dialog.set_child(Some(&main_box));
@@ -852,7 +884,8 @@ impl SettingsApp {
         // Load System icons using gtk::IconTheme
         let display = WidgetExt::display(parent_window);
         let icon_theme = gtk::IconTheme::for_display(&display);
-        let mut system_icons_vec: Vec<String> = icon_theme.icon_names()
+        let mut system_icons_vec: Vec<String> = icon_theme
+            .icon_names()
             .into_iter()
             .map(|s| s.to_string())
             .collect();
@@ -872,8 +905,20 @@ impl SettingsApp {
 
         search_entry.connect_search_changed(move |entry| {
             let text = entry.text().to_lowercase();
-            Self::refresh_material_grid(&material_flow_clone, &text, &codepoints_clone, &entry_icon_clone, &dialog_clone);
-            Self::refresh_system_grid(&system_flow_clone, &text, &system_icons_clone, &entry_icon_clone, &dialog_clone);
+            Self::refresh_material_grid(
+                &material_flow_clone,
+                &text,
+                &codepoints_clone,
+                &entry_icon_clone,
+                &dialog_clone,
+            );
+            Self::refresh_system_grid(
+                &system_flow_clone,
+                &text,
+                &system_icons_clone,
+                &entry_icon_clone,
+                &dialog_clone,
+            );
         });
 
         dialog.present();
@@ -905,7 +950,7 @@ impl SettingsApp {
         let label: String = store.get(iter, 1);
         let action_type: String = store.get(iter, 2);
         let action_cmd: String = store.get(iter, 3);
-        
+
         let mut children = vec![];
         if let Some(child_iter) = store.iter_children(Some(iter)) {
             let mut current = child_iter;
@@ -916,7 +961,7 @@ impl SettingsApp {
                 }
             }
         }
-        
+
         CopiedNode {
             label,
             icon,
@@ -937,18 +982,14 @@ impl SettingsApp {
         store.set_value(&new_iter, 1, &node.label.to_value());
         store.set_value(&new_iter, 2, &node.action_type.to_value());
         store.set_value(&new_iter, 3, &node.action_cmd.to_value());
-        
+
         let mut prev_child = None;
         for child in &node.children {
-            let inserted_child = Self::paste_node_recursive(
-                store,
-                Some(&new_iter),
-                prev_child.as_ref(),
-                child,
-            );
+            let inserted_child =
+                Self::paste_node_recursive(store, Some(&new_iter), prev_child.as_ref(), child);
             prev_child = Some(inserted_child);
         }
-        
+
         new_iter
     }
 }
