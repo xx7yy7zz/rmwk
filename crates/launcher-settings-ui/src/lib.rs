@@ -101,14 +101,15 @@ impl SettingsApp {
         // --- LEFT COLUMN ---
         let left_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
         left_vbox.set_width_request(350);
+        left_vbox.set_vexpand(true);
 
         // Scrollable window for TreeView
         let scroll_win = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .propagate_natural_height(false)
-            .height_request(250)
-            .vexpand(false)
+            .height_request(200)
+            .vexpand(true)
             .build();
 
         // Create TreeStore:
@@ -147,9 +148,7 @@ impl SettingsApp {
         label_column.set_title("Menu Item");
         label_column.pack_start(&label_renderer, true);
         label_column.add_attribute(&label_renderer, "text", 1);
-        label_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
-        label_column.set_fixed_width(180);
-        label_column.set_resizable(true);
+        label_column.set_expand(true);
         tree_view.append_column(&label_column);
 
         // Col 2: Action Type
@@ -160,7 +159,7 @@ impl SettingsApp {
         type_column.pack_start(&type_renderer, true);
         type_column.add_attribute(&type_renderer, "text", 2);
         type_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
-        type_column.set_fixed_width(100);
+        type_column.set_fixed_width(80);
         type_column.set_resizable(true);
         tree_view.append_column(&type_column);
 
