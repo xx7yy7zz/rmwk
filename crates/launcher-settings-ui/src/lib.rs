@@ -106,7 +106,9 @@ impl SettingsApp {
         let scroll_win = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .propagate_natural_height(true)
+            .propagate_natural_height(false)
+            .height_request(250)
+            .vexpand(false)
             .build();
 
         // Create TreeStore:
@@ -140,18 +142,26 @@ impl SettingsApp {
 
         // Col 1: Label
         let label_renderer = gtk::CellRendererText::new();
+        label_renderer.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let label_column = gtk::TreeViewColumn::new();
         label_column.set_title("Menu Item");
         label_column.pack_start(&label_renderer, true);
         label_column.add_attribute(&label_renderer, "text", 1);
+        label_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
+        label_column.set_fixed_width(180);
+        label_column.set_resizable(true);
         tree_view.append_column(&label_column);
 
         // Col 2: Action Type
         let type_renderer = gtk::CellRendererText::new();
+        type_renderer.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let type_column = gtk::TreeViewColumn::new();
         type_column.set_title("Type");
         type_column.pack_start(&type_renderer, true);
         type_column.add_attribute(&type_renderer, "text", 2);
+        type_column.set_sizing(gtk::TreeViewColumnSizing::Fixed);
+        type_column.set_fixed_width(100);
+        type_column.set_resizable(true);
         tree_view.append_column(&type_column);
 
         scroll_win.set_child(Some(&tree_view));
