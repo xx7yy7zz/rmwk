@@ -61,8 +61,7 @@ pub struct MenuItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
-    Exec { cmd: String },
-    Shell { cmd: String },
+    Command { cmd: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,21 +92,12 @@ pub fn save_menu<P: AsRef<Path>>(path: P, menu: &MenuConfig) -> Result<()> {
 
 pub fn run_action(action: &Action) -> Result<()> {
     match action {
-        Action::Exec { cmd } => {
-            let parts: Vec<&str> = cmd.split_whitespace().collect();
-            if !parts.is_empty() {
-                std::process::Command::new(parts[0])
-                    .args(&parts[1..])
-                    .spawn()
-                    .context("Failed to spawn exec command")?;
-            }
-        }
-        Action::Shell { cmd } => {
+        Action::Command { cmd } => {
             std::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
                 .spawn()
-                .context("Failed to spawn shell command")?;
+                .context("Failed to spawn command")?;
         }
     }
     Ok(())

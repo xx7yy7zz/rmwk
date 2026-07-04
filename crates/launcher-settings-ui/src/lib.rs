@@ -101,7 +101,7 @@ impl SettingsApp {
         // Create TreeStore:
         // Col 0: Icon (String)
         // Col 1: Label (String)
-        // Col 2: Action Type (String: "exec", "shell", "submenu")
+        // Col 2: Action Type (String: "command", "submenu")
         // Col 3: Action Command (String)
         let store = gtk::TreeStore::new(&[
             glib::Type::STRING,
@@ -137,7 +137,7 @@ impl SettingsApp {
         // Buttons under TreeView
         let btn_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
 
-        let btn_add_item = gtk::Button::with_label("Add Item");
+        let btn_add_item = gtk::Button::with_label("Add Command");
         let btn_add_sub = gtk::Button::with_label("Add Submenu");
         let btn_delete = gtk::Button::with_label("Delete");
         let btn_up = gtk::Button::with_label("▲");
@@ -227,22 +227,12 @@ impl SettingsApp {
             }
         });
 
-        // 4. Type Dropdown
-        let lbl_type = gtk::Label::new(Some("Type:"));
-        lbl_type.set_halign(gtk::Align::End);
-        let combo_type = gtk::ComboBoxText::new();
-        combo_type.append(Some("exec"), "Execute Process");
-        combo_type.append(Some("shell"), "Shell Command");
-        combo_type.append(Some("submenu"), "Submenu Directory");
-        prop_grid.attach(&lbl_type, 0, 3, 1, 1);
-        prop_grid.attach(&combo_type, 1, 3, 1, 1);
-
-        // 5. Command Entry
+        // 4. Command Entry
         let lbl_cmd = gtk::Label::new(Some("Command:"));
         lbl_cmd.set_halign(gtk::Align::End);
         let entry_cmd = gtk::Entry::new();
-        prop_grid.attach(&lbl_cmd, 0, 4, 1, 1);
-        prop_grid.attach(&entry_cmd, 1, 4, 1, 1);
+        prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
+        prop_grid.attach(&entry_cmd, 1, 3, 1, 1);
 
         prop_frame.set_child(Some(&prop_grid));
         right_vbox.append(&prop_frame);
@@ -284,26 +274,15 @@ impl SettingsApp {
 
         // --- CONTROL LAYER / EVENT SIGNALS ---
 
-        // Prevent commands from being edited if it is a submenu
-        let entry_cmd_clone = entry_cmd.clone();
-        combo_type.connect_changed(move |combo| {
-            if let Some(id) = combo.active_id() {
-                if id == "submenu" {
-                    entry_cmd_clone.set_sensitive(false);
-                    entry_cmd_clone.set_text("");
-                } else {
-                    entry_cmd_clone.set_sensitive(true);
-                }
-            }
-        });
-
         // Selection Change: Updates property inputs
         let selection = tree_view.selection();
         let sel_label = entry_label.clone();
         let sel_icon = entry_icon.clone();
-        let sel_type = combo_type.clone();
         let sel_cmd = entry_cmd.clone();
         let sel_icon_type = combo_icon_type.clone();
+
+        let lbl_cmd_clone = lbl_cmd.clone();
+        let entry_cmd_clone = entry_cmd.clone();
 
         selection.connect_changed(move |sel| {
             if let Some((model, iter)) = sel.selected() {
@@ -321,8 +300,16 @@ impl SettingsApp {
                 }
                 
                 sel_icon.set_text(&icon);
-                sel_type.set_active_id(Some(&act_type));
                 sel_cmd.set_text(&cmd);
+
+                // Show/hide command input dynamically
+                if act_type == "submenu" {
+                    lbl_cmd_clone.set_visible(false);
+                    entry_cmd_clone.set_visible(false);
+                } else {
+                    lbl_cmd_clone.set_visible(true);
+                    entry_cmd_clone.set_visible(true);
+                }
             }
         });
 
@@ -343,16 +330,6 @@ impl SettingsApp {
             }
         });
 
-        let store_t = store.clone();
-        let sel_t = tree_view.selection();
-        combo_type.connect_changed(move |c| {
-            if let Some(id) = c.active_id() {
-                if let Some((_, iter)) = sel_t.selected() {
-                    store_t.set_value(&iter, 2, &id.to_string().to_value());
-                }
-            }
-        });
-
         let store_c = store.clone();
         let sel_c = tree_view.selection();
         entry_cmd.connect_changed(move |e| {
@@ -361,7 +338,7 @@ impl SettingsApp {
             }
         });
 
-        // Add Item Button
+        // Add Command Button
         let store_add = store.clone();
         let selection_add = tree_view.selection();
         btn_add_item.connect_clicked(move |_| {
@@ -371,8 +348,8 @@ impl SettingsApp {
                 None,
                 &[
                     (0, &"application-x-executable".to_value()),
-                    (1, &"New Item".to_value()),
-                    (2, &"exec".to_value()),
+                    (1, &"New Command".to_value()),
+                    (2, &"command".to_value()),
                     (3, &"".to_value()),
                 ],
             );
@@ -400,8 +377,8 @@ impl SettingsApp {
                 None,
                 &[
                     (0, &"application-x-executable".to_value()),
-                    (1, &"Placeholder Item".to_value()),
-                    (2, &"exec".to_value()),
+                    (1, &"New Command".to_value()),
+                    (2, &"command".to_value()),
                     (3, &"".to_value()),
                 ],
             );
@@ -513,11 +490,10 @@ impl SettingsApp {
                     (
                         2,
                         &match &item.action {
-                            Some(launcher_core::Action::Exec { .. }) => "exec".to_value(),
-                            Some(launcher_core::Action::Shell { .. }) => "shell".to_value(),
+                            Some(launcher_core::Action::Command { .. }) => "command".to_value(),
                             None => {
                                 if item.children.is_empty() {
-                                    "exec".to_value()
+                                    "command".to_value()
                                 } else {
                                     "submenu".to_value()
                                 }
@@ -527,8 +503,7 @@ impl SettingsApp {
                     (
                         3,
                         &match &item.action {
-                            Some(launcher_core::Action::Exec { cmd }) => cmd.to_value(),
-                            Some(launcher_core::Action::Shell { cmd }) => cmd.to_value(),
+                            Some(launcher_core::Action::Command { cmd }) => cmd.to_value(),
                             None => "".to_value(),
                         },
                     ),
@@ -564,8 +539,7 @@ impl SettingsApp {
 
             let action = if children.is_empty() {
                 match action_type.as_str() {
-                    "exec" => Some(launcher_core::Action::Exec { cmd: action_cmd }),
-                    "shell" => Some(launcher_core::Action::Shell { cmd: action_cmd }),
+                    "command" => Some(launcher_core::Action::Command { cmd: action_cmd }),
                     _ => None,
                 }
             } else {
