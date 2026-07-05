@@ -43,7 +43,10 @@ struct MenuState {
     hover_progresses: Vec<f64>, // 0.0 -> 1.0 for each slice
 
     // Cached icons to avoid loading on every frame tick
-    icon_cache: HashMap<String, Option<gtk::gdk_pixbuf::Pixbuf>>,
+    icon_cache: HashMap<String, Option<cairo::ImageSurface>>,
+
+    // Cached Pango layouts for single char icons (avoids shaping every frame)
+    text_layout_cache: HashMap<String, gtk::pango::Layout>,
 
     // Extra interactivity margin beyond slices
     extra_radius: f64,
@@ -94,7 +97,23 @@ impl MenuState {
                 }
                 if !self.icon_cache.contains_key(icon_name) {
                     let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
-                    self.icon_cache.insert(icon_name.clone(), pixbuf);
+                    let surface = pixbuf.and_then(|p| {
+                        let format = if p.has_alpha() {
+                            cairo::Format::ARgb32
+                        } else {
+                            cairo::Format::Rgb24
+                        };
+                        if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height())
+                        {
+                            if let Ok(cr) = cairo::Context::new(&surf) {
+                                cr.set_source_pixbuf(&p, 0.0, 0.0);
+                                cr.paint().unwrap();
+                                return Some(surf);
+                            }
+                        }
+                        None
+                    });
+                    self.icon_cache.insert(icon_name.clone(), surface);
                 }
             }
         }
@@ -108,7 +127,7 @@ fn load_icon_pixbuf(
     use_symbolic: bool,
 ) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::for_display(display);
-    
+
     // First, lookup at 64 (or 16 for symbolic) to catch the detailed SVGs
     // SVGs usually map their "detailed" scalable versions to 48px or 64px.
     let initial_size = if use_symbolic { 16 } else { 64 };
@@ -131,11 +150,12 @@ fn load_icon_pixbuf(
         if let Some(path) = file.path() {
             // SVGs scale infinitely, so the 64px detailed version will scale perfectly to raster_size.
             let is_svg = path.extension().and_then(|s| s.to_str()) == Some("svg");
-            
+
             if is_svg {
-                return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size).ok();
+                return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size)
+                    .ok();
             } else {
-                // It's a raster image (PNG) and we want high quality! 
+                // It's a raster image (PNG) and we want high quality!
                 // Do a second lookup asking for the target raster_size so we get the high-res PNG.
                 let high_res_paintable = icon_theme.lookup_icon(
                     icon_name,
@@ -145,15 +165,21 @@ fn load_icon_pixbuf(
                     gtk::TextDirection::None,
                     gtk::IconLookupFlags::FORCE_REGULAR,
                 );
-                
+
                 if let Some(hr_file) = high_res_paintable.file() {
                     if let Some(hr_path) = hr_file.path() {
-                        return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(hr_path, raster_size, raster_size).ok();
+                        return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(
+                            hr_path,
+                            raster_size,
+                            raster_size,
+                        )
+                        .ok();
                     }
                 }
-                
+
                 // Fallback to the original if the second lookup somehow failed
-                return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size).ok();
+                return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size)
+                    .ok();
             }
         }
     }
@@ -399,6 +425,7 @@ impl LauncherApp {
             open_progress: 0.0,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
+            text_layout_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
@@ -442,9 +469,17 @@ impl LauncherApp {
             };
 
             // Clear surface (ensure transparent background is clean)
+            let max_interactive_dist =
+                BASE_R + SLICE_WIDTH + HOVER_GROW + state_ref.extra_radius + 80.0;
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
             cr.set_operator(cairo::Operator::Source);
-            cr.paint().unwrap();
+            cr.rectangle(
+                cx - max_interactive_dist,
+                cy - max_interactive_dist,
+                max_interactive_dist * 2.0,
+                max_interactive_dist * 2.0,
+            );
+            cr.fill().unwrap();
             cr.set_operator(cairo::Operator::Over);
 
             // 1. Get wedge colors
@@ -453,7 +488,7 @@ impl LauncherApp {
                 c
             } else {
                 let context = area.style_context();
-                
+
                 context.save();
                 context.add_class("radial-slice");
                 context.set_state(gtk::StateFlags::NORMAL);
@@ -483,16 +518,23 @@ impl LauncherApp {
                 context.set_state(gtk::StateFlags::PRELIGHT);
                 let hub_text_color = context.color();
                 context.restore();
-                
+
                 let c = ThemeColors {
-                    fill_color, hover_fill_color, border_color, hover_border_color,
-                    label_color, hover_label_color, hub_fill, hub_border, hub_text_color
+                    fill_color,
+                    hover_fill_color,
+                    border_color,
+                    hover_border_color,
+                    label_color,
+                    hover_label_color,
+                    hub_fill,
+                    hub_border,
+                    hub_text_color,
                 };
-                
+
                 *state_ref.theme_colors.borrow_mut() = Some(c.clone());
                 c
             };
-            
+
             let fill_color = colors.fill_color;
             let hover_fill_color = colors.hover_fill_color;
             let border_color = colors.border_color;
@@ -598,26 +640,36 @@ impl LauncherApp {
                                 );
                             }
 
-                            let glyph_str = icon_name.clone();
-                            let layout = area.create_pango_layout(Some(&glyph_str));
-                            let mut font_desc = gtk::pango::FontDescription::new();
-                            font_desc.set_family("Sans");
-                            let weight = if state_ref.bold_single_chars {
-                                gtk::pango::Weight::Bold
+                            let layout = if let Some(l) = state_ref.text_layout_cache.get(icon_name)
+                            {
+                                l.clone()
                             } else {
-                                gtk::pango::Weight::Normal
+                                let l = area.create_pango_layout(Some(icon_name));
+                                let mut font_desc = gtk::pango::FontDescription::new();
+                                font_desc.set_family("Sans");
+                                let weight = if state_ref.bold_single_chars {
+                                    gtk::pango::Weight::Bold
+                                } else {
+                                    gtk::pango::Weight::Normal
+                                };
+                                font_desc.set_weight(weight);
+                                font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
+                                l.set_font_description(Some(&font_desc));
+                                state_ref
+                                    .text_layout_cache
+                                    .insert(icon_name.clone(), l.clone());
+                                l
                             };
-                            font_desc.set_weight(weight);
-                            // Multiply by 0.75 to convert pixels to points, matching cairo's pixel size
-                            font_desc.set_size(gtk::pango::units_from_double(icon_size * 0.75 * ease_progress));
-                            layout.set_font_description(Some(&font_desc));
 
                             let (pango_w, pango_h) = layout.pixel_size();
-                            let rx = ix - (pango_w as f64 / 2.0);
-                            let ry = iy - (pango_h as f64 / 2.0);
+                            let scale = (icon_size * ease_progress) / 64.0;
 
-                            cr.move_to(rx, ry);
-                            pangocairo::functions::show_layout(&cr, &layout);
+                            if scale > 0.001 {
+                                cr.translate(ix, iy);
+                                cr.scale(scale, scale);
+                                cr.move_to(-(pango_w as f64 / 2.0), -(pango_h as f64 / 2.0));
+                                pangocairo::functions::show_layout(&cr, &layout);
+                            }
 
                             let _ = cr.restore();
                         } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
@@ -653,9 +705,9 @@ impl LauncherApp {
                                 let _ = cr.show_text(&glyph_str);
                             }
                             let _ = cr.restore();
-                        } else if let Some(Some(pixbuf)) = state_ref.icon_cache.get(icon_name) {
-                            let current_w = pixbuf.width() as f64;
-                            let current_h = pixbuf.height() as f64;
+                        } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                            let current_w = surf.width() as f64;
+                            let current_h = surf.height() as f64;
                             let scale =
                                 (icon_size * ease_progress) / current_w.max(current_h).max(1.0);
                             if scale > 0.001 {
@@ -665,8 +717,9 @@ impl LauncherApp {
                                     cy + r_center * mid_angle.sin(),
                                 );
                                 cr.scale(scale, scale);
-                                cr.set_source_pixbuf(pixbuf, -current_w / 2.0, -current_h / 2.0);
-                                let _ = cr.paint();
+                                cr.set_source_surface(surf, -current_w / 2.0, -current_h / 2.0)
+                                    .unwrap();
+                                let _ = cr.paint_with_alpha(ease_progress);
                                 let _ = cr.restore();
                             }
                         }
@@ -727,22 +780,17 @@ impl LauncherApp {
             // Draw FPS counter (bright green, centered below the menu)
             let outer_radius = BASE_R + SLICE_WIDTH;
             let fps_str = format!("FPS: {:.1}", state_ref.fps_current);
-            let layout = area.create_pango_layout(Some(&fps_str));
-            let mut font_desc = gtk::pango::FontDescription::new();
-            font_desc.set_family("Sans");
-            font_desc.set_weight(gtk::pango::Weight::Bold);
-            font_desc.set_size(gtk::pango::units_from_double(14.0 * ease_progress));
-            layout.set_font_description(Some(&font_desc));
-
-            let (pango_w, _pango_h) = layout.pixel_size();
-            let rx = cx - (pango_w as f64 / 2.0);
-            let ry = cy + (outer_radius + 40.0) * ease_progress;
-
-            let _ = cr.save();
+            
             cr.set_source_rgba(0.0, 0.8, 0.0, 1.0 * ease_progress);
-            cr.move_to(rx, ry);
-            pangocairo::functions::show_layout(&cr, &layout);
-            let _ = cr.restore();
+            cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+            cr.set_font_size(14.0 * ease_progress);
+            
+            if let Ok(extents) = cr.text_extents(&fps_str) {
+                let rx = cx - extents.width() / 2.0 - extents.x_bearing();
+                let ry = cy + (outer_radius + 40.0) * ease_progress;
+                cr.move_to(rx, ry);
+                let _ = cr.show_text(&fps_str);
+            }
         });
         window.set_child(Some(&drawing_area));
 
@@ -1022,7 +1070,7 @@ impl LauncherApp {
 
             // Open transition (~120ms)
             if state.is_opening {
-                state.open_progress += dt / 0.120;
+                state.open_progress += dt / 0.250; // Slowed down to 500ms for testing
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
                     state.is_opening = false;
@@ -1032,7 +1080,7 @@ impl LauncherApp {
 
             // Close transition (~80ms)
             if state.is_closing {
-                state.open_progress -= dt / 0.080;
+                state.open_progress -= dt / 0.250; // Slowed down to 500ms for testing
                 if state.open_progress <= 0.0 {
                     state.open_progress = 0.0;
                     state.is_closing = false;
