@@ -53,6 +53,7 @@ struct MenuState {
     use_symbolic_icons: bool,
     bold_single_chars: bool,
     center_layout: bool,
+    disable_animations: bool,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -430,6 +431,7 @@ impl LauncherApp {
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
             center_layout: ui_config.center_layout,
+            disable_animations: ui_config.disable_animations,
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
             fps_last_time: std::time::Instant::now(),
@@ -1070,7 +1072,11 @@ impl LauncherApp {
 
             // Open transition (~150ms)
             if state.is_opening {
-                state.open_progress += dt / 0.150;
+                if state.disable_animations {
+                    state.open_progress = 1.0;
+                } else {
+                    state.open_progress += dt / 0.150;
+                }
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
                     state.is_opening = false;
@@ -1080,7 +1086,11 @@ impl LauncherApp {
 
             // Close transition (~150ms)
             if state.is_closing {
-                state.open_progress -= dt / 0.150;
+                if state.disable_animations {
+                    state.open_progress = 0.0;
+                } else {
+                    state.open_progress -= dt / 0.150;
+                }
                 if state.open_progress <= 0.0 {
                     state.open_progress = 0.0;
                     state.is_closing = false;
@@ -1111,7 +1121,12 @@ impl LauncherApp {
                     0.0
                 };
                 let diff = target - state.hover_progresses[i];
-                if diff.abs() > 0.01 {
+                if state.disable_animations {
+                    if diff != 0.0 {
+                        state.hover_progresses[i] = target;
+                        needs_redraw = true;
+                    }
+                } else if diff.abs() > 0.01 {
                     let step = dt / 0.080;
                     state.hover_progresses[i] += diff.signum() * step.min(diff.abs());
                     needs_redraw = true;
@@ -1215,6 +1230,7 @@ impl LauncherApp {
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.center_layout = cfg.ui.center_layout;
+                            state.disable_animations = cfg.ui.disable_animations;
                             state.icon_cache.clear();
                             *state.theme_colors.borrow_mut() = None;
                             if let Some(display) = gdk::Display::default() {

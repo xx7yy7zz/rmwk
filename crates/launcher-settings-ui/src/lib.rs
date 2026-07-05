@@ -351,6 +351,9 @@ impl SettingsApp {
         let chk_center_layout = gtk::CheckButton::with_label("Center Slices on Axes");
         chk_center_layout.set_active(ui_config.ui.center_layout);
 
+        let chk_disable_anim = gtk::CheckButton::with_label("Disable Animations");
+        chk_disable_anim.set_active(ui_config.ui.disable_animations);
+
         settings_hbox.append(&lbl_theme);
         settings_hbox.append(&combo_theme);
         settings_hbox.append(&lbl_extra_radius);
@@ -361,6 +364,7 @@ impl SettingsApp {
         checkboxes_hbox.append(&chk_symbolic_icons);
         checkboxes_hbox.append(&chk_bold_chars);
         checkboxes_hbox.append(&chk_center_layout);
+        checkboxes_hbox.append(&chk_disable_anim);
         right_vbox.append(&checkboxes_hbox);
 
         // Save & Save/Reload buttons at the bottom
@@ -591,6 +595,7 @@ impl SettingsApp {
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
+        let chk_disable_anim_save = chk_disable_anim.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
@@ -615,6 +620,7 @@ impl SettingsApp {
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
+                cfg.ui.disable_animations = chk_disable_anim_save.is_active();
 
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();

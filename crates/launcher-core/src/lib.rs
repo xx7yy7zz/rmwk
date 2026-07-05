@@ -31,6 +31,8 @@ pub struct UiConfig {
     pub bold_single_chars: bool,
     #[serde(default = "default_center_layout")]
     pub center_layout: bool,
+    #[serde(default = "default_disable_animations")]
+    pub disable_animations: bool,
 }
 
 impl Default for UiConfig {
@@ -42,6 +44,7 @@ impl Default for UiConfig {
             use_symbolic_icons: default_use_symbolic_icons(),
             bold_single_chars: default_bold_single_chars(),
             center_layout: default_center_layout(),
+            disable_animations: default_disable_animations(),
         }
     }
 }
@@ -67,6 +70,10 @@ fn default_bold_single_chars() -> bool {
 }
 
 fn default_center_layout() -> bool {
+    false
+}
+
+fn default_disable_animations() -> bool {
     false
 }
 
