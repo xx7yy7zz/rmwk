@@ -35,6 +35,7 @@ struct MenuState {
     // Extra interactivity margin beyond slices
     extra_radius: f64,
     use_symbolic_icons: bool,
+    bold_single_chars: bool,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -358,6 +359,7 @@ impl LauncherApp {
             icon_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
             use_symbolic_icons: ui_config.use_symbolic_icons,
+            bold_single_chars: ui_config.bold_single_chars,
             codepoints,
             fps_last_time: std::time::Instant::now(),
             fps_frame_count: 0,
@@ -545,7 +547,12 @@ impl LauncherApp {
                             let layout = area.create_pango_layout(Some(&glyph_str));
                             let mut font_desc = gtk::pango::FontDescription::new();
                             font_desc.set_family("Sans");
-                            font_desc.set_weight(gtk::pango::Weight::Bold);
+                            let weight = if state_ref.bold_single_chars {
+                                gtk::pango::Weight::Bold
+                            } else {
+                                gtk::pango::Weight::Normal
+                            };
+                            font_desc.set_weight(weight);
                             // Multiply by 0.75 to convert pixels to points, matching cairo's pixel size
                             font_desc.set_size(gtk::pango::units_from_double(icon_size * 0.75 * ease_progress));
                             layout.set_font_description(Some(&font_desc));
@@ -1091,6 +1098,7 @@ impl LauncherApp {
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.extra_radius = cfg.ui.extra_radius;
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
+                            state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.icon_cache.clear();
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);

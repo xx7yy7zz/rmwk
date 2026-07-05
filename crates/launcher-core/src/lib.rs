@@ -27,6 +27,8 @@ pub struct UiConfig {
     pub extra_radius: f64,
     #[serde(default = "default_use_symbolic_icons")]
     pub use_symbolic_icons: bool,
+    #[serde(default = "default_bold_single_chars")]
+    pub bold_single_chars: bool,
 }
 
 impl Default for UiConfig {
@@ -36,6 +38,7 @@ impl Default for UiConfig {
             font: default_font(),
             extra_radius: default_extra_radius(),
             use_symbolic_icons: default_use_symbolic_icons(),
+            bold_single_chars: default_bold_single_chars(),
         }
     }
 }
@@ -54,6 +57,10 @@ fn default_extra_radius() -> f64 {
 
 fn default_use_symbolic_icons() -> bool {
     false
+}
+
+fn default_bold_single_chars() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

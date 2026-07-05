@@ -345,11 +345,15 @@ impl SettingsApp {
         let chk_symbolic_icons = gtk::CheckButton::with_label("Symbolic Icons");
         chk_symbolic_icons.set_active(ui_config.ui.use_symbolic_icons);
 
+        let chk_bold_chars = gtk::CheckButton::with_label("Bold Text Icons");
+        chk_bold_chars.set_active(ui_config.ui.bold_single_chars);
+
         settings_hbox.append(&lbl_theme);
         settings_hbox.append(&combo_theme);
         settings_hbox.append(&lbl_extra_radius);
         settings_hbox.append(&spin_extra_radius);
         settings_hbox.append(&chk_symbolic_icons);
+        settings_hbox.append(&chk_bold_chars);
         right_vbox.append(&settings_hbox);
 
         // Save & Save/Reload buttons at the bottom
@@ -578,6 +582,7 @@ impl SettingsApp {
         let combo_theme_save = combo_theme.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
+        let chk_bold_chars_save = chk_bold_chars.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
@@ -591,7 +596,7 @@ impl SettingsApp {
                 info!("Menu config saved successfully to {:?}", menu_path);
             }
 
-            // 2. Save active theme, extra_radius & use_symbolic_icons back to config.toml
+            // 2. Save active theme, extra_radius, etc. back to config.toml
             if let Some(theme_id) = combo_theme_save.active_id() {
                 let mut cfg = match launcher_core::load_config(&config_path_save) {
                     Ok(c) => c,
@@ -600,6 +605,7 @@ impl SettingsApp {
                 cfg.ui.theme = theme_id.to_string();
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
+                cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
 
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();
