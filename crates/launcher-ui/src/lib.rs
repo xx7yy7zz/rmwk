@@ -1068,9 +1068,9 @@ impl LauncherApp {
 
             let mut needs_redraw = false;
 
-            // Open transition (~120ms)
+            // Open transition (~150ms)
             if state.is_opening {
-                state.open_progress += dt / 0.250; // Slowed down to 500ms for testing
+                state.open_progress += dt / 0.150 
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
                     state.is_opening = false;
@@ -1078,9 +1078,9 @@ impl LauncherApp {
                 needs_redraw = true;
             }
 
-            // Close transition (~80ms)
+            // Close transition (~150ms)
             if state.is_closing {
-                state.open_progress -= dt / 0.250; // Slowed down to 500ms for testing
+                state.open_progress -= dt / 0.150;
                 if state.open_progress <= 0.0 {
                     state.open_progress = 0.0;
                     state.is_closing = false;
