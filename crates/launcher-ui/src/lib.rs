@@ -17,6 +17,19 @@ const BASE_R: f64 = 80.0;
 const SLICE_WIDTH: f64 = 110.0;
 const HOVER_GROW: f64 = 15.0;
 
+#[derive(Clone)]
+struct ThemeColors {
+    fill_color: gtk::gdk::RGBA,
+    hover_fill_color: gtk::gdk::RGBA,
+    border_color: gtk::gdk::RGBA,
+    hover_border_color: gtk::gdk::RGBA,
+    label_color: gtk::gdk::RGBA,
+    hover_label_color: gtk::gdk::RGBA,
+    hub_fill: gtk::gdk::RGBA,
+    hub_border: gtk::gdk::RGBA,
+    hub_text_color: gtk::gdk::RGBA,
+}
+
 struct MenuState {
     root_items: Vec<launcher_core::MenuItem>,
     current_items: Vec<launcher_core::MenuItem>,
@@ -40,6 +53,9 @@ struct MenuState {
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
+
+    // Cached theme colors
+    theme_colors: std::cell::RefCell<Option<ThemeColors>>,
 
     // FPS counter state
     fps_last_time: std::time::Instant,
@@ -363,6 +379,7 @@ impl LauncherApp {
             bold_single_chars: ui_config.bold_single_chars,
             center_layout: ui_config.center_layout,
             codepoints,
+            theme_colors: std::cell::RefCell::new(None),
             fps_last_time: std::time::Instant::now(),
             fps_frame_count: 0,
             fps_current: 0.0,
@@ -405,53 +422,61 @@ impl LauncherApp {
             cr.paint().unwrap();
             cr.set_operator(cairo::Operator::Over);
 
-            // Fetch theme colors dynamically from CSS StyleContext
-            let context = area.style_context();
-
             // 1. Get wedge colors
-            context.save();
-            context.add_class("radial-slice");
+            let cached = state_ref.theme_colors.borrow().clone();
+            let colors = if let Some(c) = cached {
+                c
+            } else {
+                let context = area.style_context();
+                
+                context.save();
+                context.add_class("radial-slice");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let fill_color = context.color();
+                context.set_state(gtk::StateFlags::PRELIGHT);
+                let hover_fill_color = context.color();
+                context.set_state(gtk::StateFlags::ACTIVE);
+                let border_color = context.color();
+                context.set_state(gtk::StateFlags::SELECTED);
+                let hover_border_color = context.color();
+                context.restore();
 
-            context.set_state(gtk::StateFlags::NORMAL);
-            let fill_color = context.color();
+                context.save();
+                context.add_class("radial-label");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let label_color = context.color();
+                context.set_state(gtk::StateFlags::PRELIGHT);
+                let hover_label_color = context.color();
+                context.restore();
 
-            context.set_state(gtk::StateFlags::PRELIGHT);
-            let hover_fill_color = context.color();
-
-            context.set_state(gtk::StateFlags::ACTIVE);
-            let border_color = context.color();
-
-            context.set_state(gtk::StateFlags::SELECTED);
-            let hover_border_color = context.color();
-
-            context.restore();
-
-            // 2. Get label colors
-            context.save();
-            context.add_class("radial-label");
-
-            context.set_state(gtk::StateFlags::NORMAL);
-            let label_color = context.color();
-
-            context.set_state(gtk::StateFlags::PRELIGHT);
-            let hover_label_color = context.color();
-
-            context.restore();
-
-            // 3. Get hub colors
-            context.save();
-            context.add_class("radial-hub");
-
-            context.set_state(gtk::StateFlags::NORMAL);
-            let hub_fill = context.color();
-
-            context.set_state(gtk::StateFlags::ACTIVE);
-            let hub_border = context.color();
-
-            context.set_state(gtk::StateFlags::PRELIGHT);
-            let hub_text_color = context.color();
-
-            context.restore();
+                context.save();
+                context.add_class("radial-hub");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let hub_fill = context.color();
+                context.set_state(gtk::StateFlags::ACTIVE);
+                let hub_border = context.color();
+                context.set_state(gtk::StateFlags::PRELIGHT);
+                let hub_text_color = context.color();
+                context.restore();
+                
+                let c = ThemeColors {
+                    fill_color, hover_fill_color, border_color, hover_border_color,
+                    label_color, hover_label_color, hub_fill, hub_border, hub_text_color
+                };
+                
+                *state_ref.theme_colors.borrow_mut() = Some(c.clone());
+                c
+            };
+            
+            let fill_color = colors.fill_color;
+            let hover_fill_color = colors.hover_fill_color;
+            let border_color = colors.border_color;
+            let hover_border_color = colors.hover_border_color;
+            let label_color = colors.label_color;
+            let hover_label_color = colors.hover_label_color;
+            let hub_fill = colors.hub_fill;
+            let hub_border = colors.hub_border;
+            let hub_text_color = colors.hub_text_color;
 
             if n > 0 {
                 let angle_per_slice = 2.0 * PI / n as f64;
@@ -960,8 +985,9 @@ impl LauncherApp {
             let now = frame_clock.frame_time(); // in microseconds
 
             let dt = if let Some(last) = *last_frame_time.borrow() {
-                // Cap dt at ~16.6ms (60fps) to prevent huge animation jumps if a frame drops or lags
-                ((now - last) as f64 / 1_000_000.0).min(0.01666)
+                let actual_dt = (now - last) as f64 / 1_000_000.0;
+                // Cap dt at 50ms (20fps min) so we don't artificially slow down the animation on 30fps/60fps systems
+                actual_dt.min(0.050)
             } else {
                 0.0
             };
@@ -969,9 +995,9 @@ impl LauncherApp {
 
             let mut needs_redraw = false;
 
-            // Open transition (~200ms)
+            // Open transition (~120ms)
             if state.is_opening {
-                state.open_progress += dt / 0.200;
+                state.open_progress += dt / 0.120;
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
                     state.is_opening = false;
@@ -979,9 +1005,9 @@ impl LauncherApp {
                 needs_redraw = true;
             }
 
-            // Close transition (~150ms)
+            // Close transition (~80ms)
             if state.is_closing {
-                state.open_progress -= dt / 0.150;
+                state.open_progress -= dt / 0.080;
                 if state.open_progress <= 0.0 {
                     state.open_progress = 0.0;
                     state.is_closing = false;
@@ -1013,7 +1039,7 @@ impl LauncherApp {
                 };
                 let diff = target - state.hover_progresses[i];
                 if diff.abs() > 0.01 {
-                    let step = dt / 0.100;
+                    let step = dt / 0.080;
                     state.hover_progresses[i] += diff.signum() * step.min(diff.abs());
                     needs_redraw = true;
                 } else {
@@ -1117,6 +1143,7 @@ impl LauncherApp {
                             state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.center_layout = cfg.ui.center_layout;
                             state.icon_cache.clear();
+                            *state.theme_colors.borrow_mut() = None;
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
