@@ -85,13 +85,17 @@ impl MenuState {
 fn load_icon_pixbuf(
     display: &gdk::Display,
     icon_name: &str,
-    size: i32,
+    raster_size: i32,
 ) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::for_display(display);
+    
+    // Force GTK to look for the 64px nominal size so it grabs the detailed/filled version
+    let lookup_size = 64; 
+
     let paintable = icon_theme.lookup_icon(
         icon_name,
         &[],
-        size,
+        lookup_size,
         1,
         gtk::TextDirection::None,
         gtk::IconLookupFlags::FORCE_REGULAR,
@@ -99,7 +103,7 @@ fn load_icon_pixbuf(
 
     if let Some(file) = paintable.file() {
         if let Some(path) = file.path() {
-            return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, size, size).ok();
+            return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size).ok();
         }
     }
     None
