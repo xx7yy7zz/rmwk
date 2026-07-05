@@ -36,6 +36,7 @@ struct MenuState {
     extra_radius: f64,
     use_symbolic_icons: bool,
     bold_single_chars: bool,
+    center_layout: bool,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -360,6 +361,7 @@ impl LauncherApp {
             extra_radius: ui_config.extra_radius,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
+            center_layout: ui_config.center_layout,
             codepoints,
             fps_last_time: std::time::Instant::now(),
             fps_frame_count: 0,
@@ -463,7 +465,10 @@ impl LauncherApp {
                         0.0
                     };
 
-                    let start_angle = i as f64 * angle_per_slice - PI / 2.0;
+                    let mut start_angle = i as f64 * angle_per_slice - PI / 2.0;
+                    if state_ref.center_layout {
+                        start_angle -= angle_per_slice / 2.0;
+                    }
                     let end_angle = start_angle + angle_per_slice;
 
                     let inner_radius = BASE_R * ease_progress;
@@ -714,12 +719,17 @@ impl LauncherApp {
             let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
 
             if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
+                let angle_per_slice = 2.0 * PI / display_items_count as f64;
                 let mut angle = my.atan2(mx) + PI / 2.0;
+                if state.center_layout {
+                    angle += angle_per_slice / 2.0;
+                }
                 if angle < 0.0 {
                     angle += 2.0 * PI;
+                } else if angle >= 2.0 * PI {
+                    angle -= 2.0 * PI;
                 }
 
-                let angle_per_slice = 2.0 * PI / display_items_count as f64;
                 let index = (angle / angle_per_slice) as usize;
 
                 if index < display_items_count {
@@ -805,12 +815,17 @@ impl LauncherApp {
                     }
                 } else if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist
                 {
+                    let angle_per_slice = 2.0 * PI / display_items_count as f64;
                     let mut angle = my.atan2(mx) + PI / 2.0;
+                    if state.center_layout {
+                        angle += angle_per_slice / 2.0;
+                    }
                     if angle < 0.0 {
                         angle += 2.0 * PI;
+                    } else if angle >= 2.0 * PI {
+                        angle -= 2.0 * PI;
                     }
 
-                    let angle_per_slice = 2.0 * PI / display_items_count as f64;
                     let index = (angle / angle_per_slice) as usize;
 
                     if index < display_items_count {
@@ -1099,6 +1114,7 @@ impl LauncherApp {
                             state.extra_radius = cfg.ui.extra_radius;
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
+                            state.center_layout = cfg.ui.center_layout;
                             state.icon_cache.clear();
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);

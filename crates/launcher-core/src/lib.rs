@@ -29,6 +29,8 @@ pub struct UiConfig {
     pub use_symbolic_icons: bool,
     #[serde(default = "default_bold_single_chars")]
     pub bold_single_chars: bool,
+    #[serde(default = "default_center_layout")]
+    pub center_layout: bool,
 }
 
 impl Default for UiConfig {
@@ -39,6 +41,7 @@ impl Default for UiConfig {
             extra_radius: default_extra_radius(),
             use_symbolic_icons: default_use_symbolic_icons(),
             bold_single_chars: default_bold_single_chars(),
+            center_layout: default_center_layout(),
         }
     }
 }
@@ -61,6 +64,10 @@ fn default_use_symbolic_icons() -> bool {
 
 fn default_bold_single_chars() -> bool {
     true
+}
+
+fn default_center_layout() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
