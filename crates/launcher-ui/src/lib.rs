@@ -74,7 +74,7 @@ impl MenuState {
                     continue;
                 }
                 if !self.icon_cache.contains_key(icon_name) {
-                    let pixbuf = load_icon_pixbuf(display, icon_name, 24);
+                    let pixbuf = load_icon_pixbuf(display, icon_name, 128);
                     self.icon_cache.insert(icon_name.clone(), pixbuf);
                 }
             }
