@@ -34,6 +34,7 @@ struct MenuState {
 
     // Extra interactivity margin beyond slices
     extra_radius: f64,
+    use_symbolic_icons: bool,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -74,7 +75,7 @@ impl MenuState {
                     continue;
                 }
                 if !self.icon_cache.contains_key(icon_name) {
-                    let pixbuf = load_icon_pixbuf(display, icon_name, 128);
+                    let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
                     self.icon_cache.insert(icon_name.clone(), pixbuf);
                 }
             }
@@ -86,11 +87,18 @@ fn load_icon_pixbuf(
     display: &gdk::Display,
     icon_name: &str,
     raster_size: i32,
+    use_symbolic: bool,
 ) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::for_display(display);
     
     // Force GTK to look for the 64px nominal size so it grabs the detailed/filled version
-    let lookup_size = 64; 
+    // Or 16px if we are forcing symbolic.
+    let lookup_size = if use_symbolic { 16 } else { 64 }; 
+    let flags = if use_symbolic {
+        gtk::IconLookupFlags::FORCE_SYMBOLIC
+    } else {
+        gtk::IconLookupFlags::FORCE_REGULAR
+    };
 
     let paintable = icon_theme.lookup_icon(
         icon_name,
@@ -98,7 +106,7 @@ fn load_icon_pixbuf(
         lookup_size,
         1,
         gtk::TextDirection::None,
-        gtk::IconLookupFlags::FORCE_REGULAR,
+        flags,
     );
 
     if let Some(file) = paintable.file() {
@@ -349,6 +357,7 @@ impl LauncherApp {
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
+            use_symbolic_icons: ui_config.use_symbolic_icons,
             codepoints,
             fps_last_time: std::time::Instant::now(),
             fps_frame_count: 0,
@@ -1081,6 +1090,11 @@ impl LauncherApp {
                             launcher_core::load_material_codepoints(&config_path_clone);
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.extra_radius = cfg.ui.extra_radius;
+                            state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
+                            state.icon_cache.clear();
+                            if let Some(display) = gdk::Display::default() {
+                                state.preload_icons(&display);
+                            }
                             info!("Reloaded extra_radius: {}", state.extra_radius);
                         }
                         match launcher_core::load_menu(&menu_path_clone) {
