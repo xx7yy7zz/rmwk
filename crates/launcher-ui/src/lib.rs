@@ -109,9 +109,9 @@ fn load_icon_pixbuf(
 ) -> Option<gtk::gdk_pixbuf::Pixbuf> {
     let icon_theme = gtk::IconTheme::for_display(display);
     
-    // Force GTK to look for the 64px nominal size so it grabs the detailed/filled version
-    // Or 16px if we are forcing symbolic.
-    let lookup_size = if use_symbolic { 16 } else { 64 }; 
+    // First, lookup at 64 (or 16 for symbolic) to catch the detailed SVGs
+    // SVGs usually map their "detailed" scalable versions to 48px or 64px.
+    let initial_size = if use_symbolic { 16 } else { 64 };
     let flags = if use_symbolic {
         gtk::IconLookupFlags::FORCE_SYMBOLIC
     } else {
@@ -121,7 +121,7 @@ fn load_icon_pixbuf(
     let paintable = icon_theme.lookup_icon(
         icon_name,
         &[],
-        lookup_size,
+        initial_size,
         1,
         gtk::TextDirection::None,
         flags,
@@ -129,7 +129,32 @@ fn load_icon_pixbuf(
 
     if let Some(file) = paintable.file() {
         if let Some(path) = file.path() {
-            return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size).ok();
+            // SVGs scale infinitely, so the 64px detailed version will scale perfectly to raster_size.
+            let is_svg = path.extension().and_then(|s| s.to_str()) == Some("svg");
+            
+            if is_svg {
+                return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size).ok();
+            } else {
+                // It's a raster image (PNG) and we want high quality! 
+                // Do a second lookup asking for the target raster_size so we get the high-res PNG.
+                let high_res_paintable = icon_theme.lookup_icon(
+                    icon_name,
+                    &[],
+                    raster_size,
+                    1,
+                    gtk::TextDirection::None,
+                    gtk::IconLookupFlags::FORCE_REGULAR,
+                );
+                
+                if let Some(hr_file) = high_res_paintable.file() {
+                    if let Some(hr_path) = hr_file.path() {
+                        return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(hr_path, raster_size, raster_size).ok();
+                    }
+                }
+                
+                // Fallback to the original if the second lookup somehow failed
+                return gtk::gdk_pixbuf::Pixbuf::from_file_at_size(path, raster_size, raster_size).ok();
+            }
         }
     }
     None
