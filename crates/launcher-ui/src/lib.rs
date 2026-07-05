@@ -780,11 +780,11 @@ impl LauncherApp {
             // Draw FPS counter (bright green, centered below the menu)
             let outer_radius = BASE_R + SLICE_WIDTH;
             let fps_str = format!("FPS: {:.1}", state_ref.fps_current);
-            
+
             cr.set_source_rgba(0.0, 0.8, 0.0, 1.0 * ease_progress);
             cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
             cr.set_font_size(14.0 * ease_progress);
-            
+
             if let Ok(extents) = cr.text_extents(&fps_str) {
                 let rx = cx - extents.width() / 2.0 - extents.x_bearing();
                 let ry = cy + (outer_radius + 40.0) * ease_progress;
@@ -1070,7 +1070,7 @@ impl LauncherApp {
 
             // Open transition (~150ms)
             if state.is_opening {
-                state.open_progress += dt / 0.150 
+                state.open_progress += dt / 0.150;
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
                     state.is_opening = false;
