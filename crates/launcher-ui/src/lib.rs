@@ -94,7 +94,7 @@ fn load_icon_pixbuf(
         size,
         1,
         gtk::TextDirection::None,
-        gtk::IconLookupFlags::empty(),
+        gtk::IconLookupFlags::FORCE_REGULAR,
     );
 
     if let Some(file) = paintable.file() {
