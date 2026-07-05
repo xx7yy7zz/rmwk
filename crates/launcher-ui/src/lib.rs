@@ -960,7 +960,8 @@ impl LauncherApp {
             let now = frame_clock.frame_time(); // in microseconds
 
             let dt = if let Some(last) = *last_frame_time.borrow() {
-                (now - last) as f64 / 1_000_000.0 // in seconds
+                // Cap dt at ~16.6ms (60fps) to prevent huge animation jumps if a frame drops or lags
+                ((now - last) as f64 / 1_000_000.0).min(0.01666)
             } else {
                 0.0
             };
@@ -968,9 +969,9 @@ impl LauncherApp {
 
             let mut needs_redraw = false;
 
-            // Open transition (~120ms)
+            // Open transition (~200ms)
             if state.is_opening {
-                state.open_progress += dt / 0.120;
+                state.open_progress += dt / 0.200;
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
                     state.is_opening = false;
@@ -978,9 +979,9 @@ impl LauncherApp {
                 needs_redraw = true;
             }
 
-            // Close transition (~80ms)
+            // Close transition (~150ms)
             if state.is_closing {
-                state.open_progress -= dt / 0.080;
+                state.open_progress -= dt / 0.150;
                 if state.open_progress <= 0.0 {
                     state.open_progress = 0.0;
                     state.is_closing = false;
@@ -998,7 +999,7 @@ impl LauncherApp {
                 needs_redraw = true;
             }
 
-            // Hover animations (~60ms)
+            // Hover animations (~100ms)
             let n = state.get_display_items_count();
             if state.hover_progresses.len() != n {
                 state.hover_progresses.resize(n, 0.0);
@@ -1012,7 +1013,7 @@ impl LauncherApp {
                 };
                 let diff = target - state.hover_progresses[i];
                 if diff.abs() > 0.01 {
-                    let step = dt / 0.060;
+                    let step = dt / 0.100;
                     state.hover_progresses[i] += diff.signum() * step.min(diff.abs());
                     needs_redraw = true;
                 } else {
