@@ -355,10 +355,13 @@ impl SettingsApp {
         settings_hbox.append(&combo_theme);
         settings_hbox.append(&lbl_extra_radius);
         settings_hbox.append(&spin_extra_radius);
-        settings_hbox.append(&chk_symbolic_icons);
-        settings_hbox.append(&chk_bold_chars);
-        settings_hbox.append(&chk_center_layout);
         right_vbox.append(&settings_hbox);
+
+        let checkboxes_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        checkboxes_hbox.append(&chk_symbolic_icons);
+        checkboxes_hbox.append(&chk_bold_chars);
+        checkboxes_hbox.append(&chk_center_layout);
+        right_vbox.append(&checkboxes_hbox);
 
         // Save & Save/Reload buttons at the bottom
         let bottom_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
