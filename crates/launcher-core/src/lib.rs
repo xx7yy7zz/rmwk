@@ -133,11 +133,16 @@ pub fn save_menu<P: AsRef<Path>>(path: P, menu: &MenuConfig) -> Result<()> {
 pub fn run_action(action: &Action) -> Result<()> {
     match action {
         Action::Command { cmd, .. } => {
-            std::process::Command::new("sh")
+            let mut child = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
                 .spawn()
                 .context("Failed to spawn command")?;
+            
+            // Reap the child in a background thread to prevent zombie (defunct) processes
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
         }
     }
     Ok(())

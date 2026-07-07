@@ -886,7 +886,7 @@ impl SettingsApp {
                 let entry_clone = entry_icon.clone();
                 let dialog_clone = dialog.clone();
                 btn.connect_clicked(move |_| {
-                    entry_clone.set_text(&name_clone);
+                    entry_clone.set_text(&format!("sys:{}", name_clone));
                     dialog_clone.close();
                 });
 

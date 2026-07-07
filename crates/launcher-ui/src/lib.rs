@@ -92,11 +92,18 @@ impl MenuState {
     fn preload_icons(&mut self, display: &gdk::Display) {
         let display_items = self.get_display_items();
         for item in &display_items {
-            if let Some(icon_name) = &item.icon {
-                if self.codepoints.contains_key(icon_name) {
+            if let Some(raw_icon_name) = &item.icon {
+                if self.codepoints.contains_key(raw_icon_name) {
                     continue;
                 }
-                if !self.icon_cache.contains_key(icon_name) {
+                if !self.icon_cache.contains_key(raw_icon_name) {
+                    let is_sys_forced = raw_icon_name.starts_with("sys:");
+                    let icon_name = if is_sys_forced {
+                        &raw_icon_name[4..]
+                    } else {
+                        raw_icon_name.as_str()
+                    };
+
                     let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
                     let surface = pixbuf.and_then(|p| {
                         let format = if p.has_alpha() {
@@ -114,7 +121,7 @@ impl MenuState {
                         }
                         None
                     });
-                    self.icon_cache.insert(icon_name.clone(), surface);
+                    self.icon_cache.insert(raw_icon_name.clone(), surface);
                 }
             }
         }
