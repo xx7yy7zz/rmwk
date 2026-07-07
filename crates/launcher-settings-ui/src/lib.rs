@@ -12,6 +12,7 @@ struct CopiedNode {
     icon: String,
     action_type: String,
     action_cmd: String,
+    keep_open: bool,
     children: Vec<CopiedNode>,
 }
 
@@ -127,6 +128,7 @@ impl SettingsApp {
             glib::Type::STRING,
             glib::Type::STRING,
             glib::Type::STRING,
+            glib::Type::BOOL,
         ]);
 
         let root_iter = store.insert_with_values(
@@ -137,6 +139,7 @@ impl SettingsApp {
                 (1, &"Menu (Root)".to_value()),
                 (2, &"root".to_value()),
                 (3, &"".to_value()),
+                (4, &false.to_value()),
             ],
         );
         Self::populate_store(&store, Some(&root_iter), &menu_config.menu);
@@ -322,6 +325,9 @@ impl SettingsApp {
         prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
         prop_grid.attach(&entry_cmd, 1, 3, 1, 1);
 
+        let chk_item_keep_open = gtk::CheckButton::with_label("Keep Launcher Open");
+        prop_grid.attach(&chk_item_keep_open, 1, 4, 1, 1);
+
         prop_frame.set_child(Some(&prop_grid));
         right_vbox.append(&prop_frame);
 
@@ -387,9 +393,11 @@ impl SettingsApp {
         let sel_icon = entry_icon.clone();
         let sel_cmd = entry_cmd.clone();
         let sel_icon_type = combo_icon_type.clone();
+        let sel_keep_open = chk_item_keep_open.clone();
 
         let lbl_cmd_clone = lbl_cmd.clone();
         let entry_cmd_clone = entry_cmd.clone();
+        let chk_keep_open_clone = chk_item_keep_open.clone();
         let btn_pick_icon_clone = btn_pick_icon.clone();
         let btn_delete_clone = btn_delete.clone();
         let btn_up_clone = btn_up.clone();
@@ -408,6 +416,7 @@ impl SettingsApp {
                     sel_icon.set_sensitive(false);
                     sel_icon_type.set_sensitive(false);
                     sel_cmd.set_sensitive(false);
+                    sel_keep_open.set_sensitive(false);
                     btn_pick_icon_clone.set_sensitive(false);
                     btn_delete_clone.set_sensitive(false);
                     btn_up_clone.set_sensitive(false);
@@ -415,12 +424,14 @@ impl SettingsApp {
 
                     lbl_cmd_clone.set_visible(false);
                     entry_cmd_clone.set_visible(false);
+                    chk_keep_open_clone.set_visible(false);
                 } else {
                     // Enable editing controls for other nodes
                     sel_label.set_sensitive(true);
                     sel_icon.set_sensitive(true);
                     sel_icon_type.set_sensitive(true);
                     sel_cmd.set_sensitive(true);
+                    sel_keep_open.set_sensitive(true);
                     btn_pick_icon_clone.set_sensitive(true);
                     btn_delete_clone.set_sensitive(true);
                     btn_up_clone.set_sensitive(true);
@@ -430,11 +441,15 @@ impl SettingsApp {
                     if act_type == "submenu" {
                         lbl_cmd_clone.set_visible(false);
                         entry_cmd_clone.set_visible(false);
+                        chk_keep_open_clone.set_visible(false);
                     } else {
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
+                        chk_keep_open_clone.set_visible(true);
                     }
                 }
+
+                let keep_open: bool = model.get(&iter, 4);
 
                 sel_label.set_text(&label);
 
@@ -446,6 +461,7 @@ impl SettingsApp {
 
                 sel_icon.set_text(&icon);
                 sel_cmd.set_text(&cmd);
+                sel_keep_open.set_active(keep_open);
             }
         });
 
@@ -473,6 +489,14 @@ impl SettingsApp {
                 store_c.set_value(&iter, 3, &e.text().to_string().to_value());
             }
         });
+        
+        let store_k = store.clone();
+        let sel_k = tree_view.selection();
+        chk_item_keep_open.connect_toggled(move |c| {
+            if let Some((_, iter)) = sel_k.selected() {
+                store_k.set_value(&iter, 4, &c.is_active().to_value());
+            }
+        });
 
         // Add Command Button
         let store_add = store.clone();
@@ -482,8 +506,9 @@ impl SettingsApp {
             let new_iter = store_add.insert_after(parent.as_ref(), sibling.as_ref());
             store_add.set_value(&new_iter, 0, &"application-x-executable".to_value());
             store_add.set_value(&new_iter, 1, &"New Command".to_value());
-            store_add.set_value(&new_iter, 2, &"command".to_value());
+            store_add.set_value(&new_iter, 2, &"shell command".to_value());
             store_add.set_value(&new_iter, 3, &"".to_value());
+            store_add.set_value(&new_iter, 4, &false.to_value());
             selection_add.select_iter(&new_iter);
         });
 
@@ -497,6 +522,7 @@ impl SettingsApp {
             store_sub.set_value(&new_iter, 1, &"New Submenu".to_value());
             store_sub.set_value(&new_iter, 2, &"submenu".to_value());
             store_sub.set_value(&new_iter, 3, &"".to_value());
+            store_sub.set_value(&new_iter, 4, &false.to_value());
             // Insert a dummy item to make it a subdirectory
             store_sub.insert_with_values(
                 Some(&new_iter),
@@ -504,8 +530,9 @@ impl SettingsApp {
                 &[
                     (0, &"application-x-executable".to_value()),
                     (1, &"New Command".to_value()),
-                    (2, &"command".to_value()),
+                    (2, &"shell command".to_value()),
                     (3, &"".to_value()),
+                    (4, &false.to_value()),
                 ],
             );
             selection_sub.select_iter(&new_iter);
@@ -668,10 +695,10 @@ impl SettingsApp {
                     (
                         2,
                         &match &item.action {
-                            Some(launcher_core::Action::Command { .. }) => "command".to_value(),
+                            Some(launcher_core::Action::Command { .. }) => "shell command".to_value(),
                             None => {
                                 if item.children.is_empty() {
-                                    "command".to_value()
+                                    "shell command".to_value()
                                 } else {
                                     "submenu".to_value()
                                 }
@@ -681,8 +708,15 @@ impl SettingsApp {
                     (
                         3,
                         &match &item.action {
-                            Some(launcher_core::Action::Command { cmd }) => cmd.to_value(),
+                            Some(launcher_core::Action::Command { cmd, .. }) => cmd.to_value(),
                             None => "".to_value(),
+                        },
+                    ),
+                    (
+                        4,
+                        &match &item.action {
+                            Some(launcher_core::Action::Command { keep_open, .. }) => keep_open.to_value(),
+                            None => false.to_value(),
                         },
                     ),
                 ],
@@ -710,6 +744,7 @@ impl SettingsApp {
             let icon: String = store.get(&current_iter, 0);
             let action_type: String = store.get(&current_iter, 2);
             let action_cmd: String = store.get(&current_iter, 3);
+            let keep_open: bool = store.get(&current_iter, 4);
 
             let icon_opt = if icon.is_empty() { None } else { Some(icon) };
 
@@ -717,7 +752,7 @@ impl SettingsApp {
 
             let action = if children.is_empty() {
                 match action_type.as_str() {
-                    "command" => Some(launcher_core::Action::Command { cmd: action_cmd }),
+                    "shell command" => Some(launcher_core::Action::Command { cmd: action_cmd, keep_open }),
                     _ => None,
                 }
             } else {
@@ -1008,6 +1043,7 @@ impl SettingsApp {
         let label: String = store.get(iter, 1);
         let action_type: String = store.get(iter, 2);
         let action_cmd: String = store.get(iter, 3);
+        let keep_open: bool = store.get(iter, 4);
 
         let mut children = vec![];
         if let Some(child_iter) = store.iter_children(Some(iter)) {
@@ -1025,6 +1061,7 @@ impl SettingsApp {
             icon,
             action_type,
             action_cmd,
+            keep_open,
             children,
         }
     }
@@ -1040,6 +1077,7 @@ impl SettingsApp {
         store.set_value(&new_iter, 1, &node.label.to_value());
         store.set_value(&new_iter, 2, &node.action_type.to_value());
         store.set_value(&new_iter, 3, &node.action_cmd.to_value());
+        store.set_value(&new_iter, 4, &node.keep_open.to_value());
 
         let mut prev_child = None;
         for child in &node.children {

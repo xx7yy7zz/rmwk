@@ -89,7 +89,19 @@ pub struct MenuItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
-    Command { cmd: String },
+    Command {
+        cmd: String,
+        #[serde(default)]
+        keep_open: bool,
+    },
+}
+
+impl Action {
+    pub fn should_keep_open(&self) -> bool {
+        match self {
+            Action::Command { keep_open, .. } => *keep_open,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +132,7 @@ pub fn save_menu<P: AsRef<Path>>(path: P, menu: &MenuConfig) -> Result<()> {
 
 pub fn run_action(action: &Action) -> Result<()> {
     match action {
-        Action::Command { cmd } => {
+        Action::Command { cmd, .. } => {
             std::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)

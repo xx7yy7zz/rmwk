@@ -274,8 +274,10 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
             if let Err(e) = launcher_core::run_action(&action) {
                 error!("Failed to execute action: {}", e);
             }
-            state.is_closing = true;
-            state.is_opening = false;
+            if !action.should_keep_open() {
+                state.is_closing = true;
+                state.is_opening = false;
+            }
         }
     }
 }
