@@ -1070,12 +1070,12 @@ impl LauncherApp {
 
             let mut needs_redraw = false;
 
-            // Open transition (~150ms)
+            // Open transition (~200ms)
             if state.is_opening {
                 if state.disable_animations {
                     state.open_progress = 1.0;
                 } else {
-                    state.open_progress += dt / 0.150;
+                    state.open_progress += dt / 0.200;
                 }
                 if state.open_progress >= 1.0 {
                     state.open_progress = 1.0;
