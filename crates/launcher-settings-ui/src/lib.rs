@@ -778,7 +778,7 @@ impl SettingsApp {
     }
 
     fn get_available_themes(config_path: &Path) -> Vec<String> {
-        let mut themes = vec!["default".to_string()];
+        let mut themes = vec!["system".to_string(), "default".to_string()];
         if let Some(parent) = config_path.parent() {
             let themes_dir = parent.join("themes");
             if themes_dir.exists() {

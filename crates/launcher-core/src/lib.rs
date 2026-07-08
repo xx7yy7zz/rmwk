@@ -50,7 +50,7 @@ impl Default for UiConfig {
 }
 
 fn default_theme() -> String {
-    "default".to_string()
+    "system".to_string()
 }
 
 fn default_font() -> String {

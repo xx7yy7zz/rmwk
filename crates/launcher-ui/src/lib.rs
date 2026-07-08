@@ -194,7 +194,17 @@ fn load_icon_pixbuf(
     None
 }
 
-fn load_and_apply_theme(config_path: &Path, theme_provider: &gtk::CssProvider) {
+fn load_and_apply_theme(
+    config_path: &Path,
+    theme_provider: &gtk::CssProvider,
+    user_provider: &gtk::CssProvider,
+) {
+    if let Some(home) = std::env::var_os("HOME") {
+        let gtk_css = PathBuf::from(home).join(".config/gtk-4.0/gtk.css");
+        if gtk_css.exists() {
+            user_provider.load_from_path(&gtk_css);
+        }
+    }
     let theme_name = match launcher_core::load_config(config_path) {
         Ok(cfg) => cfg.ui.theme,
         Err(e) => {
@@ -214,7 +224,22 @@ fn load_and_apply_theme(config_path: &Path, theme_provider: &gtk::CssProvider) {
         });
 
     debug!("Loading theme from {:?}", theme_file);
-    if theme_file.exists() {
+    if theme_name == "system" {
+        // Dynamic GTK system theme using named colors
+        let system_css = b"
+            .radial-slice { color: @theme_bg_color; }
+            .radial-slice:hover { color: @theme_selected_bg_color; }
+            .radial-slice:active { color: @theme_selected_bg_color; }
+            .radial-slice:selected { color: @theme_selected_bg_color; }
+            .radial-label { color: @theme_fg_color; }
+            .radial-label:hover { color: @theme_selected_fg_color; }
+            .radial-hub { color: @theme_bg_color; }
+            .radial-hub:active { color: @theme_selected_bg_color; }
+            .radial-hub:hover { color: @theme_fg_color; }
+        ";
+        theme_provider.load_from_data(std::str::from_utf8(system_css).unwrap());
+        info!("Theme 'system' applied successfully dynamically.");
+    } else if theme_file.exists() {
         match std::fs::read_to_string(&theme_file) {
             Ok(css_content) => {
                 theme_provider.load_from_data(&css_content);
@@ -374,7 +399,15 @@ impl LauncherApp {
         );
 
         let theme_provider = gtk::CssProvider::new();
-        load_and_apply_theme(&config_path, &theme_provider);
+        let user_provider = gtk::CssProvider::new();
+        if let Some(display) = gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &user_provider,
+                gtk::STYLE_PROVIDER_PRIORITY_USER,
+            );
+        }
+        load_and_apply_theme(&config_path, &theme_provider, &user_provider);
 
         let font_path = config_path
             .parent()
@@ -1167,6 +1200,7 @@ impl LauncherApp {
         let ipc_state = state.clone();
         let area_clone_ipc = drawing_area.clone();
         let theme_provider_clone = theme_provider.clone();
+        let user_provider_clone = user_provider.clone();
         let config_path_clone = config_path.clone();
         let menu_path_clone = menu_path.clone();
 
@@ -1193,7 +1227,10 @@ impl LauncherApp {
                             state.is_opening = true;
                             state.is_closing = false;
                             state.open_progress = 0.0;
+                            *state.theme_colors.borrow_mut() = None;
                             drop(state);
+
+                            load_and_apply_theme(&config_path_clone, &theme_provider_clone, &user_provider_clone);
                             window_clone_ipc.present();
                             area_clone_ipc.queue_draw();
                         }
@@ -1220,7 +1257,10 @@ impl LauncherApp {
                             state.is_opening = true;
                             state.is_closing = false;
                             state.open_progress = 0.0;
+                            *state.theme_colors.borrow_mut() = None;
                             drop(state);
+                            
+                            load_and_apply_theme(&config_path_clone, &theme_provider_clone, &user_provider_clone);
                             window_clone_ipc.present();
                             area_clone_ipc.queue_draw();
                         }
@@ -1228,7 +1268,7 @@ impl LauncherApp {
                     IpcMessage::ReloadConfig => {
                         info!("Reload config request received via IPC");
                         // 1. Reload the theme CSS from file
-                        load_and_apply_theme(&config_path_clone, &theme_provider_clone);
+                        load_and_apply_theme(&config_path_clone, &theme_provider_clone, &user_provider_clone);
 
                         // 2. Reload the menu TOML config from file
                         let mut state = ipc_state.borrow_mut();
