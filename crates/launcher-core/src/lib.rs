@@ -94,14 +94,75 @@ pub enum Action {
         #[serde(default)]
         keep_open: bool,
     },
+    Hotkey {
+        keys: String,
+    },
 }
 
 impl Action {
     pub fn should_keep_open(&self) -> bool {
         match self {
             Action::Command { keep_open, .. } => *keep_open,
+            Action::Hotkey { .. } => false, // hotkeys always close the menu
         }
     }
+}
+
+pub fn parse_hotkey(hotkey: &str) -> Result<Vec<String>, String> {
+    let mut wtype_args = Vec::new();
+    let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
+    if parts.is_empty() || parts.iter().all(|s| s.is_empty()) {
+        return Err("Hotkey cannot be empty".to_string());
+    }
+
+    let mut modifiers = Vec::new();
+    let mut key = None;
+
+    for (i, &part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            return Err("Missing key between '+'".to_string());
+        }
+
+        let is_last = i == parts.len() - 1;
+        let lower = part.to_lowercase();
+
+        let modifier = match lower.as_str() {
+            "ctrl" | "control" => Some("ctrl"),
+            "shift" => Some("shift"),
+            "alt" | "mod1" => Some("alt"),
+            "super" | "meta" | "win" | "windows" | "logo" | "mod4" => Some("logo"),
+            _ => None,
+        };
+
+        if let Some(m) = modifier {
+            if is_last && parts.len() > 1 {
+                return Err(format!("Trailing modifier '{}' without a final key", part));
+            }
+            modifiers.push(m);
+        } else {
+            if !is_last {
+                return Err(format!("'{}' is not a valid modifier. Only the last item can be a regular key.", part));
+            }
+            key = Some(part);
+        }
+    }
+
+    if let Some(k) = key {
+        for &m in &modifiers {
+            wtype_args.push("-M".to_string());
+            wtype_args.push(m.to_string());
+        }
+        wtype_args.push("-k".to_string());
+        wtype_args.push(k.to_string());
+        for &m in modifiers.iter().rev() {
+            wtype_args.push("-m".to_string());
+            wtype_args.push(m.to_string());
+        }
+    } else if !modifiers.is_empty() {
+        return Err("Missing a key to press".to_string());
+    }
+
+    Ok(wtype_args)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +204,28 @@ pub fn run_action(action: &Action) -> Result<()> {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
+        }
+        Action::Hotkey { keys } => {
+            match parse_hotkey(keys) {
+                Ok(args) => {
+                    std::thread::spawn(move || {
+                        // Wait for the launcher window to close and relinquish Wayland focus
+                        std::thread::sleep(std::time::Duration::from_millis(350));
+
+                        let mut child = match std::process::Command::new("wtype").args(&args).spawn() {
+                            Ok(c) => c,
+                            Err(e) => {
+                                eprintln!("Failed to spawn wtype. Is it installed? {}", e);
+                                return;
+                            }
+                        };
+                        let _ = child.wait();
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse hotkey '{}': {}", keys, e);
+                }
+            }
         }
     }
     Ok(())

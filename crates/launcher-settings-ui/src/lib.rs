@@ -222,6 +222,7 @@ impl SettingsApp {
 
         let btn_add_item = gtk::Button::with_label("Add Command");
         let btn_add_sub = gtk::Button::with_label("Add Submenu");
+        let btn_add_hotkey = gtk::Button::with_label("Add Hotkey");
         let btn_copy = gtk::Button::with_label("Copy");
         let btn_paste = gtk::Button::with_label("Paste");
         btn_paste.set_sensitive(false);
@@ -231,6 +232,7 @@ impl SettingsApp {
 
         btn_hbox.append(&btn_add_item);
         btn_hbox.append(&btn_add_sub);
+        btn_hbox.append(&btn_add_hotkey);
         btn_hbox.append(&btn_copy);
         btn_hbox.append(&btn_paste);
         btn_hbox.append(&btn_delete);
@@ -325,8 +327,13 @@ impl SettingsApp {
         prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
         prop_grid.attach(&entry_cmd, 1, 3, 1, 1);
 
+        let lbl_hotkey_status = gtk::Label::new(None);
+        lbl_hotkey_status.set_halign(gtk::Align::Start);
+        lbl_hotkey_status.set_use_markup(true);
+        prop_grid.attach(&lbl_hotkey_status, 1, 4, 1, 1);
+
         let chk_item_keep_open = gtk::CheckButton::with_label("Keep Launcher Open");
-        prop_grid.attach(&chk_item_keep_open, 1, 4, 1, 1);
+        prop_grid.attach(&chk_item_keep_open, 1, 5, 1, 1);
 
         prop_frame.set_child(Some(&prop_grid));
         right_vbox.append(&prop_frame);
@@ -398,6 +405,7 @@ impl SettingsApp {
         let lbl_cmd_clone = lbl_cmd.clone();
         let entry_cmd_clone = entry_cmd.clone();
         let chk_keep_open_clone = chk_item_keep_open.clone();
+        let lbl_hotkey_status_clone = lbl_hotkey_status.clone();
         let btn_pick_icon_clone = btn_pick_icon.clone();
         let btn_delete_clone = btn_delete.clone();
         let btn_up_clone = btn_up.clone();
@@ -442,10 +450,19 @@ impl SettingsApp {
                         lbl_cmd_clone.set_visible(false);
                         entry_cmd_clone.set_visible(false);
                         chk_keep_open_clone.set_visible(false);
+                        lbl_hotkey_status_clone.set_visible(false);
+                    } else if act_type == "hotkey" {
+                        lbl_cmd_clone.set_label("Keystroke:");
+                        lbl_cmd_clone.set_visible(true);
+                        entry_cmd_clone.set_visible(true);
+                        chk_keep_open_clone.set_visible(false);
+                        lbl_hotkey_status_clone.set_visible(true);
                     } else {
+                        lbl_cmd_clone.set_label("Command:");
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
                         chk_keep_open_clone.set_visible(true);
+                        lbl_hotkey_status_clone.set_visible(false);
                     }
                 }
 
@@ -484,9 +501,18 @@ impl SettingsApp {
 
         let store_c = store.clone();
         let sel_c = tree_view.selection();
+        let lbl_hotkey_status_c = lbl_hotkey_status.clone();
         entry_cmd.connect_changed(move |e| {
-            if let Some((_, iter)) = sel_c.selected() {
-                store_c.set_value(&iter, 3, &e.text().to_string().to_value());
+            if let Some((model, iter)) = sel_c.selected() {
+                let act_type: String = model.get(&iter, 2);
+                let txt = e.text().to_string();
+                if act_type == "hotkey" {
+                    match launcher_core::parse_hotkey(&txt) {
+                        Ok(_) => lbl_hotkey_status_c.set_markup("<span foreground='green'>✔ Valid hotkey</span>"),
+                        Err(err) => lbl_hotkey_status_c.set_markup(&format!("<span foreground='red'>✘ {}</span>", err)),
+                    }
+                }
+                store_c.set_value(&iter, 3, &txt.to_value());
             }
         });
         
@@ -536,6 +562,20 @@ impl SettingsApp {
                 ],
             );
             selection_sub.select_iter(&new_iter);
+        });
+
+        // Add Hotkey Button
+        let store_hot = store.clone();
+        let selection_hot = tree_view.selection();
+        btn_add_hotkey.connect_clicked(move |_| {
+            let (parent, sibling) = Self::resolve_insertion_coords(&store_hot, &selection_hot);
+            let new_iter = store_hot.insert_after(parent.as_ref(), sibling.as_ref());
+            store_hot.set_value(&new_iter, 0, &"keyboard".to_value());
+            store_hot.set_value(&new_iter, 1, &"New Hotkey".to_value());
+            store_hot.set_value(&new_iter, 2, &"hotkey".to_value());
+            store_hot.set_value(&new_iter, 3, &"".to_value());
+            store_hot.set_value(&new_iter, 4, &false.to_value());
+            selection_hot.select_iter(&new_iter);
         });
 
         // Delete Button
@@ -696,6 +736,7 @@ impl SettingsApp {
                         2,
                         &match &item.action {
                             Some(launcher_core::Action::Command { .. }) => "shell command".to_value(),
+                            Some(launcher_core::Action::Hotkey { .. }) => "hotkey".to_value(),
                             None => {
                                 if item.children.is_empty() {
                                     "shell command".to_value()
@@ -709,6 +750,7 @@ impl SettingsApp {
                         3,
                         &match &item.action {
                             Some(launcher_core::Action::Command { cmd, .. }) => cmd.to_value(),
+                            Some(launcher_core::Action::Hotkey { keys }) => keys.to_value(),
                             None => "".to_value(),
                         },
                     ),
@@ -716,6 +758,7 @@ impl SettingsApp {
                         4,
                         &match &item.action {
                             Some(launcher_core::Action::Command { keep_open, .. }) => keep_open.to_value(),
+                            Some(launcher_core::Action::Hotkey { .. }) => false.to_value(),
                             None => false.to_value(),
                         },
                     ),
@@ -753,6 +796,7 @@ impl SettingsApp {
             let action = if children.is_empty() {
                 match action_type.as_str() {
                     "shell command" => Some(launcher_core::Action::Command { cmd: action_cmd, keep_open }),
+                    "hotkey" => Some(launcher_core::Action::Hotkey { keys: action_cmd }),
                     _ => None,
                 }
             } else {
