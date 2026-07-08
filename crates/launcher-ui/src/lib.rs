@@ -60,11 +60,6 @@ struct MenuState {
 
     // Cached theme colors
     theme_colors: std::cell::RefCell<Option<ThemeColors>>,
-
-    // FPS counter state
-    fps_last_time: std::time::Instant,
-    fps_frame_count: u32,
-    fps_current: f64,
 }
 
 impl MenuState {
@@ -476,9 +471,6 @@ impl LauncherApp {
             disable_animations: ui_config.disable_animations,
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
-            fps_last_time: std::time::Instant::now(),
-            fps_frame_count: 0,
-            fps_current: 0.0,
         }));
 
         if let Some(display) = gdk::Display::default() {
@@ -493,16 +485,6 @@ impl LauncherApp {
             let cy = height as f64 / 2.0;
 
             let mut state_ref = draw_state.borrow_mut();
-
-            // Update FPS counter
-            let now = std::time::Instant::now();
-            state_ref.fps_frame_count += 1;
-            let elapsed = now.duration_since(state_ref.fps_last_time).as_secs_f64();
-            if elapsed >= 0.5 {
-                state_ref.fps_current = state_ref.fps_frame_count as f64 / elapsed;
-                state_ref.fps_frame_count = 0;
-                state_ref.fps_last_time = now;
-            }
 
             let display_items = state_ref.get_display_items();
             let n = display_items.len();
@@ -819,21 +801,6 @@ impl LauncherApp {
                     cy - extents.height() / 2.0 - extents.y_bearing(),
                 );
                 let _ = cr.show_text(center_text);
-            }
-
-            // Draw FPS counter (bright green, centered below the menu)
-            let outer_radius = BASE_R + SLICE_WIDTH;
-            let fps_str = format!("FPS: {:.1}", state_ref.fps_current);
-
-            cr.set_source_rgba(0.0, 0.8, 0.0, 1.0 * ease_progress);
-            cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-            cr.set_font_size(14.0 * ease_progress);
-
-            if let Ok(extents) = cr.text_extents(&fps_str) {
-                let rx = cx - extents.width() / 2.0 - extents.x_bearing();
-                let ry = cy + (outer_radius + 40.0) * ease_progress;
-                cr.move_to(rx, ry);
-                let _ = cr.show_text(&fps_str);
             }
         });
         window.set_child(Some(&drawing_area));
