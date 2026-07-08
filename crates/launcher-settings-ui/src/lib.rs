@@ -320,12 +320,18 @@ impl SettingsApp {
             }
         });
 
-        // 4. Command Entry
         let lbl_cmd = gtk::Label::new(Some("Command:"));
         lbl_cmd.set_halign(gtk::Align::End);
         let entry_cmd = gtk::Entry::new();
+        entry_cmd.set_hexpand(true);
+        let btn_record_hotkey = gtk::ToggleButton::new();
+        btn_record_hotkey.set_icon_name("media-record");
+        let cmd_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        cmd_hbox.append(&entry_cmd);
+        cmd_hbox.append(&btn_record_hotkey);
+        
         prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
-        prop_grid.attach(&entry_cmd, 1, 3, 1, 1);
+        prop_grid.attach(&cmd_hbox, 1, 3, 1, 1);
 
         let lbl_hotkey_status = gtk::Label::new(None);
         lbl_hotkey_status.set_halign(gtk::Align::Start);
@@ -404,6 +410,7 @@ impl SettingsApp {
 
         let lbl_cmd_clone = lbl_cmd.clone();
         let entry_cmd_clone = entry_cmd.clone();
+        let btn_record_hotkey_clone = btn_record_hotkey.clone();
         let chk_keep_open_clone = chk_item_keep_open.clone();
         let lbl_hotkey_status_clone = lbl_hotkey_status.clone();
         let btn_pick_icon_clone = btn_pick_icon.clone();
@@ -449,18 +456,21 @@ impl SettingsApp {
                     if act_type == "submenu" {
                         lbl_cmd_clone.set_visible(false);
                         entry_cmd_clone.set_visible(false);
+                        btn_record_hotkey_clone.set_visible(false);
                         chk_keep_open_clone.set_visible(false);
                         lbl_hotkey_status_clone.set_visible(false);
                     } else if act_type == "hotkey" {
                         lbl_cmd_clone.set_label("Keystroke:");
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
+                        btn_record_hotkey_clone.set_visible(true);
                         chk_keep_open_clone.set_visible(false);
                         lbl_hotkey_status_clone.set_visible(true);
                     } else {
                         lbl_cmd_clone.set_label("Command:");
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
+                        btn_record_hotkey_clone.set_visible(false);
                         chk_keep_open_clone.set_visible(true);
                         lbl_hotkey_status_clone.set_visible(false);
                     }
@@ -715,6 +725,70 @@ impl SettingsApp {
                 });
             }
         });
+
+        // 4. Hotkey Recorder Logic
+        let key_ctrl = gtk::EventControllerKey::new();
+        let record_btn_c = btn_record_hotkey.clone();
+        let entry_cmd_c = entry_cmd.clone();
+        let recorded_keys = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+
+        record_btn_c.connect_toggled({
+            let recorded_keys = recorded_keys.clone();
+            let entry_cmd_c = entry_cmd_c.clone();
+            move |btn| {
+                if btn.is_active() {
+                    recorded_keys.borrow_mut().clear();
+                    entry_cmd_c.set_text("Press keys...");
+                    entry_cmd_c.set_sensitive(false);
+                    btn.grab_focus();
+                } else {
+                    entry_cmd_c.set_sensitive(true);
+                }
+            }
+        });
+
+        key_ctrl.connect_key_pressed(move |_, keyval, _keycode, _state| {
+            if !record_btn_c.is_active() {
+                return glib::Propagation::Proceed;
+            }
+
+            let name = keyval.name().map(|n| n.to_string()).unwrap_or_default();
+            let lower = name.to_lowercase();
+            
+            let modifier = match lower.as_str() {
+                "control_l" | "control_r" => Some("ctrl"),
+                "shift_l" | "shift_r" => Some("shift"),
+                "alt_l" | "alt_r" => Some("alt"),
+                "super_l" | "super_r" | "meta_l" | "meta_r" => Some("super"),
+                _ => None,
+            };
+
+            let mut keys = recorded_keys.borrow_mut();
+            
+            if let Some(m) = modifier {
+                if !keys.contains(&m.to_string()) {
+                    keys.push(m.to_string());
+                    entry_cmd_c.set_text(&format!("{}+...", keys.join("+")));
+                }
+            } else {
+                let mut final_keys = keys.clone();
+                let readable = match lower.as_str() {
+                    "return" => "Return",
+                    "escape" => "Escape",
+                    "space" => "space",
+                    "tab" => "Tab",
+                    _ => &lower,
+                };
+                
+                final_keys.push(readable.to_string());
+                entry_cmd_c.set_text(&final_keys.join("+"));
+                record_btn_c.set_active(false);
+            }
+            
+            glib::Propagation::Stop
+        });
+        
+        window.add_controller(key_ctrl);
 
         window.present();
         Ok(())
