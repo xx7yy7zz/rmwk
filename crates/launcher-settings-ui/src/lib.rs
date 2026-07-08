@@ -439,7 +439,9 @@ impl SettingsApp {
 
                     lbl_cmd_clone.set_visible(false);
                     entry_cmd_clone.set_visible(false);
+                    btn_record_hotkey_clone.set_visible(false);
                     chk_keep_open_clone.set_visible(false);
+                    lbl_hotkey_status_clone.set_visible(false);
                 } else {
                     // Enable editing controls for other nodes
                     sel_label.set_sensitive(true);
