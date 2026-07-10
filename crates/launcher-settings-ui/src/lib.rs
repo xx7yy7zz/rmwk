@@ -329,7 +329,7 @@ impl SettingsApp {
         let cmd_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         cmd_hbox.append(&entry_cmd);
         cmd_hbox.append(&btn_record_hotkey);
-        
+
         prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
         prop_grid.attach(&cmd_hbox, 1, 3, 1, 1);
 
@@ -358,7 +358,7 @@ impl SettingsApp {
         combo_theme.set_active_id(Some(&ui_config.ui.theme));
 
         let lbl_extra_radius = gtk::Label::new(Some("Active Margin (px):"));
-        let spin_extra_radius = gtk::SpinButton::with_range(0.0, 300.0, 5.0);
+        let spin_extra_radius = gtk::SpinButton::with_range(0.0, 1000.0, 5.0);
         spin_extra_radius.set_value(ui_config.ui.extra_radius);
 
         let chk_symbolic_icons = gtk::CheckButton::with_label("Symbolic Icons");
@@ -520,14 +520,16 @@ impl SettingsApp {
                 let txt = e.text().to_string();
                 if act_type == "hotkey" {
                     match launcher_core::parse_hotkey(&txt) {
-                        Ok(_) => lbl_hotkey_status_c.set_markup("<span foreground='green'>✔ Valid hotkey</span>"),
-                        Err(err) => lbl_hotkey_status_c.set_markup(&format!("<span foreground='red'>✘ {}</span>", err)),
+                        Ok(_) => lbl_hotkey_status_c
+                            .set_markup("<span foreground='green'>✔ Valid hotkey</span>"),
+                        Err(err) => lbl_hotkey_status_c
+                            .set_markup(&format!("<span foreground='red'>✘ {}</span>", err)),
                     }
                 }
                 store_c.set_value(&iter, 3, &txt.to_value());
             }
         });
-        
+
         let store_k = store.clone();
         let sel_k = tree_view.selection();
         chk_item_keep_open.connect_toggled(move |c| {
@@ -756,7 +758,7 @@ impl SettingsApp {
 
             let name = keyval.name().map(|n| n.to_string()).unwrap_or_default();
             let lower = name.to_lowercase();
-            
+
             let modifier = match lower.as_str() {
                 "control_l" | "control_r" => Some("ctrl"),
                 "shift_l" | "shift_r" => Some("shift"),
@@ -766,7 +768,7 @@ impl SettingsApp {
             };
 
             let mut keys = recorded_keys.borrow_mut();
-            
+
             if let Some(m) = modifier {
                 if !keys.contains(&m.to_string()) {
                     keys.push(m.to_string());
@@ -781,15 +783,15 @@ impl SettingsApp {
                     "tab" => "Tab",
                     _ => &lower,
                 };
-                
+
                 final_keys.push(readable.to_string());
                 entry_cmd_c.set_text(&final_keys.join("+"));
                 record_btn_c.set_active(false);
             }
-            
+
             glib::Propagation::Stop
         });
-        
+
         window.add_controller(key_ctrl);
 
         window.present();
@@ -811,7 +813,9 @@ impl SettingsApp {
                     (
                         2,
                         &match &item.action {
-                            Some(launcher_core::Action::Command { .. }) => "shell command".to_value(),
+                            Some(launcher_core::Action::Command { .. }) => {
+                                "shell command".to_value()
+                            }
                             Some(launcher_core::Action::Hotkey { .. }) => "hotkey".to_value(),
                             None => {
                                 if item.children.is_empty() {
@@ -833,7 +837,9 @@ impl SettingsApp {
                     (
                         4,
                         &match &item.action {
-                            Some(launcher_core::Action::Command { keep_open, .. }) => keep_open.to_value(),
+                            Some(launcher_core::Action::Command { keep_open, .. }) => {
+                                keep_open.to_value()
+                            }
                             Some(launcher_core::Action::Hotkey { .. }) => false.to_value(),
                             None => false.to_value(),
                         },
@@ -871,7 +877,10 @@ impl SettingsApp {
 
             let action = if children.is_empty() {
                 match action_type.as_str() {
-                    "shell command" => Some(launcher_core::Action::Command { cmd: action_cmd, keep_open }),
+                    "shell command" => Some(launcher_core::Action::Command {
+                        cmd: action_cmd,
+                        keep_open,
+                    }),
                     "hotkey" => Some(launcher_core::Action::Hotkey { keys: action_cmd }),
                     _ => None,
                 }
