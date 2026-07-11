@@ -1,9 +1,9 @@
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
-use std::fs;
-use tracing::{info, debug, error, Level};
-use tracing_subscriber::EnvFilter;
 use launcher_ipc::IpcMessage;
+use std::fs;
+use std::path::{Path, PathBuf};
+use tracing::{debug, error, info, Level};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "rmwk")]
@@ -48,11 +48,8 @@ fn get_default_paths() -> (PathBuf, PathBuf) {
     let base_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/home/karim/.config"))
         .join("rmwk");
-    
-    (
-        base_dir.join("menu.toml"),
-        base_dir.join("config.toml")
-    )
+
+    (base_dir.join("menu.toml"), base_dir.join("config.toml"))
 }
 
 fn ensure_default_configs(menu_path: &Path, config_path: &Path) -> anyhow::Result<()> {
@@ -123,7 +120,7 @@ fn main() -> anyhow::Result<()> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
-            
+
             let socket_path = launcher_ipc::get_socket_path();
             let toggle_succeeded = rt.block_on(async {
                 if socket_path.exists() {
@@ -169,7 +166,8 @@ fn main() -> anyhow::Result<()> {
             let socket_path = launcher_ipc::get_socket_path();
             rt.block_on(async {
                 if socket_path.exists() {
-                    match launcher_ipc::send_message(&socket_path, &IpcMessage::ReloadConfig).await {
+                    match launcher_ipc::send_message(&socket_path, &IpcMessage::ReloadConfig).await
+                    {
                         Ok(_) => {
                             info!("Sent ReloadConfig command to running instance.");
                         }
@@ -189,7 +187,9 @@ fn main() -> anyhow::Result<()> {
                     .enable_all()
                     .build()?;
                 let is_alive = rt.block_on(async {
-                    launcher_ipc::send_message(&socket_path, &IpcMessage::Open).await.is_ok()
+                    launcher_ipc::send_message(&socket_path, &IpcMessage::Open)
+                        .await
+                        .is_ok()
                 });
                 if is_alive {
                     error!("Daemon is already running!");

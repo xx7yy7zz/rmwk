@@ -373,6 +373,9 @@ impl SettingsApp {
         let chk_disable_anim = gtk::CheckButton::with_label("Disable Animations");
         chk_disable_anim.set_active(ui_config.ui.disable_animations);
 
+        let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
+        chk_enable_blur.set_active(ui_config.ui.enable_blur);
+
         settings_hbox.append(&lbl_theme);
         settings_hbox.append(&combo_theme);
         settings_hbox.append(&lbl_extra_radius);
@@ -384,6 +387,7 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_bold_chars);
         checkboxes_vbox.append(&chk_center_layout);
         checkboxes_vbox.append(&chk_disable_anim);
+        checkboxes_vbox.append(&chk_enable_blur);
         right_vbox.append(&checkboxes_vbox);
 
         // Save & Save/Reload buttons at the bottom
@@ -677,6 +681,7 @@ impl SettingsApp {
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
         let chk_disable_anim_save = chk_disable_anim.clone();
+        let chk_enable_blur_save = chk_enable_blur.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
@@ -702,6 +707,7 @@ impl SettingsApp {
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
                 cfg.ui.disable_animations = chk_disable_anim_save.is_active();
+                cfg.ui.enable_blur = chk_enable_blur_save.is_active();
 
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();
@@ -883,7 +889,10 @@ impl SettingsApp {
                         cmd: action_cmd,
                         keep_open,
                     }),
-                    "hotkey" => Some(launcher_core::Action::Hotkey { keys: action_cmd, keep_open }),
+                    "hotkey" => Some(launcher_core::Action::Hotkey {
+                        keys: action_cmd,
+                        keep_open,
+                    }),
                     _ => None,
                 }
             } else {

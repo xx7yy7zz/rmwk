@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::fs;
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -33,6 +33,8 @@ pub struct UiConfig {
     pub center_layout: bool,
     #[serde(default = "default_disable_animations")]
     pub disable_animations: bool,
+    #[serde(default = "default_enable_blur")]
+    pub enable_blur: bool,
 }
 
 impl Default for UiConfig {
@@ -45,6 +47,7 @@ impl Default for UiConfig {
             bold_single_chars: default_bold_single_chars(),
             center_layout: default_center_layout(),
             disable_animations: default_disable_animations(),
+            enable_blur: default_enable_blur(),
         }
     }
 }
@@ -75,6 +78,10 @@ fn default_center_layout() -> bool {
 
 fn default_disable_animations() -> bool {
     false
+}
+
+fn default_enable_blur() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,7 +150,10 @@ pub fn parse_hotkey(hotkey: &str) -> Result<Vec<String>, String> {
             modifiers.push(m);
         } else {
             if !is_last {
-                return Err(format!("'{}' is not a valid modifier. Only the last item can be a regular key.", part));
+                return Err(format!(
+                    "'{}' is not a valid modifier. Only the last item can be a regular key.",
+                    part
+                ));
             }
             key = Some(part);
         }
@@ -201,7 +211,7 @@ pub fn run_action(action: &Action) -> Result<()> {
                 .arg(cmd)
                 .spawn()
                 .context("Failed to spawn command")?;
-            
+
             // Reap the child in a background thread to prevent zombie (defunct) processes
             std::thread::spawn(move || {
                 let _ = child.wait();
@@ -214,13 +224,14 @@ pub fn run_action(action: &Action) -> Result<()> {
                         // Wait for the launcher window to close and relinquish Wayland focus
                         std::thread::sleep(std::time::Duration::from_millis(350));
 
-                        let mut child = match std::process::Command::new("wtype").args(&args).spawn() {
-                            Ok(c) => c,
-                            Err(e) => {
-                                eprintln!("Failed to spawn wtype. Is it installed? {}", e);
-                                return;
-                            }
-                        };
+                        let mut child =
+                            match std::process::Command::new("wtype").args(&args).spawn() {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    eprintln!("Failed to spawn wtype. Is it installed? {}", e);
+                                    return;
+                                }
+                            };
                         let _ = child.wait();
                     });
                 }
@@ -233,12 +244,16 @@ pub fn run_action(action: &Action) -> Result<()> {
     Ok(())
 }
 
-pub fn load_material_codepoints<P: AsRef<Path>>(config_path: P) -> std::collections::HashMap<String, char> {
+pub fn load_material_codepoints<P: AsRef<Path>>(
+    config_path: P,
+) -> std::collections::HashMap<String, char> {
     let mut map = std::collections::HashMap::new();
-    let path = config_path.as_ref().parent()
+    let path = config_path
+        .as_ref()
+        .parent()
         .unwrap_or_else(|| Path::new("/home/karim/.config/rmwk"))
         .join("MaterialSymbolsRounded.codepoints");
-    
+
     if let Ok(content) = fs::read_to_string(&path) {
         for line in content.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();

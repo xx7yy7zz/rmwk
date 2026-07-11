@@ -12,11 +12,14 @@ members = [
 # GTK & Wayland
 gtk4 = { version = "0.11.4" }
 gdk4 = { version = "0.11.4" }
+gdk4-wayland = { version = "0.11.4" }
 glib = { version = "0.22.8" }
 cairo-rs = { version = "0.22.0", features = ["use_glib"] }
 pango = { version = "0.22.0" }
 pangocairo = { version = "0.22.0" }
 gtk4-layer-shell = { version = "0.8.0" }
+wayland-client = { version = "0.31" }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 
 # Serialization / Config
 serde = { version = "1.0", features = ["derive"] }

@@ -2,6 +2,8 @@ use gdk::prelude::*;
 use gdk4 as gdk;
 use gtk::prelude::*;
 use gtk4 as gtk;
+pub mod wayland;
+
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
 use launcher_ipc::IpcMessage;
 use pangocairo;
@@ -54,6 +56,9 @@ struct MenuState {
     bold_single_chars: bool,
     center_layout: bool,
     disable_animations: bool,
+    enable_blur: bool,
+    last_cx: f64,
+    last_cy: f64,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -516,6 +521,9 @@ impl LauncherApp {
             bold_single_chars: ui_config.bold_single_chars,
             center_layout: ui_config.center_layout,
             disable_animations: ui_config.disable_animations,
+            enable_blur: ui_config.enable_blur,
+            last_cx: 0.0,
+            last_cy: 0.0,
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
             suppress_focus_loss: std::rc::Rc::new(std::cell::Cell::new(false)),
@@ -525,8 +533,50 @@ impl LauncherApp {
             state.borrow_mut().preload_icons(&display);
         }
 
+        let wayland_blur = Rc::new(RefCell::new(None));
+        let blur_realize = wayland_blur.clone();
+        let state_realize = state.clone();
+
+        window.connect_realize(move |w| {
+            if let Some(blur) = wayland::WaylandBlur::new(w) {
+                let width = w.width() as f64;
+                let height = w.height() as f64;
+                let cx = width / 2.0;
+                let cy = height / 2.0;
+                let radius = if state_realize.borrow().enable_blur {
+                    BASE_R + SLICE_WIDTH + HOVER_GROW
+                } else {
+                    0.0
+                };
+                blur.update_circular_region(radius, cx, cy);
+                *blur_realize.borrow_mut() = Some(blur);
+            }
+        });
+
         // 4. Create drawing area for radial wedges
         let drawing_area = gtk::DrawingArea::new();
+
+        let blur_resize = wayland_blur.clone();
+        let state_resize = state.clone();
+        let window_resize = window.clone();
+        drawing_area.connect_resize(move |_area, _width, _height| {
+            if let Some(blur) = blur_resize.borrow().as_ref() {
+                let win_w = window_resize.width() as f64;
+                let win_h = window_resize.height() as f64;
+                let cx = win_w / 2.0;
+                let cy = win_h / 2.0;
+                let mut state = state_resize.borrow_mut();
+                state.last_cx = cx;
+                state.last_cy = cy;
+                let radius = if state.enable_blur {
+                    BASE_R + SLICE_WIDTH + HOVER_GROW
+                } else {
+                    0.0
+                };
+                blur.update_circular_region(radius, cx, cy);
+            }
+        });
+
         let draw_state = state.clone();
         drawing_area.set_draw_func(move |area, cr, width, height| {
             let cx = width as f64 / 2.0;
@@ -631,14 +681,27 @@ impl LauncherApp {
                         0.0
                     };
 
-                    let mut start_angle = i as f64 * angle_per_slice - PI / 2.0;
+                    let mut base_start_angle = i as f64 * angle_per_slice - PI / 2.0;
                     if state_ref.center_layout {
-                        start_angle -= angle_per_slice / 2.0;
+                        base_start_angle -= angle_per_slice / 2.0;
                     }
-                    let end_angle = start_angle + angle_per_slice;
+                    let base_end_angle = base_start_angle + angle_per_slice;
+
+                    let hp_curr = hp;
+                    let hp_prev = if state_ref.hover_progresses.len() > 0 {
+                        state_ref.hover_progresses[(i + n - 1) % n]
+                    } else { 0.0 };
+                    let hp_next = if state_ref.hover_progresses.len() > 0 {
+                        state_ref.hover_progresses[(i + 1) % n]
+                    } else { 0.0 };
+
+                    let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH + HOVER_GROW);
+                    let start_angle = base_start_angle + (hp_prev - hp_curr) * hover_angle_grow;
+                    let end_angle = base_end_angle + (hp_curr - hp_next) * hover_angle_grow;
 
                     let inner_radius = BASE_R * ease_progress;
-                    let outer_radius = (BASE_R + SLICE_WIDTH + HOVER_GROW * hp) * ease_progress;
+                    // Outer radius is now fixed to its expanded size
+                    let outer_radius = (BASE_R + SLICE_WIDTH + HOVER_GROW) * ease_progress;
 
                     // Draw wedge
                     cr.arc(cx, cy, outer_radius, start_angle, end_angle);
@@ -684,7 +747,7 @@ impl LauncherApp {
                     cr.stroke().unwrap();
 
                     // Draw icon if present (labels are only in the center hub now)
-                    let mid_angle = start_angle + angle_per_slice / 2.0;
+                    let mid_angle = (start_angle + end_angle) / 2.0;
                     let r_center = (inner_radius + outer_radius) / 2.0;
 
                     let arc_width = r_center * angle_per_slice;
@@ -1305,18 +1368,36 @@ impl LauncherApp {
                         let mut state = ipc_state.borrow_mut();
                         state.codepoints =
                             launcher_core::load_material_codepoints(&config_path_clone);
+                        let mut blur_needs_update = false;
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.extra_radius = cfg.ui.extra_radius;
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.center_layout = cfg.ui.center_layout;
                             state.disable_animations = cfg.ui.disable_animations;
+                            if state.enable_blur != cfg.ui.enable_blur {
+                                state.enable_blur = cfg.ui.enable_blur;
+                                blur_needs_update = true;
+                            }
                             state.icon_cache.clear();
                             *state.theme_colors.borrow_mut() = None;
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
                             info!("Reloaded extra_radius: {}", state.extra_radius);
+                        }
+                        
+                        if blur_needs_update {
+                            if let Some(blur) = wayland_blur.borrow().as_ref() {
+                                let cx = state.last_cx;
+                                let cy = state.last_cy;
+                                let radius = if state.enable_blur {
+                                    BASE_R + SLICE_WIDTH + HOVER_GROW
+                                } else {
+                                    0.0
+                                };
+                                blur.update_circular_region(radius, cx, cy);
+                            }
                         }
                         match launcher_core::load_menu(&menu_path_clone) {
                             Ok(m) => {
