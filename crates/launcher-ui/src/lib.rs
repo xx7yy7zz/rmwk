@@ -680,7 +680,16 @@ impl LauncherApp {
             if n > 0 {
                 let angle_per_slice = 2.0 * PI / n as f64;
 
-                for i in 0..n {
+                // Determine draw order so the hovered slice paints over its neighbors' strokes
+                let mut draw_order: Vec<usize> = (0..n).collect();
+                if let Some(hovered_i) = state_ref.hovered_index {
+                    if !state_ref.is_closing && hovered_i < n {
+                        draw_order.retain(|&idx| idx != hovered_i);
+                        draw_order.push(hovered_i);
+                    }
+                }
+
+                for i in draw_order {
                     cr.new_path();
                     let item = &display_items[i];
                     let hp = if i < state_ref.hover_progresses.len() {
@@ -734,41 +743,60 @@ impl LauncherApp {
                     }
                     cr.fill_preserve().unwrap();
 
-                    // Stroke wedge (inner and radial edges)
-                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
-                        cr.set_source_rgba(
-                            hover_border_color.red() as f64,
-                            hover_border_color.green() as f64,
-                            hover_border_color.blue() as f64,
-                            hover_border_color.alpha() as f64 * ease_progress,
-                        );
-                        cr.set_line_width(3.0);
-                    } else {
-                        cr.set_source_rgba(
-                            border_color.red() as f64,
-                            border_color.green() as f64,
-                            border_color.blue() as f64,
-                            border_color.alpha() as f64 * ease_progress,
-                        );
-                        cr.set_line_width(2.0);
-                    }
-                    cr.stroke().unwrap();
+                    // For unhovered slices, we want the outer stroke on top of the wedge stroke.
+                    // For the hovered slice, we want the wedge stroke on top of everything.
+                    let is_hovered = state_ref.hovered_index == Some(i) && !state_ref.is_closing;
 
-                    // Stroke just the outer arc separately
-                    cr.new_path();
-                    cr.arc(cx, cy, outer_radius, start_angle, end_angle);
-                    cr.set_source_rgba(
-                        outer_border_color.red() as f64,
-                        outer_border_color.green() as f64,
-                        outer_border_color.blue() as f64,
-                        outer_border_color.alpha() as f64 * ease_progress,
-                    );
-                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
-                        cr.set_line_width(3.0);
+                    let draw_wedge_stroke = |cr: &cairo::Context| {
+                        if is_hovered {
+                            cr.set_source_rgba(
+                                hover_border_color.red() as f64,
+                                hover_border_color.green() as f64,
+                                hover_border_color.blue() as f64,
+                                hover_border_color.alpha() as f64 * ease_progress,
+                            );
+                            cr.set_line_width(3.0);
+                        } else {
+                            cr.set_source_rgba(
+                                border_color.red() as f64,
+                                border_color.green() as f64,
+                                border_color.blue() as f64,
+                                border_color.alpha() as f64 * ease_progress,
+                            );
+                            cr.set_line_width(2.0);
+                        }
+                        cr.stroke().unwrap();
+                    };
+
+                    let draw_outer_stroke = |cr: &cairo::Context| {
+                        cr.new_path();
+                        cr.arc(cx, cy, outer_radius, start_angle, end_angle);
+                        cr.set_source_rgba(
+                            outer_border_color.red() as f64,
+                            outer_border_color.green() as f64,
+                            outer_border_color.blue() as f64,
+                            outer_border_color.alpha() as f64 * ease_progress,
+                        );
+                        if is_hovered {
+                            cr.set_line_width(3.0);
+                        } else {
+                            cr.set_line_width(2.0);
+                        }
+                        cr.stroke().unwrap();
+                    };
+
+                    if is_hovered {
+                        // Preserve path for wedge stroke to be drawn after
+                        let path = cr.copy_path().unwrap();
+                        cr.new_path(); // Clear it so outer stroke doesn't stroke it
+                        draw_outer_stroke(cr);
+                        cr.append_path(&path);
+                        draw_wedge_stroke(cr);
                     } else {
-                        cr.set_line_width(2.0);
+                        // Wedge stroke first, then outer stroke on top
+                        draw_wedge_stroke(cr);
+                        draw_outer_stroke(cr);
                     }
-                    cr.stroke().unwrap();
 
                     // Draw icon if present (labels are only in the center hub now)
                     let mid_angle = (start_angle + end_angle) / 2.0;
