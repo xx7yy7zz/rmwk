@@ -60,7 +60,7 @@ struct MenuState {
 
     // Cached theme colors
     theme_colors: std::cell::RefCell<Option<ThemeColors>>,
-    
+
     // Temporarily suppress close-on-focus-loss for hotkey macros
     suppress_focus_loss: std::rc::Rc<std::cell::Cell<bool>>,
 }
@@ -304,31 +304,41 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
 
             if let launcher_core::Action::Hotkey { keys, keep_open } = &action {
                 if *keep_open {
-                    if let Some(window) = area.root().and_then(|r| r.downcast::<gtk::ApplicationWindow>().ok()) {
+                    if let Some(window) = area
+                        .root()
+                        .and_then(|r| r.downcast::<gtk::ApplicationWindow>().ok())
+                    {
                         // Drop keyboard focus to let the background app receive the macro
                         window.set_keyboard_mode(KeyboardMode::None);
 
                         let keys_clone = keys.clone();
                         let window_clone = window.clone();
                         let suppress = state.suppress_focus_loss.clone();
-                        
+
                         suppress.set(true);
-                        
+
                         // Wait briefly for the compositor to transfer focus
-                        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
-                            if let Ok(args) = launcher_core::parse_hotkey(&keys_clone) {
-                                // wtype executes very quickly, so blocking for a few ms is fine
-                                let _ = std::process::Command::new("wtype").args(&args).status();
-                            }
-                            
-                            // Regain focus after wtype has finished
-                            window_clone.set_keyboard_mode(KeyboardMode::Exclusive);
-                            
-                            // Re-enable focus loss closing shortly after
-                            glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
-                                suppress.set(false);
-                            });
-                        });
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(50),
+                            move || {
+                                if let Ok(args) = launcher_core::parse_hotkey(&keys_clone) {
+                                    // wtype executes very quickly, so blocking for a few ms is fine
+                                    let _ =
+                                        std::process::Command::new("wtype").args(&args).status();
+                                }
+
+                                // Regain focus after wtype has finished
+                                window_clone.set_keyboard_mode(KeyboardMode::Exclusive);
+
+                                // Re-enable focus loss closing shortly after
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(50),
+                                    move || {
+                                        suppress.set(false);
+                                    },
+                                );
+                            },
+                        );
                         return;
                     }
                 }
@@ -1238,7 +1248,11 @@ impl LauncherApp {
                             *state.theme_colors.borrow_mut() = None;
                             drop(state);
 
-                            load_and_apply_theme(&config_path_clone, &theme_provider_clone, &user_provider_clone);
+                            load_and_apply_theme(
+                                &config_path_clone,
+                                &theme_provider_clone,
+                                &user_provider_clone,
+                            );
                             window_clone_ipc.present();
                             area_clone_ipc.queue_draw();
                         }
@@ -1267,8 +1281,12 @@ impl LauncherApp {
                             state.open_progress = 0.0;
                             *state.theme_colors.borrow_mut() = None;
                             drop(state);
-                            
-                            load_and_apply_theme(&config_path_clone, &theme_provider_clone, &user_provider_clone);
+
+                            load_and_apply_theme(
+                                &config_path_clone,
+                                &theme_provider_clone,
+                                &user_provider_clone,
+                            );
                             window_clone_ipc.present();
                             area_clone_ipc.queue_draw();
                         }
@@ -1276,7 +1294,11 @@ impl LauncherApp {
                     IpcMessage::ReloadConfig => {
                         info!("Reload config request received via IPC");
                         // 1. Reload the theme CSS from file
-                        load_and_apply_theme(&config_path_clone, &theme_provider_clone, &user_provider_clone);
+                        load_and_apply_theme(
+                            &config_path_clone,
+                            &theme_provider_clone,
+                            &user_provider_clone,
+                        );
 
                         // 2. Reload the menu TOML config from file
                         let mut state = ipc_state.borrow_mut();
