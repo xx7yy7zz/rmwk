@@ -60,6 +60,9 @@ struct MenuState {
 
     // Cached theme colors
     theme_colors: std::cell::RefCell<Option<ThemeColors>>,
+    
+    // Temporarily suppress close-on-focus-loss for hotkey macros
+    suppress_focus_loss: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl MenuState {
@@ -307,6 +310,9 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
 
                         let keys_clone = keys.clone();
                         let window_clone = window.clone();
+                        let suppress = state.suppress_focus_loss.clone();
+                        
+                        suppress.set(true);
                         
                         // Wait briefly for the compositor to transfer focus
                         glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
@@ -317,6 +323,11 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
                             
                             // Regain focus after wtype has finished
                             window_clone.set_keyboard_mode(KeyboardMode::Exclusive);
+                            
+                            // Re-enable focus loss closing shortly after
+                            glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+                                suppress.set(false);
+                            });
                         });
                         return;
                     }
@@ -496,6 +507,7 @@ impl LauncherApp {
             disable_animations: ui_config.disable_animations,
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
+            suppress_focus_loss: std::rc::Rc::new(std::cell::Cell::new(false)),
         }));
 
         if let Some(display) = gdk::Display::default() {
@@ -1074,8 +1086,12 @@ impl LauncherApp {
         let focus_state = state.clone();
         window.connect_notify_local(Some("is-active"), move |w, _| {
             if !w.is_active() {
-                debug!("Window lost focus, initiating close animation");
                 if let Ok(mut state) = focus_state.try_borrow_mut() {
+                    if state.suppress_focus_loss.get() {
+                        debug!("Window lost focus, but suppression is active. Ignoring.");
+                        return;
+                    }
+                    debug!("Window lost focus, initiating close animation");
                     state.is_closing = true;
                     state.is_opening = false;
                 }
