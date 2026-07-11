@@ -225,14 +225,14 @@ fn load_and_apply_theme(
     if theme_name == "system" {
         // Dynamic GTK system theme using named colors
         let system_css = b"
-            .radial-slice { color: @theme_bg_color; }
-            .radial-slice:hover { color: @theme_selected_bg_color; }
-            .radial-slice:active { color: @theme_selected_bg_color; }
+            .radial-slice { color: alpha(@theme_bg_color, 0.85); }
+            .radial-slice:hover { color: alpha(@theme_selected_bg_color, 0.95); }
+            .radial-slice:active { color: alpha(@theme_selected_bg_color, 0.90); }
             .radial-slice:selected { color: @theme_selected_bg_color; }
             .radial-label { color: @theme_fg_color; }
             .radial-label:hover { color: @theme_selected_fg_color; }
-            .radial-hub { color: @theme_bg_color; }
-            .radial-hub:active { color: @theme_selected_bg_color; }
+            .radial-hub { color: alpha(@theme_bg_color, 0.95); }
+            .radial-hub:active { color: alpha(@theme_selected_bg_color, 0.80); }
             .radial-hub:hover { color: @theme_fg_color; }
         ";
         theme_provider.load_from_data(std::str::from_utf8(system_css).unwrap());
@@ -418,6 +418,7 @@ impl LauncherApp {
 
         // 1. Initialize Layer Shell before realizing the window
         window.init_layer_shell();
+        window.set_namespace(Some("rmwk"));
         window.set_layer(Layer::Overlay);
         window.set_keyboard_mode(KeyboardMode::Exclusive);
         window.set_exclusive_zone(-1);
