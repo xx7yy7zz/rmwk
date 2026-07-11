@@ -164,9 +164,22 @@ impl WaylandBlur {
         let r = (radius - 1.0).max(0.0) as i32;
         let cx = center_x as i32;
         let cy = center_y as i32;
-        
-        for y in -r..=r {
-            let x = (((r * r - y * y) as f64).sqrt().round()) as i32;
+
+        let top_stretch = 1;
+        let r_top = r + top_stretch;
+
+        for y in -r_top..=r {
+            let x = if y < 0 {
+                // Top half: Elliptical stretch
+                let b = r_top as f64;
+                let r_f = r as f64;
+                let y_f = y as f64;
+                (r_f * (1.0 - (y_f * y_f) / (b * b)).sqrt()).round() as i32
+            } else {
+                // Bottom half: Perfect circle
+                (((r * r - y * y) as f64).sqrt().round()) as i32
+            };
+
             if x > 0 {
                 let rect_x = cx - x;
                 let rect_y = cy + y;

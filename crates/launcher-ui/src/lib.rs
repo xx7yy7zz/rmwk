@@ -30,6 +30,7 @@ struct ThemeColors {
     hub_fill: gtk::gdk::RGBA,
     hub_border: gtk::gdk::RGBA,
     hub_text_color: gtk::gdk::RGBA,
+    outer_border_color: gtk::gdk::RGBA,
 }
 
 struct MenuState {
@@ -642,6 +643,11 @@ impl LauncherApp {
                 context.set_state(gtk::StateFlags::PRELIGHT);
                 let hub_text_color = context.color();
                 context.restore();
+                context.save();
+                context.add_class("radial-outer");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let outer_border_color = context.color();
+                context.restore();
 
                 let c = ThemeColors {
                     fill_color,
@@ -653,6 +659,7 @@ impl LauncherApp {
                     hub_fill,
                     hub_border,
                     hub_text_color,
+                    outer_border_color,
                 };
 
                 *state_ref.theme_colors.borrow_mut() = Some(c.clone());
@@ -668,6 +675,7 @@ impl LauncherApp {
             let hub_fill = colors.hub_fill;
             let hub_border = colors.hub_border;
             let hub_text_color = colors.hub_text_color;
+            let outer_border_color = colors.outer_border_color;
 
             if n > 0 {
                 let angle_per_slice = 2.0 * PI / n as f64;
@@ -699,9 +707,9 @@ impl LauncherApp {
                     let start_angle = base_start_angle + (hp_prev - hp_curr) * hover_angle_grow;
                     let end_angle = base_end_angle + (hp_curr - hp_next) * hover_angle_grow;
 
-                    let inner_radius = BASE_R * ease_progress;
-                    // Outer radius is now fixed to its expanded size
-                    let outer_radius = (BASE_R + SLICE_WIDTH + HOVER_GROW) * ease_progress;
+                    let inner_radius = (BASE_R + 0.5) * ease_progress;
+                    // Outer radius is now fixed to its expanded size, minus 0.5 to grow stroke inwards
+                    let outer_radius = (BASE_R + SLICE_WIDTH + HOVER_GROW - 0.5) * ease_progress;
 
                     // Draw wedge
                     cr.arc(cx, cy, outer_radius, start_angle, end_angle);
@@ -726,7 +734,7 @@ impl LauncherApp {
                     }
                     cr.fill_preserve().unwrap();
 
-                    // Stroke border
+                    // Stroke wedge (inner and radial edges)
                     if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
                         cr.set_source_rgba(
                             hover_border_color.red() as f64,
@@ -734,7 +742,7 @@ impl LauncherApp {
                             hover_border_color.blue() as f64,
                             hover_border_color.alpha() as f64 * ease_progress,
                         );
-                        cr.set_line_width(2.0);
+                        cr.set_line_width(3.0);
                     } else {
                         cr.set_source_rgba(
                             border_color.red() as f64,
@@ -742,7 +750,23 @@ impl LauncherApp {
                             border_color.blue() as f64,
                             border_color.alpha() as f64 * ease_progress,
                         );
-                        cr.set_line_width(1.0);
+                        cr.set_line_width(2.0);
+                    }
+                    cr.stroke().unwrap();
+
+                    // Stroke just the outer arc separately
+                    cr.new_path();
+                    cr.arc(cx, cy, outer_radius, start_angle, end_angle);
+                    cr.set_source_rgba(
+                        outer_border_color.red() as f64,
+                        outer_border_color.green() as f64,
+                        outer_border_color.blue() as f64,
+                        outer_border_color.alpha() as f64 * ease_progress,
+                    );
+                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                        cr.set_line_width(3.0);
+                    } else {
+                        cr.set_line_width(2.0);
                     }
                     cr.stroke().unwrap();
 
