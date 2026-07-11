@@ -466,7 +466,7 @@ impl SettingsApp {
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
                         btn_record_hotkey_clone.set_visible(true);
-                        chk_keep_open_clone.set_visible(false);
+                        chk_keep_open_clone.set_visible(true);
                         lbl_hotkey_status_clone.set_visible(true);
                     } else {
                         lbl_cmd_clone.set_label("Command:");
@@ -830,7 +830,7 @@ impl SettingsApp {
                         3,
                         &match &item.action {
                             Some(launcher_core::Action::Command { cmd, .. }) => cmd.to_value(),
-                            Some(launcher_core::Action::Hotkey { keys }) => keys.to_value(),
+                            Some(launcher_core::Action::Hotkey { keys, .. }) => keys.to_value(),
                             None => "".to_value(),
                         },
                     ),
@@ -840,7 +840,9 @@ impl SettingsApp {
                             Some(launcher_core::Action::Command { keep_open, .. }) => {
                                 keep_open.to_value()
                             }
-                            Some(launcher_core::Action::Hotkey { .. }) => false.to_value(),
+                            Some(launcher_core::Action::Hotkey { keep_open, .. }) => {
+                                keep_open.to_value()
+                            }
                             None => false.to_value(),
                         },
                     ),
@@ -881,7 +883,7 @@ impl SettingsApp {
                         cmd: action_cmd,
                         keep_open,
                     }),
-                    "hotkey" => Some(launcher_core::Action::Hotkey { keys: action_cmd }),
+                    "hotkey" => Some(launcher_core::Action::Hotkey { keys: action_cmd, keep_open }),
                     _ => None,
                 }
             } else {

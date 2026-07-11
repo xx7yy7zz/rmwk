@@ -96,6 +96,8 @@ pub enum Action {
     },
     Hotkey {
         keys: String,
+        #[serde(default)]
+        keep_open: bool,
     },
 }
 
@@ -103,7 +105,7 @@ impl Action {
     pub fn should_keep_open(&self) -> bool {
         match self {
             Action::Command { keep_open, .. } => *keep_open,
-            Action::Hotkey { .. } => false, // hotkeys always close the menu
+            Action::Hotkey { keep_open, .. } => *keep_open,
         }
     }
 }
@@ -205,7 +207,7 @@ pub fn run_action(action: &Action) -> Result<()> {
                 let _ = child.wait();
             });
         }
-        Action::Hotkey { keys } => {
+        Action::Hotkey { keys, .. } => {
             match parse_hotkey(keys) {
                 Ok(args) => {
                     std::thread::spawn(move || {
