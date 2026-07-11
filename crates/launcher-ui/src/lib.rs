@@ -677,6 +677,60 @@ impl LauncherApp {
             let hub_text_color = colors.hub_text_color;
             let outer_border_color = colors.outer_border_color;
 
+            let center_text = if let Some(idx) = state_ref.hovered_index {
+                if idx < display_items.len() {
+                    display_items[idx].label.clone()
+                } else {
+                    "Radial Menu".to_string()
+                }
+            } else if !state_ref.history.is_empty() {
+                "Back".to_string()
+            } else {
+                "Radial Menu".to_string()
+            };
+
+            let draw_hub = || {
+                // Draw center circular hub
+                cr.new_path();
+                cr.set_source_rgba(
+                    hub_fill.red() as f64,
+                    hub_fill.green() as f64,
+                    hub_fill.blue() as f64,
+                    hub_fill.alpha() as f64 * ease_progress,
+                );
+                cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
+                cr.fill_preserve().unwrap();
+
+                cr.set_source_rgba(
+                    hub_border.red() as f64,
+                    hub_border.green() as f64,
+                    hub_border.blue() as f64,
+                    hub_border.alpha() as f64 * ease_progress,
+                );
+                cr.set_line_width(2.0);
+                cr.stroke().unwrap();
+
+                // Render hub label
+                cr.set_source_rgba(
+                    hub_text_color.red() as f64,
+                    hub_text_color.green() as f64,
+                    hub_text_color.blue() as f64,
+                    hub_text_color.alpha() as f64 * ease_progress,
+                );
+                cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+                cr.set_font_size(16.0 * ease_progress);
+
+                if let Ok(extents) = cr.text_extents(&center_text) {
+                    cr.move_to(
+                        cx - extents.width() / 2.0 - extents.x_bearing(),
+                        cy - extents.height() / 2.0 - extents.y_bearing(),
+                    );
+                    let _ = cr.show_text(&center_text);
+                }
+            };
+
+            let mut hub_drawn = false;
+
             if n > 0 {
                 let angle_per_slice = 2.0 * PI / n as f64;
 
@@ -690,6 +744,11 @@ impl LauncherApp {
                 }
 
                 for i in draw_order {
+                    if Some(i) == state_ref.hovered_index && !state_ref.is_closing {
+                        draw_hub();
+                        hub_drawn = true;
+                    }
+
                     cr.new_path();
                     let item = &display_items[i];
                     let hp = if i < state_ref.hover_progresses.len() {
@@ -916,54 +975,8 @@ impl LauncherApp {
                 }
             }
 
-            // Draw center circular hub
-            cr.new_path();
-            cr.set_source_rgba(
-                hub_fill.red() as f64,
-                hub_fill.green() as f64,
-                hub_fill.blue() as f64,
-                hub_fill.alpha() as f64 * ease_progress,
-            );
-            cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
-            cr.fill_preserve().unwrap();
-
-            cr.set_source_rgba(
-                hub_border.red() as f64,
-                hub_border.green() as f64,
-                hub_border.blue() as f64,
-                hub_border.alpha() as f64 * ease_progress,
-            );
-            cr.set_line_width(2.0);
-            cr.stroke().unwrap();
-
-            // Render hub label
-            cr.set_source_rgba(
-                hub_text_color.red() as f64,
-                hub_text_color.green() as f64,
-                hub_text_color.blue() as f64,
-                hub_text_color.alpha() as f64 * ease_progress,
-            );
-            cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-            cr.set_font_size(16.0 * ease_progress);
-
-            let center_text = if let Some(idx) = state_ref.hovered_index {
-                if idx < display_items.len() {
-                    &display_items[idx].label
-                } else {
-                    "Radial Menu"
-                }
-            } else if !state_ref.history.is_empty() {
-                "Back"
-            } else {
-                "Radial Menu"
-            };
-
-            if let Ok(extents) = cr.text_extents(center_text) {
-                cr.move_to(
-                    cx - extents.width() / 2.0 - extents.x_bearing(),
-                    cy - extents.height() / 2.0 - extents.y_bearing(),
-                );
-                let _ = cr.show_text(center_text);
+            if !hub_drawn {
+                draw_hub();
             }
         });
         window.set_child(Some(&drawing_area));
