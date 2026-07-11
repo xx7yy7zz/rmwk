@@ -298,6 +298,31 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
             area.queue_draw();
         } else if let Some(action) = selected.action {
             info!("Running action: {:?}", action);
+
+            if let launcher_core::Action::Hotkey { keys, keep_open } = &action {
+                if *keep_open {
+                    if let Some(window) = area.root().and_then(|r| r.downcast::<gtk::ApplicationWindow>().ok()) {
+                        // Drop keyboard focus to let the background app receive the macro
+                        window.set_keyboard_mode(KeyboardMode::None);
+
+                        let keys_clone = keys.clone();
+                        let window_clone = window.clone();
+                        
+                        // Wait briefly for the compositor to transfer focus
+                        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
+                            if let Ok(args) = launcher_core::parse_hotkey(&keys_clone) {
+                                // wtype executes very quickly, so blocking for a few ms is fine
+                                let _ = std::process::Command::new("wtype").args(&args).status();
+                            }
+                            
+                            // Regain focus after wtype has finished
+                            window_clone.set_keyboard_mode(KeyboardMode::Exclusive);
+                        });
+                        return;
+                    }
+                }
+            }
+
             if let Err(e) = launcher_core::run_action(&action) {
                 error!("Failed to execute action: {}", e);
             }
