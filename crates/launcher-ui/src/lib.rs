@@ -57,6 +57,9 @@ struct MenuState {
     bold_single_chars: bool,
     center_layout: bool,
     disable_animations: bool,
+    disable_open_close_animation: bool,
+    disable_hover_animation: bool,
+    hover_visual_cue: String,
     enable_blur: bool,
     last_cx: f64,
     last_cy: f64,
@@ -523,6 +526,9 @@ impl LauncherApp {
             bold_single_chars: ui_config.bold_single_chars,
             center_layout: ui_config.center_layout,
             disable_animations: ui_config.disable_animations,
+            disable_open_close_animation: ui_config.disable_open_close_animation,
+            disable_hover_animation: ui_config.disable_hover_animation,
+            hover_visual_cue: ui_config.hover_visual_cue.clone(),
             enable_blur: ui_config.enable_blur,
             last_cx: 0.0,
             last_cy: 0.0,
@@ -572,7 +578,7 @@ impl LauncherApp {
                 state.last_cx = cx;
                 state.last_cy = cy;
                 let radius = if state.enable_blur {
-                    BASE_R + SLICE_WIDTH + HOVER_GROW
+                    BASE_R + SLICE_WIDTH
                 } else {
                     0.0
                 };
@@ -594,7 +600,7 @@ impl LauncherApp {
                     if state_ref.is_closing || state_ref.open_progress < 0.650 {
                         0.0
                     } else {
-                        BASE_R + SLICE_WIDTH + HOVER_GROW
+                        BASE_R + SLICE_WIDTH
                     }
                 } else {
                     0.0
@@ -797,13 +803,25 @@ impl LauncherApp {
                         0.0
                     };
 
-                    let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH + HOVER_GROW);
-                    let start_angle = base_start_angle + (hp_prev - hp_curr) * hover_angle_grow;
-                    let end_angle = base_end_angle + (hp_curr - hp_next) * hover_angle_grow;
+                    let mut start_angle = base_start_angle;
+                    let mut end_angle = base_end_angle;
+                    let mut outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+
+                    match state_ref.hover_visual_cue.as_str() {
+                        "sides" => {
+                            let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH);
+                            start_angle += (hp_prev - hp_curr) * hover_angle_grow;
+                            end_angle += (hp_curr - hp_next) * hover_angle_grow;
+                        }
+                        "outwards" => {
+                            outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5) * ease_progress;
+                        }
+                        _ => { // "none"
+                            // keep default values
+                        }
+                    }
 
                     let inner_radius = (BASE_R + 0.5) * ease_progress;
-                    // Outer radius is now fixed to its expanded size, minus 0.5 to grow stroke inwards
-                    let outer_radius = (BASE_R + SLICE_WIDTH + HOVER_GROW - 0.5) * ease_progress;
 
                     // Draw wedge
                     cr.arc(cx, cy, outer_radius, start_angle, end_angle);
@@ -1287,7 +1305,7 @@ impl LauncherApp {
 
             // Open transition (~200ms)
             if state.is_opening {
-                if state.disable_animations {
+                if state.disable_animations || state.disable_open_close_animation {
                     state.open_progress = 1.0;
                 } else {
                     state.open_progress += dt / 0.200;
@@ -1301,7 +1319,7 @@ impl LauncherApp {
 
             // Close transition (~150ms)
             if state.is_closing {
-                if state.disable_animations {
+                if state.disable_animations || state.disable_open_close_animation {
                     state.open_progress = 0.0;
                 } else {
                     state.open_progress -= dt / 0.150;
@@ -1336,7 +1354,7 @@ impl LauncherApp {
                     0.0
                 };
                 let diff = target - state.hover_progresses[i];
-                if state.disable_animations {
+                if state.disable_animations || state.disable_hover_animation {
                     if diff != 0.0 {
                         state.hover_progresses[i] = target;
                         needs_redraw = true;
@@ -1465,7 +1483,18 @@ impl LauncherApp {
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.center_layout = cfg.ui.center_layout;
-                            state.disable_animations = cfg.ui.disable_animations;
+                            if state.disable_animations != cfg.ui.disable_animations {
+                                state.disable_animations = cfg.ui.disable_animations;
+                            }
+                            if state.disable_open_close_animation != cfg.ui.disable_open_close_animation {
+                                state.disable_open_close_animation = cfg.ui.disable_open_close_animation;
+                            }
+                            if state.disable_hover_animation != cfg.ui.disable_hover_animation {
+                                state.disable_hover_animation = cfg.ui.disable_hover_animation;
+                            }
+                            if state.hover_visual_cue != cfg.ui.hover_visual_cue {
+                                state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();
+                            }
                             if state.enable_blur != cfg.ui.enable_blur {
                                 state.enable_blur = cfg.ui.enable_blur;
                                 blur_needs_update = true;
