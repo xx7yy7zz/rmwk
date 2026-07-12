@@ -771,6 +771,21 @@ impl LauncherApp {
                     }
                 }
 
+                // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
+                if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
+                    let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                    cr.new_path();
+                    cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
+                    cr.set_source_rgba(
+                        outer_border_color.red() as f64,
+                        outer_border_color.green() as f64,
+                        outer_border_color.blue() as f64,
+                        outer_border_color.alpha() as f64 * ease_progress,
+                    );
+                    cr.set_line_width(2.0);
+                    cr.stroke().unwrap();
+                }
+
                 for i in draw_order {
                     if Some(i) == state_ref.hovered_index && !state_ref.is_closing {
                         draw_hub();
