@@ -771,62 +771,8 @@ impl LauncherApp {
                     }
                 }
 
-                // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
-                if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
-                    let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-
-                    let draw_full = || {
-                        cr.new_path();
-                        cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
-                        cr.set_source_rgba(
-                            outer_border_color.red() as f64,
-                            outer_border_color.green() as f64,
-                            outer_border_color.blue() as f64,
-                            outer_border_color.alpha() as f64 * ease_progress,
-                        );
-                        cr.set_line_width(2.0);
-                        cr.stroke().unwrap();
-                    };
-
-                    if let Some(hovered_i) = state_ref.hovered_index {
-                        if !state_ref.is_closing && hovered_i < n {
-                            let angle_per_slice = 2.0 * PI / n as f64;
-                            let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
-                            if state_ref.center_layout {
-                                start_angle -= angle_per_slice / 2.0;
-                            }
-                            let end_angle = start_angle + angle_per_slice;
-
-                            cr.set_source_rgba(
-                                outer_border_color.red() as f64,
-                                outer_border_color.green() as f64,
-                                outer_border_color.blue() as f64,
-                                outer_border_color.alpha() as f64 * ease_progress,
-                            );
-
-                            // Draw unhovered segment (2px width)
-                            cr.new_path();
-                            cr.arc(cx, cy, base_outer, end_angle, start_angle + 2.0 * PI);
-                            cr.set_line_width(2.0);
-                            cr.stroke().unwrap();
-
-                            // Draw hovered segment (expand width to the inside to mask jagged blur edge)
-                            let mask_stroke_width = 3.0; // <-- MANUALLY ADJUST THIS: Width of the masking stroke
-                                                         // Shift the radius inwards so the outer edge stays perfectly aligned with the unhovered 2px base ring
-                            let mask_radius = base_outer - (mask_stroke_width - 2.0) / 2.0;
-
-                            cr.new_path();
-                            cr.arc(cx, cy, mask_radius, start_angle, end_angle);
-                            cr.set_line_width(mask_stroke_width);
-                            cr.stroke().unwrap();
-                        } else {
-                            draw_full();
-                        }
-                    } else {
-                        draw_full();
-                    }
-                }
-
+                // The continuous base ring has been moved to AFTER the wedge drawing loop
+                // so that it draws perfectly over the selected slice's stroke to mask the jagged blur edge.
                 for i in draw_order {
                     if Some(i) == state_ref.hovered_index && !state_ref.is_closing {
                         draw_hub();
@@ -901,7 +847,11 @@ impl LauncherApp {
                             fill_color.alpha() as f64 * ease_progress,
                         );
                     }
+                    // Use Operator::Add so that the mathematically abutting edges perfectly sum their
+                    // anti-aliased partial pixel coverage to 100%, completely eliminating the transparent 1px gap seam!
+                    cr.set_operator(cairo::Operator::Add);
                     cr.fill_preserve().unwrap();
+                    cr.set_operator(cairo::Operator::Over);
 
                     // For unhovered slices, we want the outer stroke on top of the wedge stroke.
                     // For the hovered slice, we want the wedge stroke on top of everything.
@@ -949,8 +899,11 @@ impl LauncherApp {
                         // Preserve path for wedge stroke to be drawn after
                         let path = cr.copy_path().unwrap();
                         cr.new_path(); // Clear it so outer stroke doesn't stroke it
-                                       // We intentionally DO NOT call draw_outer_stroke(cr) for the hovered slice
-                                       // to prevent the outer border color from blending with the hovered wedge stroke.
+                                       
+                        if state_ref.hover_visual_cue != "outwards" {
+                            draw_outer_stroke(cr);
+                        }
+                        
                         cr.append_path(&path);
                         draw_wedge_stroke(cr);
                     } else {
@@ -1074,6 +1027,63 @@ impl LauncherApp {
                             }
                         }
                     }
+                }
+            }
+
+            // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
+            // We draw this AFTER the wedge loop so that it completely covers the wedge strokes and prevents blur leakage
+            if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
+                let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+
+                let draw_full = || {
+                    cr.new_path();
+                    cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
+                    cr.set_source_rgba(
+                        outer_border_color.red() as f64,
+                        outer_border_color.green() as f64,
+                        outer_border_color.blue() as f64,
+                        outer_border_color.alpha() as f64 * ease_progress,
+                    );
+                    cr.set_line_width(2.0);
+                    cr.stroke().unwrap();
+                };
+
+                if let Some(hovered_i) = state_ref.hovered_index {
+                    if !state_ref.is_closing && hovered_i < n {
+                        let angle_per_slice = 2.0 * PI / n as f64;
+                        let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
+                        if state_ref.center_layout {
+                            start_angle -= angle_per_slice / 2.0;
+                        }
+                        let end_angle = start_angle + angle_per_slice;
+
+                        cr.set_source_rgba(
+                            outer_border_color.red() as f64,
+                            outer_border_color.green() as f64,
+                            outer_border_color.blue() as f64,
+                            outer_border_color.alpha() as f64 * ease_progress,
+                        );
+
+                        // Draw unhovered segment (2px width)
+                        cr.new_path();
+                        cr.arc(cx, cy, base_outer, end_angle, start_angle + 2.0 * PI);
+                        cr.set_line_width(2.0);
+                        cr.stroke().unwrap();
+
+                        // Draw hovered segment (expand width to the inside to mask jagged blur edge)
+                        let mask_stroke_width = 3.0; // <-- MANUALLY ADJUST THIS: Width of the masking stroke
+                                                     // Shift the radius inwards so the outer edge stays perfectly aligned with the unhovered 2px base ring
+                        let mask_radius = base_outer - (mask_stroke_width - 2.0) / 2.0;
+
+                        cr.new_path();
+                        cr.arc(cx, cy, mask_radius, start_angle, end_angle);
+                        cr.set_line_width(mask_stroke_width);
+                        cr.stroke().unwrap();
+                    } else {
+                        draw_full();
+                    }
+                } else {
+                    draw_full();
                 }
             }
 
