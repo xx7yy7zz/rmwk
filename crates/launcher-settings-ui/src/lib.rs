@@ -396,6 +396,13 @@ impl SettingsApp {
 
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
+        
+        let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
+        icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Your Wayland compositor must support this protocol for blur to work."));
+        
+        let blur_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        blur_hbox.append(&chk_enable_blur);
+        blur_hbox.append(&icon_blur_warning);
 
         let lbl_visual_cue = gtk::Label::new(Some("Hover Visual Cue:"));
         lbl_visual_cue.set_halign(gtk::Align::Start);
@@ -422,7 +429,7 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_disable_anim);
         checkboxes_vbox.append(&chk_disable_open_close_anim);
         checkboxes_vbox.append(&chk_disable_hover_anim);
-        checkboxes_vbox.append(&chk_enable_blur);
+        checkboxes_vbox.append(&blur_hbox);
         checkboxes_vbox.append(&visual_cue_hbox);
         right_vbox.append(&checkboxes_vbox);
 
