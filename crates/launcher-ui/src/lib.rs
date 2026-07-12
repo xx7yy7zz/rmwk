@@ -805,9 +805,13 @@ impl LauncherApp {
                         0.0
                     };
 
+                    let is_hovered = state_ref.hovered_index == Some(i) && !state_ref.is_closing;
+
                     let mut start_angle = base_start_angle;
                     let mut end_angle = base_end_angle;
-                    let mut outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                    
+                    let mut fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                    let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
 
                     match state_ref.hover_visual_cue.as_str() {
                         "sides" => {
@@ -816,8 +820,14 @@ impl LauncherApp {
                             end_angle += (hp_curr - hp_next) * hover_angle_grow;
                         }
                         "outwards" => {
-                            outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5)
-                                * ease_progress;
+                            stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5) * ease_progress;
+                            
+                            if is_hovered {
+                                fill_outer_radius = stroke_outer_radius;
+                            } else {
+                                // Instantly retreat the fill when unhovering so it doesn't leave an invisible trail
+                                fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                            }
                         }
                         _ => { // "none"
                              // keep default values
@@ -826,13 +836,14 @@ impl LauncherApp {
 
                     let inner_radius = (BASE_R + 0.5) * ease_progress;
 
-                    // Draw wedge
-                    cr.arc(cx, cy, outer_radius, start_angle, end_angle);
+                    // Draw fill wedge
+                    cr.new_path();
+                    cr.arc(cx, cy, fill_outer_radius, start_angle, end_angle);
                     cr.arc_negative(cx, cy, inner_radius, end_angle, start_angle);
                     cr.close_path();
 
                     // Fill wedge
-                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                    if is_hovered {
                         cr.set_source_rgba(
                             hover_fill_color.red() as f64,
                             hover_fill_color.green() as f64,
@@ -850,12 +861,14 @@ impl LauncherApp {
                     // Use Operator::Add so that the mathematically abutting edges perfectly sum their
                     // anti-aliased partial pixel coverage to 100%, completely eliminating the transparent 1px gap seam!
                     cr.set_operator(cairo::Operator::Add);
-                    cr.fill_preserve().unwrap();
+                    cr.fill().unwrap();
                     cr.set_operator(cairo::Operator::Over);
-
-                    // For unhovered slices, we want the outer stroke on top of the wedge stroke.
-                    // For the hovered slice, we want the wedge stroke on top of everything.
-                    let is_hovered = state_ref.hovered_index == Some(i) && !state_ref.is_closing;
+                    
+                    // Now establish the stroke path (which may be larger during unhover)
+                    cr.new_path();
+                    cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
+                    cr.arc_negative(cx, cy, inner_radius, end_angle, start_angle);
+                    cr.close_path();
 
                     let draw_wedge_stroke = |cr: &cairo::Context| {
                         if is_hovered {
@@ -880,7 +893,7 @@ impl LauncherApp {
 
                     let draw_outer_stroke = |cr: &cairo::Context| {
                         cr.new_path();
-                        cr.arc(cx, cy, outer_radius, start_angle, end_angle);
+                        cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
                         cr.set_source_rgba(
                             outer_border_color.red() as f64,
                             outer_border_color.green() as f64,
@@ -914,10 +927,10 @@ impl LauncherApp {
 
                     // Draw icon if present (labels are only in the center hub now)
                     let mid_angle = (start_angle + end_angle) / 2.0;
-                    let r_center = (inner_radius + outer_radius) / 2.0;
+                    let r_center = (inner_radius + stroke_outer_radius) / 2.0;
 
                     let arc_width = r_center * angle_per_slice;
-                    let radial_depth = outer_radius - inner_radius;
+                    let radial_depth = stroke_outer_radius - inner_radius;
                     let max_space = arc_width.min(radial_depth);
                     let icon_size = (max_space * 0.5).clamp(16.0, 64.0);
 
