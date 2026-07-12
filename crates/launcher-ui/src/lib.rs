@@ -774,7 +774,7 @@ impl LauncherApp {
                 // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
                 if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
                     let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-                    
+
                     let draw_full = || {
                         cr.new_path();
                         cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
@@ -810,10 +810,14 @@ impl LauncherApp {
                             cr.set_line_width(2.0);
                             cr.stroke().unwrap();
 
-                            // Draw hovered segment (3px width)
+                            // Draw hovered segment (expand width to the inside to mask jagged blur edge)
+                            let mask_stroke_width = 3.0; // <-- MANUALLY ADJUST THIS: Width of the masking stroke
+                                                         // Shift the radius inwards so the outer edge stays perfectly aligned with the unhovered 2px base ring
+                            let mask_radius = base_outer - (mask_stroke_width - 2.0) / 2.0;
+
                             cr.new_path();
-                            cr.arc(cx, cy, base_outer, start_angle, end_angle);
-                            cr.set_line_width(3.0);
+                            cr.arc(cx, cy, mask_radius, start_angle, end_angle);
+                            cr.set_line_width(mask_stroke_width);
                             cr.stroke().unwrap();
                         } else {
                             draw_full();
@@ -866,10 +870,11 @@ impl LauncherApp {
                             end_angle += (hp_curr - hp_next) * hover_angle_grow;
                         }
                         "outwards" => {
-                            outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5) * ease_progress;
+                            outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5)
+                                * ease_progress;
                         }
                         _ => { // "none"
-                            // keep default values
+                             // keep default values
                         }
                     }
 
@@ -944,8 +949,8 @@ impl LauncherApp {
                         // Preserve path for wedge stroke to be drawn after
                         let path = cr.copy_path().unwrap();
                         cr.new_path(); // Clear it so outer stroke doesn't stroke it
-                        // We intentionally DO NOT call draw_outer_stroke(cr) for the hovered slice
-                        // to prevent the outer border color from blending with the hovered wedge stroke.
+                                       // We intentionally DO NOT call draw_outer_stroke(cr) for the hovered slice
+                                       // to prevent the outer border color from blending with the hovered wedge stroke.
                         cr.append_path(&path);
                         draw_wedge_stroke(cr);
                     } else {
@@ -1539,8 +1544,11 @@ impl LauncherApp {
                             if state.disable_animations != cfg.ui.disable_animations {
                                 state.disable_animations = cfg.ui.disable_animations;
                             }
-                            if state.disable_open_close_animation != cfg.ui.disable_open_close_animation {
-                                state.disable_open_close_animation = cfg.ui.disable_open_close_animation;
+                            if state.disable_open_close_animation
+                                != cfg.ui.disable_open_close_animation
+                            {
+                                state.disable_open_close_animation =
+                                    cfg.ui.disable_open_close_animation;
                             }
                             if state.disable_hover_animation != cfg.ui.disable_hover_animation {
                                 state.disable_hover_animation = cfg.ui.disable_hover_animation;
