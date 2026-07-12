@@ -774,16 +774,53 @@ impl LauncherApp {
                 // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
                 if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
                     let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-                    cr.new_path();
-                    cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
-                    cr.set_source_rgba(
-                        outer_border_color.red() as f64,
-                        outer_border_color.green() as f64,
-                        outer_border_color.blue() as f64,
-                        outer_border_color.alpha() as f64 * ease_progress,
-                    );
-                    cr.set_line_width(2.0);
-                    cr.stroke().unwrap();
+                    
+                    let draw_full = || {
+                        cr.new_path();
+                        cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
+                        cr.set_source_rgba(
+                            outer_border_color.red() as f64,
+                            outer_border_color.green() as f64,
+                            outer_border_color.blue() as f64,
+                            outer_border_color.alpha() as f64 * ease_progress,
+                        );
+                        cr.set_line_width(2.0);
+                        cr.stroke().unwrap();
+                    };
+
+                    if let Some(hovered_i) = state_ref.hovered_index {
+                        if !state_ref.is_closing && hovered_i < n {
+                            let angle_per_slice = 2.0 * PI / n as f64;
+                            let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
+                            if state_ref.center_layout {
+                                start_angle -= angle_per_slice / 2.0;
+                            }
+                            let end_angle = start_angle + angle_per_slice;
+
+                            cr.set_source_rgba(
+                                outer_border_color.red() as f64,
+                                outer_border_color.green() as f64,
+                                outer_border_color.blue() as f64,
+                                outer_border_color.alpha() as f64 * ease_progress,
+                            );
+
+                            // Draw unhovered segment (2px width)
+                            cr.new_path();
+                            cr.arc(cx, cy, base_outer, end_angle, start_angle + 2.0 * PI);
+                            cr.set_line_width(2.0);
+                            cr.stroke().unwrap();
+
+                            // Draw hovered segment (3px width)
+                            cr.new_path();
+                            cr.arc(cx, cy, base_outer, start_angle, end_angle);
+                            cr.set_line_width(3.0);
+                            cr.stroke().unwrap();
+                        } else {
+                            draw_full();
+                        }
+                    } else {
+                        draw_full();
+                    }
                 }
 
                 for i in draw_order {
@@ -907,7 +944,8 @@ impl LauncherApp {
                         // Preserve path for wedge stroke to be drawn after
                         let path = cr.copy_path().unwrap();
                         cr.new_path(); // Clear it so outer stroke doesn't stroke it
-                        draw_outer_stroke(cr);
+                        // We intentionally DO NOT call draw_outer_stroke(cr) for the hovered slice
+                        // to prevent the outer border color from blending with the hovered wedge stroke.
                         cr.append_path(&path);
                         draw_wedge_stroke(cr);
                     } else {
