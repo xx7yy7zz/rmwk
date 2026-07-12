@@ -60,6 +60,7 @@ struct MenuState {
     enable_blur: bool,
     last_cx: f64,
     last_cy: f64,
+    last_blur_radius: f64,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -525,6 +526,7 @@ impl LauncherApp {
             enable_blur: ui_config.enable_blur,
             last_cx: 0.0,
             last_cy: 0.0,
+            last_blur_radius: -1.0,
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
             suppress_focus_loss: std::rc::Rc::new(std::cell::Cell::new(false)),
@@ -579,11 +581,31 @@ impl LauncherApp {
         });
 
         let draw_state = state.clone();
+        let blur_draw = wayland_blur.clone();
         drawing_area.set_draw_func(move |area, cr, width, height| {
             let cx = width as f64 / 2.0;
             let cy = height as f64 / 2.0;
 
             let mut state_ref = draw_state.borrow_mut();
+
+            // Update blur region based on animation progress
+            if let Some(blur) = blur_draw.borrow().as_ref() {
+                let target_radius = if state_ref.enable_blur {
+                    if state_ref.is_closing || state_ref.open_progress < 0.650 {
+                        0.0
+                    } else {
+                        BASE_R + SLICE_WIDTH + HOVER_GROW
+                    }
+                } else {
+                    0.0
+                };
+
+                // Only update Wayland region if it has actually changed to avoid IPC overhead
+                if (state_ref.last_blur_radius - target_radius).abs() > 0.01 {
+                    blur.update_circular_region(target_radius, cx, cy);
+                    state_ref.last_blur_radius = target_radius;
+                }
+            }
 
             let display_items = state_ref.get_display_items();
             let n = display_items.len();
@@ -766,10 +788,14 @@ impl LauncherApp {
                     let hp_curr = hp;
                     let hp_prev = if state_ref.hover_progresses.len() > 0 {
                         state_ref.hover_progresses[(i + n - 1) % n]
-                    } else { 0.0 };
+                    } else {
+                        0.0
+                    };
                     let hp_next = if state_ref.hover_progresses.len() > 0 {
                         state_ref.hover_progresses[(i + 1) % n]
-                    } else { 0.0 };
+                    } else {
+                        0.0
+                    };
 
                     let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH + HOVER_GROW);
                     let start_angle = base_start_angle + (hp_prev - hp_curr) * hover_angle_grow;
@@ -1451,7 +1477,7 @@ impl LauncherApp {
                             }
                             info!("Reloaded extra_radius: {}", state.extra_radius);
                         }
-                        
+
                         if blur_needs_update {
                             if let Some(blur) = wayland_blur.borrow().as_ref() {
                                 let cx = state.last_cx;
