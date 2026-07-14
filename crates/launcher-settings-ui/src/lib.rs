@@ -129,6 +129,7 @@ impl SettingsApp {
             glib::Type::STRING,
             glib::Type::STRING,
             glib::Type::BOOL,
+            glib::Type::STRING, // Col 5: Quick Select Key
         ]);
 
         let root_iter = store.insert_with_values(
@@ -140,6 +141,7 @@ impl SettingsApp {
                 (2, &"root".to_value()),
                 (3, &"".to_value()),
                 (4, &false.to_value()),
+                (5, &"".to_value()),
             ],
         );
         Self::populate_store(&store, Some(&root_iter), &menu_config.menu);
@@ -341,6 +343,15 @@ impl SettingsApp {
         let chk_item_keep_open = gtk::CheckButton::with_label("Keep Launcher Open");
         prop_grid.attach(&chk_item_keep_open, 1, 5, 1, 1);
 
+        // 4. Quick Select Key
+        let lbl_quick_select = gtk::Label::new(Some("Quick Select Key:"));
+        lbl_quick_select.set_halign(gtk::Align::End);
+        let entry_quick_select = gtk::Entry::new();
+        entry_quick_select.set_max_length(1);
+        entry_quick_select.set_placeholder_text(None);
+        prop_grid.attach(&lbl_quick_select, 0, 6, 1, 1);
+        prop_grid.attach(&entry_quick_select, 1, 6, 1, 1);
+
         prop_frame.set_child(Some(&prop_grid));
         right_vbox.append(&prop_frame);
 
@@ -454,6 +465,7 @@ impl SettingsApp {
         let sel_cmd = entry_cmd.clone();
         let sel_icon_type = combo_icon_type.clone();
         let sel_keep_open = chk_item_keep_open.clone();
+        let sel_quick_select = entry_quick_select.clone();
 
         let lbl_cmd_clone = lbl_cmd.clone();
         let entry_cmd_clone = entry_cmd.clone();
@@ -471,6 +483,8 @@ impl SettingsApp {
                 let label: String = model.get(&iter, 1);
                 let act_type: String = model.get(&iter, 2);
                 let cmd: String = model.get(&iter, 3);
+                let keep_open: bool = model.get(&iter, 4);
+                let quick_select: String = model.get(&iter, 5);
 
                 if act_type == "root" {
                     // Disable editing controls for Root node
@@ -479,6 +493,7 @@ impl SettingsApp {
                     sel_icon_type.set_sensitive(false);
                     sel_cmd.set_sensitive(false);
                     sel_keep_open.set_sensitive(false);
+                    sel_quick_select.set_sensitive(false);
                     btn_pick_icon_clone.set_sensitive(false);
                     btn_delete_clone.set_sensitive(false);
                     btn_up_clone.set_sensitive(false);
@@ -496,6 +511,7 @@ impl SettingsApp {
                     sel_icon_type.set_sensitive(true);
                     sel_cmd.set_sensitive(true);
                     sel_keep_open.set_sensitive(true);
+                    sel_quick_select.set_sensitive(true);
                     btn_pick_icon_clone.set_sensitive(true);
                     btn_delete_clone.set_sensitive(true);
                     btn_up_clone.set_sensitive(true);
@@ -525,11 +541,9 @@ impl SettingsApp {
                     }
                 }
 
-                let keep_open: bool = model.get(&iter, 4);
-
                 sel_label.set_text(&label);
 
-                if icon.chars().count() == 1 {
+                if icon.chars().count() == 1 && !icon.starts_with('/') {
                     sel_icon_type.set_active_id(Some("char"));
                 } else {
                     sel_icon_type.set_active_id(Some("picker"));
@@ -538,6 +552,20 @@ impl SettingsApp {
                 sel_icon.set_text(&icon);
                 sel_cmd.set_text(&cmd);
                 sel_keep_open.set_active(keep_open);
+                sel_quick_select.set_text(&quick_select);
+
+                let path = model.path(&iter);
+                let indices = path.indices();
+                if let Some(&last_index) = indices.last() {
+                    let default_key = if last_index < 9 {
+                        format!("{}", last_index + 1)
+                    } else if last_index == 9 {
+                        "0".to_string()
+                    } else {
+                        "".to_string()
+                    };
+                    sel_quick_select.set_placeholder_text(Some(&default_key));
+                }
             }
         });
 
@@ -577,11 +605,32 @@ impl SettingsApp {
             }
         });
 
-        let store_k = store.clone();
-        let sel_k = tree_view.selection();
-        chk_item_keep_open.connect_toggled(move |c| {
-            if let Some((_, iter)) = sel_k.selected() {
-                store_k.set_value(&iter, 4, &c.is_active().to_value());
+
+        let sel_tree_keep_open = tree_view.selection();
+        chk_item_keep_open.connect_toggled(move |chk| {
+            if let Some((model, iter)) = sel_tree_keep_open.selected() {
+                if let Ok(store) = model.downcast::<gtk::TreeStore>() {
+                    store.set_value(&iter, 4, &chk.is_active().to_value());
+                }
+            }
+        });
+
+        let sel_tree_qs = tree_view.selection();
+        entry_quick_select.connect_changed(move |e| {
+            let txt = e.text().to_string();
+            // Validate: only alphanumeric single chars
+            let valid_txt = if txt.chars().count() > 1 {
+                txt.chars().next().unwrap().to_string()
+            } else {
+                txt
+            };
+            if e.text().to_string() != valid_txt {
+                e.set_text(&valid_txt);
+            }
+            if let Some((model, iter)) = sel_tree_qs.selected() {
+                if let Ok(store) = model.downcast::<gtk::TreeStore>() {
+                    store.set_value(&iter, 5, &valid_txt.to_value());
+                }
             }
         });
 
@@ -596,6 +645,7 @@ impl SettingsApp {
             store_add.set_value(&new_iter, 2, &"shell command".to_value());
             store_add.set_value(&new_iter, 3, &"".to_value());
             store_add.set_value(&new_iter, 4, &false.to_value());
+            store_add.set_value(&new_iter, 5, &"".to_value());
             selection_add.select_iter(&new_iter);
         });
 
@@ -901,6 +951,14 @@ impl SettingsApp {
                             None => false.to_value(),
                         },
                     ),
+                    (
+                        5,
+                        &item
+                            .quick_select_key
+                            .map(|c| c.to_string())
+                            .unwrap_or_default()
+                            .to_value(),
+                    ),
                 ],
             );
 
@@ -927,8 +985,10 @@ impl SettingsApp {
             let action_type: String = store.get(&current_iter, 2);
             let action_cmd: String = store.get(&current_iter, 3);
             let keep_open: bool = store.get(&current_iter, 4);
+            let quick_select: String = store.get(&current_iter, 5);
 
             let icon_opt = if icon.is_empty() { None } else { Some(icon) };
+            let quick_select_opt = quick_select.chars().next();
 
             let children = Self::serialize_store(store, Some(&current_iter));
 
@@ -952,6 +1012,7 @@ impl SettingsApp {
                 label,
                 icon: icon_opt,
                 action,
+                quick_select_key: quick_select_opt,
                 children,
             });
 

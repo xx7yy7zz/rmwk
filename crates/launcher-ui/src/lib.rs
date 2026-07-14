@@ -83,6 +83,7 @@ impl MenuState {
                 label: "Back".to_string(),
                 icon: Some("go-previous".to_string()),
                 action: None,
+                quick_select_key: Some('B'), // Added quick select for "Back"
                 children: vec![],
             });
         }
@@ -1276,6 +1277,23 @@ impl LauncherApp {
                     state.is_opening = false;
                     glib::Propagation::Stop
                 }
+                gdk::Key::BackSpace => {
+                    if !state.history.is_empty() {
+                        if let Some(prev) = state.history.pop() {
+                            state.current_items = prev;
+                            state.hovered_index = None;
+                            if let Some(display) = gdk::Display::default() {
+                                state.preload_icons(&display);
+                            }
+                            area_clone_key.queue_draw();
+                        }
+                    } else {
+                        debug!("Backspace pressed at root menu, initiating close animation");
+                        state.is_closing = true;
+                        state.is_opening = false;
+                    }
+                    glib::Propagation::Stop
+                }
                 gdk::Key::Tab | gdk::Key::Down | gdk::Key::Right => {
                     // Cycle forward
                     let next = match state.hovered_index {
@@ -1303,48 +1321,48 @@ impl LauncherApp {
                     }
                     glib::Propagation::Stop
                 }
-                _ => glib::Propagation::Proceed,
+                _ => {
+                    if let Some(ch) = key.to_unicode() {
+                        let upper_ch = ch.to_ascii_uppercase();
+                        let display_items = state.get_display_items();
+                        let mut activated = false;
+
+                        // 1. Check for manual quick_select_key match
+                        for (i, item) in display_items.iter().enumerate() {
+                            if let Some(q) = item.quick_select_key {
+                                if q.to_ascii_uppercase() == upper_ch {
+                                    activate_index(&mut state, i, &area_clone_key);
+                                    activated = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 2. Check for default 1-0 fallback
+                        if !activated && ch.is_ascii_digit() {
+                            let digit = ch.to_digit(10).unwrap();
+                            let target_index = if digit == 0 { 9 } else { (digit - 1) as usize };
+                            
+                            if target_index < display_items.len() {
+                                activate_index(&mut state, target_index, &area_clone_key);
+                                activated = true;
+                            }
+                        }
+
+                        if activated {
+                            glib::Propagation::Stop
+                        } else {
+                            glib::Propagation::Proceed
+                        }
+                    } else {
+                        glib::Propagation::Proceed
+                    }
+                }
             }
         });
         window.add_controller(key_controller);
 
-        // 8. Setup scroll events to cycle through wedges
-        let scroll_controller =
-            gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
-        let scroll_state = state.clone();
-        let area_clone_scroll = drawing_area.clone();
-        scroll_controller.connect_scroll(move |_ctrl, _dx, dy| {
-            let mut state = scroll_state.borrow_mut();
-            if state.is_closing {
-                return glib::Propagation::Proceed;
-            }
 
-            let n = state.get_display_items_count();
-            if n == 0 {
-                return glib::Propagation::Proceed;
-            }
-
-            if dy > 0.0 {
-                let next = match state.hovered_index {
-                    Some(idx) => (idx + 1) % n,
-                    None => 0,
-                };
-                state.hovered_index = Some(next);
-                area_clone_scroll.queue_draw();
-                glib::Propagation::Stop
-            } else if dy < 0.0 {
-                let next = match state.hovered_index {
-                    Some(idx) => (idx + n - 1) % n,
-                    None => n - 1,
-                };
-                state.hovered_index = Some(next);
-                area_clone_scroll.queue_draw();
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-        window.add_controller(scroll_controller);
 
         // 9. Watch for focus loss to trigger close animation
         let focus_state = state.clone();

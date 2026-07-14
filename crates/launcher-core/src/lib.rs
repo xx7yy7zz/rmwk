@@ -110,6 +110,7 @@ pub struct MenuItem {
     pub label: String,
     pub icon: Option<String>,
     pub action: Option<Action>,
+    pub quick_select_key: Option<char>,
     #[serde(default)]
     pub children: Vec<MenuItem>,
 }
