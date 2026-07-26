@@ -13,6 +13,7 @@ struct CopiedNode {
     action_type: String,
     action_cmd: String,
     keep_open: bool,
+    quick_select: String,
     children: Vec<CopiedNode>,
 }
 
@@ -660,6 +661,7 @@ impl SettingsApp {
             store_sub.set_value(&new_iter, 2, &"submenu".to_value());
             store_sub.set_value(&new_iter, 3, &"".to_value());
             store_sub.set_value(&new_iter, 4, &false.to_value());
+            store_sub.set_value(&new_iter, 5, &"".to_value());
             // Insert a dummy item to make it a subdirectory
             store_sub.insert_with_values(
                 Some(&new_iter),
@@ -670,6 +672,7 @@ impl SettingsApp {
                     (2, &"shell command".to_value()),
                     (3, &"".to_value()),
                     (4, &false.to_value()),
+                    (5, &"".to_value()),
                 ],
             );
             selection_sub.select_iter(&new_iter);
@@ -686,6 +689,7 @@ impl SettingsApp {
             store_hot.set_value(&new_iter, 2, &"hotkey".to_value());
             store_hot.set_value(&new_iter, 3, &"".to_value());
             store_hot.set_value(&new_iter, 4, &false.to_value());
+            store_hot.set_value(&new_iter, 5, &"".to_value());
             selection_hot.select_iter(&new_iter);
         });
 
@@ -701,12 +705,14 @@ impl SettingsApp {
         // Move Up Button
         let store_up = store.clone();
         let selection_up = tree_view.selection();
+        let entry_qs_up = entry_quick_select.clone();
         btn_up.connect_clicked(move |_| {
             if let Some((_, iter)) = selection_up.selected() {
                 let mut prev = iter.clone();
                 // To move up, we swap with the previous sibling in the TreeStore
                 if store_up.iter_previous(&mut prev) {
                     store_up.swap(&iter, &prev);
+                    Self::update_quick_select_placeholder(&store_up, &iter, &entry_qs_up);
                 }
             }
         });
@@ -714,12 +720,14 @@ impl SettingsApp {
         // Move Down Button
         let store_down = store.clone();
         let selection_down = tree_view.selection();
+        let entry_qs_down = entry_quick_select.clone();
         btn_down.connect_clicked(move |_| {
             if let Some((_, iter)) = selection_down.selected() {
                 let mut next = iter.clone();
                 // In TreeStore, moving down swaps with the next sibling
                 if store_down.iter_next(&mut next) {
                     store_down.swap(&iter, &next);
+                    Self::update_quick_select_placeholder(&store_down, &iter, &entry_qs_down);
                 }
             }
         });
@@ -1294,6 +1302,7 @@ impl SettingsApp {
         let action_type: String = store.get(iter, 2);
         let action_cmd: String = store.get(iter, 3);
         let keep_open: bool = store.get(iter, 4);
+        let quick_select: String = store.get(iter, 5);
 
         let mut children = vec![];
         if let Some(child_iter) = store.iter_children(Some(iter)) {
@@ -1312,6 +1321,7 @@ impl SettingsApp {
             action_type,
             action_cmd,
             keep_open,
+            quick_select,
             children,
         }
     }
@@ -1328,6 +1338,7 @@ impl SettingsApp {
         store.set_value(&new_iter, 2, &node.action_type.to_value());
         store.set_value(&new_iter, 3, &node.action_cmd.to_value());
         store.set_value(&new_iter, 4, &node.keep_open.to_value());
+        store.set_value(&new_iter, 5, &node.quick_select.to_value());
 
         let mut prev_child = None;
         for child in &node.children {
@@ -1337,5 +1348,26 @@ impl SettingsApp {
         }
 
         new_iter
+    }
+
+    fn update_quick_select_placeholder(
+        store: &gtk::TreeStore,
+        iter: &gtk::TreeIter,
+        entry: &gtk::Entry,
+    ) {
+        let path = store.path(iter);
+        let indices = path.indices();
+        if let Some(&last_index) = indices.last() {
+            let default_key = if last_index < 9 {
+                format!("{}", last_index + 1)
+            } else if last_index == 9 {
+                "0".to_string()
+            } else {
+                "".to_string()
+            };
+            entry.set_placeholder_text(Some(&default_key));
+        } else {
+            entry.set_placeholder_text(None);
+        }
     }
 }
