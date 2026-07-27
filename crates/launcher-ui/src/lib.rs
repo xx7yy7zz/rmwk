@@ -40,9 +40,7 @@ struct MenuState {
     hovered_index: Option<usize>,
 
     // Animation state
-    is_opening: bool,
     is_closing: bool,
-    open_progress: f64,         // 0.0 -> 1.0
     hover_progresses: Vec<f64>, // 0.0 -> 1.0 for each slice
 
     // Cached icons to avoid loading on every frame tick
@@ -56,8 +54,6 @@ struct MenuState {
     use_symbolic_icons: bool,
     bold_single_chars: bool,
     center_layout: bool,
-    disable_animations: bool,
-    disable_open_close_animation: bool,
     disable_hover_animation: bool,
     hover_visual_cue: String,
     enable_blur: bool,
@@ -384,7 +380,6 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
             }
             if !action.should_keep_open() {
                 state.is_closing = true;
-                state.is_opening = false;
             }
         }
     }
@@ -540,9 +535,7 @@ impl LauncherApp {
             current_items: menu_config.menu.clone(),
             history: vec![],
             hovered_index: None,
-            is_opening: true,
             is_closing: false,
-            open_progress: 0.0,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
             text_layout_cache: HashMap::new(),
@@ -550,8 +543,6 @@ impl LauncherApp {
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
             center_layout: ui_config.center_layout,
-            disable_animations: ui_config.disable_animations,
-            disable_open_close_animation: ui_config.disable_open_close_animation,
             disable_hover_animation: ui_config.disable_hover_animation,
             hover_visual_cue: ui_config.hover_visual_cue.clone(),
             enable_blur: ui_config.enable_blur,
@@ -622,7 +613,7 @@ impl LauncherApp {
             // Update blur region based on animation progress
             if let Some(blur) = blur_draw.borrow().as_ref() {
                 let target_radius = if state_ref.enable_blur {
-                    if state_ref.is_closing || state_ref.open_progress < 0.650 {
+                    if state_ref.is_closing {
                         0.0
                     } else {
                         BASE_R + SLICE_WIDTH
@@ -641,10 +632,7 @@ impl LauncherApp {
             let display_items = state_ref.get_display_items();
             let n = display_items.len();
 
-            let ease_progress = {
-                let t = 1.0 - state_ref.open_progress;
-                1.0 - t * t * t // Ease-out cubic
-            };
+            let ease_progress = 1.0;
 
             // Clear surface (ensure transparent background is clean)
             let max_interactive_dist =
@@ -1297,7 +1285,6 @@ impl LauncherApp {
                 // Right click dismisses launcher
                 let mut state = click_state.borrow_mut();
                 state.is_closing = true;
-                state.is_opening = false;
                 return;
             }
 
@@ -1360,7 +1347,6 @@ impl LauncherApp {
                     // Clicked outside active zones (outside max_interactive_dist or center hub when at root)
                     debug!("Clicked outside active area, closing");
                     state.is_closing = true;
-                    state.is_opening = false;
                 }
             }
         });
@@ -1385,7 +1371,6 @@ impl LauncherApp {
                 gdk::Key::Escape => {
                     debug!("Escape pressed, initiating close animation");
                     state.is_closing = true;
-                    state.is_opening = false;
                     glib::Propagation::Stop
                 }
                 gdk::Key::BackSpace => {
@@ -1401,7 +1386,6 @@ impl LauncherApp {
                     } else {
                         debug!("Backspace pressed at root menu, initiating close animation");
                         state.is_closing = true;
-                        state.is_opening = false;
                     }
                     glib::Propagation::Stop
                 }
@@ -1484,7 +1468,6 @@ impl LauncherApp {
                     }
                     debug!("Window lost focus, initiating close animation");
                     state.is_closing = true;
-                    state.is_opening = false;
                 }
             }
         });
@@ -1511,42 +1494,19 @@ impl LauncherApp {
 
             let mut needs_redraw = false;
 
-            // Open transition (~200ms)
-            if state.is_opening {
-                if state.disable_animations || state.disable_open_close_animation {
-                    state.open_progress = 1.0;
-                } else {
-                    state.open_progress += dt / 0.200;
-                }
-                if state.open_progress >= 1.0 {
-                    state.open_progress = 1.0;
-                    state.is_opening = false;
-                }
-                needs_redraw = true;
-            }
-
-            // Close transition (~150ms)
+            // Close instantly
             if state.is_closing {
-                if state.disable_animations || state.disable_open_close_animation {
-                    state.open_progress = 0.0;
-                } else {
-                    state.open_progress -= dt / 0.150;
-                }
-                if state.open_progress <= 0.0 {
-                    state.open_progress = 0.0;
-                    state.is_closing = false;
-                    window_clone_tick.hide();
+                state.is_closing = false;
+                window_clone_tick.hide();
 
-                    // Reset to root menu
-                    state.current_items = menu_config_tick.menu.clone();
-                    state.history.clear();
-                    state.hovered_index = None;
-                    if let Some(display) = gdk::Display::default() {
-                        state.preload_icons(&display);
-                    }
-                    return glib::ControlFlow::Continue;
+                // Reset to root menu
+                state.current_items = menu_config_tick.menu.clone();
+                state.history.clear();
+                state.hovered_index = None;
+                if let Some(display) = gdk::Display::default() {
+                    state.preload_icons(&display);
                 }
-                needs_redraw = true;
+                return glib::ControlFlow::Continue;
             }
 
             // Hover animations (~100ms)
@@ -1562,7 +1522,7 @@ impl LauncherApp {
                     0.0
                 };
                 let diff = target - state.hover_progresses[i];
-                if state.disable_animations || state.disable_hover_animation {
+                if state.disable_hover_animation {
                     if diff != 0.0 {
                         state.hover_progresses[i] = target;
                         needs_redraw = true;
@@ -1614,7 +1574,6 @@ impl LauncherApp {
                         if is_visible && !state.is_closing {
                             info!("Hiding window via IPC Toggle");
                             state.is_closing = true;
-                            state.is_opening = false;
                         } else {
                             info!("Showing window via IPC Toggle");
                             state.current_items = state.root_items.clone();
@@ -1623,9 +1582,7 @@ impl LauncherApp {
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
-                            state.is_opening = true;
                             state.is_closing = false;
-                            state.open_progress = 0.0;
                             *state.theme_colors.borrow_mut() = None;
                             drop(state);
 
@@ -1643,7 +1600,6 @@ impl LauncherApp {
                         if window_clone_ipc.is_visible() && !state.is_closing {
                             info!("Hiding window via IPC Close");
                             state.is_closing = true;
-                            state.is_opening = false;
                         }
                     }
                     IpcMessage::Open => {
@@ -1657,9 +1613,7 @@ impl LauncherApp {
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
-                            state.is_opening = true;
                             state.is_closing = false;
-                            state.open_progress = 0.0;
                             *state.theme_colors.borrow_mut() = None;
                             drop(state);
 
@@ -1691,15 +1645,6 @@ impl LauncherApp {
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.center_layout = cfg.ui.center_layout;
-                            if state.disable_animations != cfg.ui.disable_animations {
-                                state.disable_animations = cfg.ui.disable_animations;
-                            }
-                            if state.disable_open_close_animation
-                                != cfg.ui.disable_open_close_animation
-                            {
-                                state.disable_open_close_animation =
-                                    cfg.ui.disable_open_close_animation;
-                            }
                             if state.disable_hover_animation != cfg.ui.disable_hover_animation {
                                 state.disable_hover_animation = cfg.ui.disable_hover_animation;
                             }
@@ -1768,16 +1713,12 @@ impl LauncherApp {
 
         if !start_hidden {
             if let Ok(mut state_mut) = state.try_borrow_mut() {
-                state_mut.is_opening = true;
                 state_mut.is_closing = false;
-                state_mut.open_progress = 0.0;
             }
             window.present();
         } else {
             if let Ok(mut state_mut) = state.try_borrow_mut() {
-                state_mut.is_opening = false;
                 state_mut.is_closing = false;
-                state_mut.open_progress = 0.0;
             }
             window.hide();
         }

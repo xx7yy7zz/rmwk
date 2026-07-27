@@ -385,30 +385,8 @@ impl SettingsApp {
         let chk_center_layout = gtk::CheckButton::with_label("Center Slices on Axes");
         chk_center_layout.set_active(ui_config.ui.center_layout);
 
-        let chk_disable_anim = gtk::CheckButton::with_label("Disable Animations");
-        chk_disable_anim.set_active(ui_config.ui.disable_animations);
-
-        let chk_disable_open_close_anim =
-            gtk::CheckButton::with_label("Disable opening/close animation");
-        chk_disable_open_close_anim.set_active(ui_config.ui.disable_open_close_animation);
-        chk_disable_open_close_anim.set_margin_start(20);
-
-        let chk_disable_hover_anim = gtk::CheckButton::with_label("Disable hover animation");
+        let chk_disable_hover_anim = gtk::CheckButton::with_label("Disable Hover Animation");
         chk_disable_hover_anim.set_active(ui_config.ui.disable_hover_animation);
-        chk_disable_hover_anim.set_margin_start(20);
-
-        // Bind sensitivity
-        let chk_open_close_anim_sens = chk_disable_open_close_anim.clone();
-        let chk_hover_anim_sens = chk_disable_hover_anim.clone();
-        chk_disable_anim.connect_toggled(move |b| {
-            let active = !b.is_active();
-            chk_open_close_anim_sens.set_sensitive(active);
-            chk_hover_anim_sens.set_sensitive(active);
-        });
-        // Initial sensitivity
-        let active = !chk_disable_anim.is_active();
-        chk_disable_open_close_anim.set_sensitive(active);
-        chk_disable_hover_anim.set_sensitive(active);
 
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
@@ -440,8 +418,6 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_symbolic_icons);
         checkboxes_vbox.append(&chk_bold_chars);
         checkboxes_vbox.append(&chk_center_layout);
-        checkboxes_vbox.append(&chk_disable_anim);
-        checkboxes_vbox.append(&chk_disable_open_close_anim);
         checkboxes_vbox.append(&chk_disable_hover_anim);
         checkboxes_vbox.append(&blur_hbox);
         checkboxes_vbox.append(&visual_cue_hbox);
@@ -783,8 +759,6 @@ impl SettingsApp {
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
-        let chk_disable_anim_save = chk_disable_anim.clone();
-        let chk_disable_open_close_anim_save = chk_disable_open_close_anim.clone();
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
@@ -813,8 +787,6 @@ impl SettingsApp {
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
-                cfg.ui.disable_animations = chk_disable_anim_save.is_active();
-                cfg.ui.disable_open_close_animation = chk_disable_open_close_anim_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = combo_visual_cue_save
                     .active_id()

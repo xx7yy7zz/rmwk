@@ -68,10 +68,7 @@ pub struct UiConfig {
     pub bold_single_chars: bool,
     #[serde(default = "default_center_layout")]
     pub center_layout: bool,
-    #[serde(default = "default_disable_animations")]
-    pub disable_animations: bool,
-    #[serde(default = "default_disable_open_close_animation")]
-    pub disable_open_close_animation: bool,
+
     #[serde(default = "default_disable_hover_animation")]
     pub disable_hover_animation: bool,
     #[serde(default = "default_hover_visual_cue")]
@@ -95,8 +92,7 @@ impl Default for UiConfig {
             use_symbolic_icons: default_use_symbolic_icons(),
             bold_single_chars: default_bold_single_chars(),
             center_layout: default_center_layout(),
-            disable_animations: default_disable_animations(),
-            disable_open_close_animation: default_disable_open_close_animation(),
+
             disable_hover_animation: default_disable_hover_animation(),
             hover_visual_cue: default_hover_visual_cue(),
             enable_blur: default_enable_blur(),
@@ -129,13 +125,7 @@ fn default_center_layout() -> bool {
     false
 }
 
-fn default_disable_animations() -> bool {
-    false
-}
 
-fn default_disable_open_close_animation() -> bool {
-    false
-}
 
 fn default_disable_hover_animation() -> bool {
     false
