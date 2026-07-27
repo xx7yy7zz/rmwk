@@ -18,6 +18,43 @@ impl Default for Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemThemeColor {
+    pub variable: String,
+    pub opacity: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemThemeOverrides {
+    pub slice_normal: SystemThemeColor,
+    pub slice_hover: SystemThemeColor,
+    pub slice_active: SystemThemeColor,
+    pub slice_selected: SystemThemeColor,
+    pub label_normal: SystemThemeColor,
+    pub label_hover: SystemThemeColor,
+    pub hub_normal: SystemThemeColor,
+    pub hub_active: SystemThemeColor,
+    pub hub_hover: SystemThemeColor,
+    pub outer_border: SystemThemeColor,
+}
+
+impl Default for SystemThemeOverrides {
+    fn default() -> Self {
+        Self {
+            slice_normal: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 0.85 },
+            slice_hover: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 0.70 },
+            slice_active: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 0.15 },
+            slice_selected: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+            label_normal: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            label_hover: SystemThemeColor { variable: "@theme_base_color".to_string(), opacity: 0.80 },
+            hub_normal: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 0.85 },
+            hub_active: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+            hub_hover: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            outer_border: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -41,6 +78,12 @@ pub struct UiConfig {
     pub hover_visual_cue: String,
     #[serde(default = "default_enable_blur")]
     pub enable_blur: bool,
+    #[serde(default = "default_system_theme_overrides")]
+    pub system_theme_overrides: Option<SystemThemeOverrides>,
+}
+
+fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
+    None
 }
 
 impl Default for UiConfig {
@@ -57,6 +100,7 @@ impl Default for UiConfig {
             disable_hover_animation: default_disable_hover_animation(),
             hover_visual_cue: default_hover_visual_cue(),
             enable_blur: default_enable_blur(),
+            system_theme_overrides: default_system_theme_overrides(),
         }
     }
 }

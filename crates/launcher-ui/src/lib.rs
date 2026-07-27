@@ -214,14 +214,14 @@ fn load_and_apply_theme(
             user_provider.load_from_path(&gtk_css);
         }
     }
-    let theme_name = match launcher_core::load_config(config_path) {
-        Ok(cfg) => cfg.ui.theme,
+    let (theme_name, sys_overrides) = match launcher_core::load_config(config_path) {
+        Ok(cfg) => (cfg.ui.theme.clone(), cfg.ui.system_theme_overrides.clone()),
         Err(e) => {
             warn!(
                 "Failed to load config: {}. Defaulting to theme 'default'",
                 e
             );
-            "default".to_string()
+            ("default".to_string(), None)
         }
     };
 
@@ -235,18 +235,31 @@ fn load_and_apply_theme(
     debug!("Loading theme from {:?}", theme_file);
     if theme_name == "system" {
         // Dynamic GTK system theme using named colors
-        let system_css = b"
-            .radial-slice { color: alpha(@theme_bg_color, 0.85); }
-            .radial-slice:hover { color: alpha(@theme_selected_bg_color, 0.95); }
-            .radial-slice:active { color: alpha(@theme_selected_bg_color, 0.90); }
-            .radial-slice:selected { color: @theme_selected_bg_color; }
-            .radial-label { color: @theme_fg_color; }
-            .radial-label:hover { color: @theme_selected_fg_color; }
-            .radial-hub { color: alpha(@theme_bg_color, 0.95); }
-            .radial-hub:active { color: alpha(@theme_selected_bg_color, 0.80); }
-            .radial-hub:hover { color: @theme_fg_color; }
-        ";
-        theme_provider.load_from_data(std::str::from_utf8(system_css).unwrap());
+        let overrides = sys_overrides.unwrap_or_default();
+        let system_css = format!("
+            .radial-slice {{ color: alpha({}, {:.3}); }}
+            .radial-slice:hover {{ color: alpha({}, {:.3}); }}
+            .radial-slice:active {{ color: alpha({}, {:.3}); }}
+            .radial-slice:selected {{ color: alpha({}, {:.3}); }}
+            .radial-label {{ color: alpha({}, {:.3}); }}
+            .radial-label:hover {{ color: alpha({}, {:.3}); }}
+            .radial-hub {{ color: alpha({}, {:.3}); }}
+            .radial-hub:active {{ color: alpha({}, {:.3}); }}
+            .radial-hub:hover {{ color: alpha({}, {:.3}); }}
+            .radial-outer {{ color: alpha({}, {:.3}); }}
+        ", 
+            overrides.slice_normal.variable, overrides.slice_normal.opacity,
+            overrides.slice_hover.variable, overrides.slice_hover.opacity,
+            overrides.slice_active.variable, overrides.slice_active.opacity,
+            overrides.slice_selected.variable, overrides.slice_selected.opacity,
+            overrides.label_normal.variable, overrides.label_normal.opacity,
+            overrides.label_hover.variable, overrides.label_hover.opacity,
+            overrides.hub_normal.variable, overrides.hub_normal.opacity,
+            overrides.hub_active.variable, overrides.hub_active.opacity,
+            overrides.hub_hover.variable, overrides.hub_hover.opacity,
+            overrides.outer_border.variable, overrides.outer_border.opacity
+        );
+        theme_provider.load_from_data(&system_css);
         info!("Theme 'system' applied successfully dynamically.");
     } else if theme_file.exists() {
         match std::fs::read_to_string(&theme_file) {

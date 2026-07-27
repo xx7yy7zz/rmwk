@@ -1,3 +1,5 @@
+pub mod standard_theme;
+mod theme_editor;
 use gtk::gdk;
 use gtk::prelude::*;
 use gtk4 as gtk;
@@ -243,6 +245,17 @@ impl SettingsApp {
         btn_hbox.append(&btn_down);
         left_vbox.append(&btn_hbox);
 
+        let themes = Self::get_available_themes(&config_path);
+        let theme_editor = theme_editor::ThemeEditor::new(
+            config_path.clone(),
+            &ui_config.ui.theme,
+            ui_config.ui.system_theme_overrides.clone(),
+            &themes,
+        );
+        left_vbox.append(&theme_editor.container);
+        let combo_theme = theme_editor.combo_theme.clone();
+        let sys_overrides = theme_editor.current_system_overrides.clone();
+
         main_box.append(&left_vbox);
 
         // --- RIGHT COLUMN ---
@@ -359,16 +372,6 @@ impl SettingsApp {
         // Theme and Global settings Box
         let settings_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
 
-        let lbl_theme = gtk::Label::new(Some("Theme:"));
-        let combo_theme = gtk::ComboBoxText::new();
-
-        // Populate available themes
-        let themes = Self::get_available_themes(&config_path);
-        for theme in &themes {
-            combo_theme.append(Some(theme), theme);
-        }
-        combo_theme.set_active_id(Some(&ui_config.ui.theme));
-
         let lbl_extra_radius = gtk::Label::new(Some("Active Margin (px):"));
         let spin_extra_radius = gtk::SpinButton::with_range(0.0, 1000.0, 5.0);
         spin_extra_radius.set_value(ui_config.ui.extra_radius);
@@ -429,8 +432,6 @@ impl SettingsApp {
         visual_cue_hbox.append(&lbl_visual_cue);
         visual_cue_hbox.append(&combo_visual_cue);
 
-        settings_hbox.append(&lbl_theme);
-        settings_hbox.append(&combo_theme);
         settings_hbox.append(&lbl_extra_radius);
         settings_hbox.append(&spin_extra_radius);
         right_vbox.append(&settings_hbox);
@@ -777,6 +778,7 @@ impl SettingsApp {
         let store_save = store.clone();
         let config_path_save = config_path.clone();
         let combo_theme_save = combo_theme.clone();
+        let sys_overrides_save = sys_overrides.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
         let chk_bold_chars_save = chk_bold_chars.clone();
@@ -806,6 +808,7 @@ impl SettingsApp {
                     Err(_) => launcher_core::Config::default(),
                 };
                 cfg.ui.theme = theme_id.to_string();
+                cfg.ui.system_theme_overrides = Some(sys_overrides_save.borrow().clone());
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
