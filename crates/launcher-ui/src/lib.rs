@@ -757,16 +757,16 @@ impl LauncherApp {
                     hub_text_color.blue() as f64,
                     hub_text_color.alpha() as f64 * ease_progress,
                 );
-                cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-                cr.set_font_size(16.0 * ease_progress);
+                let layout = area.create_pango_layout(Some(&center_text));
+                let mut font_desc = gtk::pango::FontDescription::new();
+                font_desc.set_family("Sans");
+                font_desc.set_weight(gtk::pango::Weight::Bold);
+                font_desc.set_absolute_size(16.0 * ease_progress * gtk::pango::SCALE as f64);
+                layout.set_font_description(Some(&font_desc));
 
-                if let Ok(extents) = cr.text_extents(&center_text) {
-                    cr.move_to(
-                        cx - extents.width() / 2.0 - extents.x_bearing(),
-                        cy - extents.height() / 2.0 - extents.y_bearing(),
-                    );
-                    let _ = cr.show_text(&center_text);
-                }
+                let (pango_w, pango_h) = layout.pixel_size();
+                cr.move_to(cx - (pango_w as f64) / 2.0, cy - (pango_h as f64) / 2.0);
+                pangocairo::functions::show_layout(&cr, &layout);
             };
 
             // 1. Draw continuous base background disk if fill_color is visible
@@ -796,7 +796,6 @@ impl LauncherApp {
                 }
 
                 for i in draw_order {
-
                     cr.new_path();
                     let item = &display_items[i];
                     let hp = if i < state_ref.hover_progresses.len() {
@@ -827,7 +826,7 @@ impl LauncherApp {
 
                     let mut start_angle = base_start_angle;
                     let mut end_angle = base_end_angle;
-                    
+
                     let mut fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
                     let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
 
@@ -838,8 +837,10 @@ impl LauncherApp {
                             end_angle += (hp_curr - hp_next) * hover_angle_grow;
                         }
                         "outwards" => {
-                            stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5) * ease_progress;
-                            
+                            stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW)
+                                - 0.5)
+                                * ease_progress;
+
                             if is_hovered {
                                 fill_outer_radius = stroke_outer_radius;
                             } else {
@@ -881,7 +882,7 @@ impl LauncherApp {
                             cr.fill().unwrap();
                         }
                     }
-                    
+
                     // Now establish the stroke path (radial sides and outer arc)
                     cr.new_path();
                     cr.move_to(
@@ -951,11 +952,11 @@ impl LauncherApp {
                         // Preserve path for wedge stroke to be drawn after
                         let path = cr.copy_path().unwrap();
                         cr.new_path(); // Clear it so outer stroke doesn't stroke it
-                                       
+
                         if state_ref.hover_visual_cue != "outwards" {
                             draw_outer_stroke(cr);
                         }
-                        
+
                         cr.append_path(&path);
                         draw_wedge_stroke(cr);
                     } else {
@@ -1378,7 +1379,7 @@ impl LauncherApp {
                         if !activated && ch.is_ascii_digit() {
                             let digit = ch.to_digit(10).unwrap();
                             let target_index = if digit == 0 { 9 } else { (digit - 1) as usize };
-                            
+
                             if target_index < display_items.len() {
                                 activate_index(&mut state, target_index, &area_clone_key);
                                 activated = true;
@@ -1397,8 +1398,6 @@ impl LauncherApp {
             }
         });
         window.add_controller(key_controller);
-
-
 
         // 9. Watch for focus loss to trigger close animation
         let focus_state = state.clone();

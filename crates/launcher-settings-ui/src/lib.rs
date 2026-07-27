@@ -385,7 +385,8 @@ impl SettingsApp {
         let chk_disable_anim = gtk::CheckButton::with_label("Disable Animations");
         chk_disable_anim.set_active(ui_config.ui.disable_animations);
 
-        let chk_disable_open_close_anim = gtk::CheckButton::with_label("Disable opening/close animation");
+        let chk_disable_open_close_anim =
+            gtk::CheckButton::with_label("Disable opening/close animation");
         chk_disable_open_close_anim.set_active(ui_config.ui.disable_open_close_animation);
         chk_disable_open_close_anim.set_margin_start(20);
 
@@ -408,10 +409,10 @@ impl SettingsApp {
 
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
-        
+
         let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
         icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Your Wayland compositor must support this protocol for blur to work."));
-        
+
         let blur_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         blur_hbox.append(&chk_enable_blur);
         blur_hbox.append(&icon_blur_warning);
@@ -605,7 +606,6 @@ impl SettingsApp {
                 store_c.set_value(&iter, 3, &txt.to_value());
             }
         });
-
 
         let sel_tree_keep_open = tree_view.selection();
         chk_item_keep_open.connect_toggled(move |chk| {
@@ -813,7 +813,10 @@ impl SettingsApp {
                 cfg.ui.disable_animations = chk_disable_anim_save.is_active();
                 cfg.ui.disable_open_close_animation = chk_disable_open_close_anim_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
-                cfg.ui.hover_visual_cue = combo_visual_cue_save.active_id().unwrap_or_else(|| glib::GString::from("outwards")).to_string();
+                cfg.ui.hover_visual_cue = combo_visual_cue_save
+                    .active_id()
+                    .unwrap_or_else(|| glib::GString::from("outwards"))
+                    .to_string();
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
 
                 // Write back config.toml
