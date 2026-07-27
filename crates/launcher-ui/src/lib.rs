@@ -718,26 +718,37 @@ impl LauncherApp {
                 "Radial Menu".to_string()
             };
 
-            let draw_hub = || {
-                // Draw center circular hub
-                cr.new_path();
-                cr.set_source_rgba(
-                    hub_fill.red() as f64,
-                    hub_fill.green() as f64,
-                    hub_fill.blue() as f64,
-                    hub_fill.alpha() as f64 * ease_progress,
-                );
-                cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
-                cr.fill_preserve().unwrap();
+            let hub_fill_is_different = (hub_fill.red() - fill_color.red()).abs() > 0.001
+                || (hub_fill.green() - fill_color.green()).abs() > 0.001
+                || (hub_fill.blue() - fill_color.blue()).abs() > 0.001
+                || (hub_fill.alpha() - fill_color.alpha()).abs() > 0.001;
 
-                cr.set_source_rgba(
-                    hub_border.red() as f64,
-                    hub_border.green() as f64,
-                    hub_border.blue() as f64,
-                    hub_border.alpha() as f64 * ease_progress,
-                );
-                cr.set_line_width(2.0);
-                cr.stroke().unwrap();
+            let draw_hub = || {
+                // Draw center circular hub if hub_fill is different from fill_color
+                if hub_fill_is_different && hub_fill.alpha() > 0.001 {
+                    cr.new_path();
+                    cr.set_source_rgba(
+                        hub_fill.red() as f64,
+                        hub_fill.green() as f64,
+                        hub_fill.blue() as f64,
+                        hub_fill.alpha() as f64 * ease_progress,
+                    );
+                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
+                    cr.fill().unwrap();
+                }
+
+                if hub_border.alpha() > 0.001 {
+                    cr.new_path();
+                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
+                    cr.set_source_rgba(
+                        hub_border.red() as f64,
+                        hub_border.green() as f64,
+                        hub_border.blue() as f64,
+                        hub_border.alpha() as f64 * ease_progress,
+                    );
+                    cr.set_line_width(2.0);
+                    cr.stroke().unwrap();
+                }
 
                 // Render hub label
                 cr.set_source_rgba(
@@ -758,7 +769,19 @@ impl LauncherApp {
                 }
             };
 
-            let mut hub_drawn = false;
+            // 1. Draw continuous base background disk if fill_color is visible
+            let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+            if fill_color.alpha() > 0.001 {
+                cr.new_path();
+                cr.arc(cx, cy, base_outer_radius, 0.0, 2.0 * PI);
+                cr.set_source_rgba(
+                    fill_color.red() as f64,
+                    fill_color.green() as f64,
+                    fill_color.blue() as f64,
+                    fill_color.alpha() as f64 * ease_progress,
+                );
+                cr.fill().unwrap();
+            }
 
             if n > 0 {
                 let angle_per_slice = 2.0 * PI / n as f64;
@@ -772,13 +795,7 @@ impl LauncherApp {
                     }
                 }
 
-                // The continuous base ring has been moved to AFTER the wedge drawing loop
-                // so that it draws perfectly over the selected slice's stroke to mask the jagged blur edge.
                 for i in draw_order {
-                    if Some(i) == state_ref.hovered_index && !state_ref.is_closing {
-                        draw_hub();
-                        hub_drawn = true;
-                    }
 
                     cr.new_path();
                     let item = &display_items[i];
@@ -835,78 +852,99 @@ impl LauncherApp {
                         }
                     }
 
-                    let inner_radius = (BASE_R + 0.5) * ease_progress;
+                    let stroke_inner_radius = BASE_R * ease_progress;
 
-                    // Draw fill wedge
-                    cr.new_path();
-                    cr.arc(cx, cy, fill_outer_radius, start_angle, end_angle);
-                    cr.arc_negative(cx, cy, inner_radius, end_angle, start_angle);
-                    cr.close_path();
+                    // Fill wedge only if hovered, or if fill_color was transparent
+                    if is_hovered || fill_color.alpha() <= 0.001 {
+                        cr.new_path();
+                        cr.arc(cx, cy, fill_outer_radius, start_angle, end_angle);
+                        cr.arc_negative(cx, cy, stroke_inner_radius, end_angle, start_angle);
+                        cr.close_path();
 
-                    // Fill wedge
-                    if is_hovered {
-                        cr.set_source_rgba(
-                            hover_fill_color.red() as f64,
-                            hover_fill_color.green() as f64,
-                            hover_fill_color.blue() as f64,
-                            hover_fill_color.alpha() as f64 * ease_progress,
-                        );
-                    } else {
-                        cr.set_source_rgba(
-                            fill_color.red() as f64,
-                            fill_color.green() as f64,
-                            fill_color.blue() as f64,
-                            fill_color.alpha() as f64 * ease_progress,
-                        );
-                    }
-                    // Use Operator::Add so that the mathematically abutting edges perfectly sum their
-                    // anti-aliased partial pixel coverage to 100%, completely eliminating the transparent 1px gap seam!
-                    cr.set_operator(cairo::Operator::Add);
-                    cr.fill().unwrap();
-                    cr.set_operator(cairo::Operator::Over);
-                    
-                    // Now establish the stroke path (which may be larger during unhover)
-                    cr.new_path();
-                    cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
-                    cr.arc_negative(cx, cy, inner_radius, end_angle, start_angle);
-                    cr.close_path();
-
-                    let draw_wedge_stroke = |cr: &cairo::Context| {
                         if is_hovered {
                             cr.set_source_rgba(
-                                hover_border_color.red() as f64,
-                                hover_border_color.green() as f64,
-                                hover_border_color.blue() as f64,
-                                hover_border_color.alpha() as f64 * ease_progress,
+                                hover_fill_color.red() as f64,
+                                hover_fill_color.green() as f64,
+                                hover_fill_color.blue() as f64,
+                                hover_fill_color.alpha() as f64 * ease_progress,
                             );
-                            cr.set_line_width(3.0);
+                            cr.set_operator(cairo::Operator::Source);
+                            cr.fill().unwrap();
+                            cr.set_operator(cairo::Operator::Over);
                         } else {
                             cr.set_source_rgba(
-                                border_color.red() as f64,
-                                border_color.green() as f64,
-                                border_color.blue() as f64,
-                                border_color.alpha() as f64 * ease_progress,
+                                fill_color.red() as f64,
+                                fill_color.green() as f64,
+                                fill_color.blue() as f64,
+                                fill_color.alpha() as f64 * ease_progress,
                             );
-                            cr.set_line_width(2.0);
+                            cr.fill().unwrap();
                         }
-                        cr.stroke().unwrap();
+                    }
+                    
+                    // Now establish the stroke path (radial sides and outer arc)
+                    cr.new_path();
+                    cr.move_to(
+                        cx + stroke_inner_radius * start_angle.cos(),
+                        cy + stroke_inner_radius * start_angle.sin(),
+                    );
+                    cr.line_to(
+                        cx + stroke_outer_radius * start_angle.cos(),
+                        cy + stroke_outer_radius * start_angle.sin(),
+                    );
+                    cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
+                    cr.line_to(
+                        cx + stroke_inner_radius * end_angle.cos(),
+                        cy + stroke_inner_radius * end_angle.sin(),
+                    );
+
+                    let draw_wedge_stroke = |cr: &cairo::Context| {
+                        let alpha = if is_hovered {
+                            hover_border_color.alpha()
+                        } else {
+                            border_color.alpha()
+                        };
+                        if alpha > 0.001 {
+                            if is_hovered {
+                                cr.set_source_rgba(
+                                    hover_border_color.red() as f64,
+                                    hover_border_color.green() as f64,
+                                    hover_border_color.blue() as f64,
+                                    hover_border_color.alpha() as f64 * ease_progress,
+                                );
+                                cr.set_line_width(3.0);
+                            } else {
+                                cr.set_source_rgba(
+                                    border_color.red() as f64,
+                                    border_color.green() as f64,
+                                    border_color.blue() as f64,
+                                    border_color.alpha() as f64 * ease_progress,
+                                );
+                                cr.set_line_width(2.0);
+                            }
+                            cr.stroke().unwrap();
+                        } else {
+                            cr.new_path();
+                        }
                     };
 
                     let draw_outer_stroke = |cr: &cairo::Context| {
-                        cr.new_path();
-                        cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
-                        cr.set_source_rgba(
-                            outer_border_color.red() as f64,
-                            outer_border_color.green() as f64,
-                            outer_border_color.blue() as f64,
-                            outer_border_color.alpha() as f64 * ease_progress,
-                        );
-                        if is_hovered {
-                            cr.set_line_width(3.0);
-                        } else {
-                            cr.set_line_width(2.0);
+                        if outer_border_color.alpha() > 0.001 {
+                            cr.new_path();
+                            cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
+                            cr.set_source_rgba(
+                                outer_border_color.red() as f64,
+                                outer_border_color.green() as f64,
+                                outer_border_color.blue() as f64,
+                                outer_border_color.alpha() as f64 * ease_progress,
+                            );
+                            if is_hovered {
+                                cr.set_line_width(3.0);
+                            } else {
+                                cr.set_line_width(2.0);
+                            }
+                            cr.stroke().unwrap();
                         }
-                        cr.stroke().unwrap();
                     };
 
                     if is_hovered {
@@ -928,10 +966,10 @@ impl LauncherApp {
 
                     // Draw icon if present (labels are only in the center hub now)
                     let mid_angle = (start_angle + end_angle) / 2.0;
-                    let r_center = (inner_radius + stroke_outer_radius) / 2.0;
+                    let r_center = (stroke_inner_radius + stroke_outer_radius) / 2.0;
 
                     let arc_width = r_center * angle_per_slice;
-                    let radial_depth = stroke_outer_radius - inner_radius;
+                    let radial_depth = stroke_outer_radius - stroke_inner_radius;
                     let max_space = arc_width.min(radial_depth);
                     let icon_size = (max_space * 0.5).clamp(16.0, 64.0);
 
@@ -1101,9 +1139,7 @@ impl LauncherApp {
                 }
             }
 
-            if !hub_drawn {
-                draw_hub();
-            }
+            draw_hub();
         });
         window.set_child(Some(&drawing_area));
 
