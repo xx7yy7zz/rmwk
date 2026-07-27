@@ -236,7 +236,8 @@ fn load_and_apply_theme(
     if theme_name == "system" {
         // Dynamic GTK system theme using named colors
         let overrides = sys_overrides.unwrap_or_default();
-        let system_css = format!("
+        let system_css = format!(
+            "
             .radial-slice {{ color: alpha({}, {:.3}); }}
             .radial-slice:hover {{ color: alpha({}, {:.3}); }}
             .radial-slice:active {{ color: alpha({}, {:.3}); }}
@@ -247,17 +248,27 @@ fn load_and_apply_theme(
             .radial-hub:active {{ color: alpha({}, {:.3}); }}
             .radial-hub:hover {{ color: alpha({}, {:.3}); }}
             .radial-outer {{ color: alpha({}, {:.3}); }}
-        ", 
-            overrides.slice_normal.variable, overrides.slice_normal.opacity,
-            overrides.slice_hover.variable, overrides.slice_hover.opacity,
-            overrides.slice_active.variable, overrides.slice_active.opacity,
-            overrides.slice_selected.variable, overrides.slice_selected.opacity,
-            overrides.label_normal.variable, overrides.label_normal.opacity,
-            overrides.label_hover.variable, overrides.label_hover.opacity,
-            overrides.hub_normal.variable, overrides.hub_normal.opacity,
-            overrides.hub_active.variable, overrides.hub_active.opacity,
-            overrides.hub_hover.variable, overrides.hub_hover.opacity,
-            overrides.outer_border.variable, overrides.outer_border.opacity
+        ",
+            overrides.slice_normal.variable,
+            overrides.slice_normal.opacity,
+            overrides.slice_hover.variable,
+            overrides.slice_hover.opacity,
+            overrides.slice_active.variable,
+            overrides.slice_active.opacity,
+            overrides.slice_selected.variable,
+            overrides.slice_selected.opacity,
+            overrides.label_normal.variable,
+            overrides.label_normal.opacity,
+            overrides.label_hover.variable,
+            overrides.label_hover.opacity,
+            overrides.hub_normal.variable,
+            overrides.hub_normal.opacity,
+            overrides.hub_active.variable,
+            overrides.hub_active.opacity,
+            overrides.hub_hover.variable,
+            overrides.hub_hover.opacity,
+            overrides.outer_border.variable,
+            overrides.outer_border.opacity
         );
         theme_provider.load_from_data(&system_css);
         info!("Theme 'system' applied successfully dynamically.");
@@ -952,11 +963,7 @@ impl LauncherApp {
                                 outer_border_color.blue() as f64,
                                 outer_border_color.alpha() as f64 * ease_progress,
                             );
-                            if is_hovered {
-                                cr.set_line_width(3.0);
-                            } else {
-                                cr.set_line_width(2.0);
-                            }
+                            cr.set_line_width(2.0);
                             cr.stroke().unwrap();
                         }
                     };
@@ -1135,16 +1142,6 @@ impl LauncherApp {
                         cr.arc(cx, cy, base_outer, end_angle, start_angle + 2.0 * PI);
                         cr.set_line_width(2.0);
                         cr.stroke().unwrap();
-
-                        // Draw hovered segment (expand width to the inside to mask jagged blur edge)
-                        let mask_stroke_width = 3.0; // <-- MANUALLY ADJUST THIS: Width of the masking stroke
-                                                     // Shift the radius inwards so the outer edge stays perfectly aligned with the unhovered 2px base ring
-                        let mask_radius = base_outer - (mask_stroke_width - 2.0) / 2.0;
-
-                        cr.new_path();
-                        cr.arc(cx, cy, mask_radius, start_angle, end_angle);
-                        cr.set_line_width(mask_stroke_width);
-                        cr.stroke().unwrap();
                     } else {
                         draw_full();
                     }
@@ -1154,6 +1151,70 @@ impl LauncherApp {
             }
 
             draw_hub();
+
+            // Re-stroke the inner arc for the hovered slice to cover the hub's active border
+            if let Some(hovered_i) = state_ref.hovered_index {
+                let n_items = display_items.len();
+                if !state_ref.is_closing && hovered_i < n_items {
+                    let angle_per_slice = 2.0 * PI / n_items as f64;
+                    let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
+                    if state_ref.center_layout {
+                        start_angle -= angle_per_slice / 2.0;
+                    }
+                    let end_angle = start_angle + angle_per_slice;
+
+                    let hp = if hovered_i < state_ref.hover_progresses.len() {
+                        state_ref.hover_progresses[hovered_i]
+                    } else {
+                        0.0
+                    };
+
+                    let hp_curr = hp;
+                    let hp_prev = if state_ref.hover_progresses.len() > 0 {
+                        state_ref.hover_progresses[(hovered_i + n_items - 1) % n_items]
+                    } else {
+                        0.0
+                    };
+                    let hp_next = if state_ref.hover_progresses.len() > 0 {
+                        state_ref.hover_progresses[(hovered_i + 1) % n_items]
+                    } else {
+                        0.0
+                    };
+
+                    let mut start_a = start_angle;
+                    let mut end_a = end_angle;
+
+                    if state_ref.hover_visual_cue == "sides" {
+                        let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH);
+                        start_a += (hp_prev - hp_curr) * hover_angle_grow;
+                        end_a += (hp_curr - hp_next) * hover_angle_grow;
+                    }
+
+                    let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                    if state_ref.hover_visual_cue == "outwards" {
+                        stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5) * ease_progress;
+                    }
+                    let stroke_inner_radius = BASE_R * ease_progress;
+
+                    if hover_border_color.alpha() > 0.001 {
+                        cr.new_path();
+                        cr.arc(cx, cy, stroke_inner_radius, start_a, end_a);
+                        cr.line_to(cx + stroke_outer_radius * end_a.cos(), cy + stroke_outer_radius * end_a.sin());
+                        cr.arc_negative(cx, cy, stroke_outer_radius, end_a, start_a);
+                        cr.close_path();
+
+                        cr.set_line_join(cairo::LineJoin::Round);
+                        cr.set_source_rgba(
+                            hover_border_color.red() as f64,
+                            hover_border_color.green() as f64,
+                            hover_border_color.blue() as f64,
+                            hover_border_color.alpha() as f64 * ease_progress,
+                        );
+                        cr.set_line_width(3.0);
+                        cr.stroke().unwrap();
+                    }
+                }
+            }
         });
         window.set_child(Some(&drawing_area));
 
