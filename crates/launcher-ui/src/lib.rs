@@ -730,14 +730,9 @@ impl LauncherApp {
                 "Radial Menu".to_string()
             };
 
-            let hub_fill_is_different = (hub_fill.red() - fill_color.red()).abs() > 0.001
-                || (hub_fill.green() - fill_color.green()).abs() > 0.001
-                || (hub_fill.blue() - fill_color.blue()).abs() > 0.001
-                || (hub_fill.alpha() - fill_color.alpha()).abs() > 0.001;
-
             let draw_hub = || {
-                // Draw center circular hub if hub_fill is different from fill_color
-                if hub_fill_is_different && hub_fill.alpha() > 0.001 {
+                // Draw center circular hub if visible
+                if hub_fill.alpha() > 0.001 {
                     cr.new_path();
                     cr.set_source_rgba(
                         hub_fill.red() as f64,
@@ -781,11 +776,14 @@ impl LauncherApp {
                 pangocairo::functions::show_layout(&cr, &layout);
             };
 
-            // 1. Draw continuous base background disk if fill_color is visible
+            // 1. Draw continuous base background ring if fill_color is visible
             let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+            let base_inner_radius = BASE_R * ease_progress;
             if fill_color.alpha() > 0.001 {
                 cr.new_path();
                 cr.arc(cx, cy, base_outer_radius, 0.0, 2.0 * PI);
+                cr.arc_negative(cx, cy, base_inner_radius, 2.0 * PI, 0.0);
+                cr.close_path();
                 cr.set_source_rgba(
                     fill_color.red() as f64,
                     fill_color.green() as f64,
