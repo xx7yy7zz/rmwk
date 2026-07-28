@@ -543,11 +543,11 @@ impl LauncherApp {
             extra_radius: ui_config.extra_radius,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
-            menu_style: ui_config.menu_style,
+            menu_style: ui_config.menu_style.clone(),
             center_layout: ui_config.center_layout,
             disable_hover_animation: ui_config.disable_hover_animation,
             hover_visual_cue: ui_config.hover_visual_cue.clone(),
-            enable_blur: ui_config.enable_blur,
+            enable_blur: ui_config.enable_blur && ui_config.menu_style != "floating",
             last_cx: 0.0,
             last_cy: 0.0,
             last_blur_radius: -1.0,
@@ -896,7 +896,7 @@ impl LauncherApp {
                             Top,
                             Bottom,
                         }
-                        let threshold = if n >= 12 {
+                        let threshold = if n >= 11 {
                             (angle_per_slice / 2.0).sin().abs() + 0.02
                         } else {
                             0.15
@@ -2051,8 +2051,9 @@ impl LauncherApp {
                             if state.hover_visual_cue != cfg.ui.hover_visual_cue {
                                 state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();
                             }
-                            if state.enable_blur != cfg.ui.enable_blur {
-                                state.enable_blur = cfg.ui.enable_blur;
+                            let new_blur = cfg.ui.enable_blur && cfg.ui.menu_style != "floating";
+                            if state.enable_blur != new_blur {
+                                state.enable_blur = new_blur;
                                 blur_needs_update = true;
                             }
                             state.icon_cache.clear();

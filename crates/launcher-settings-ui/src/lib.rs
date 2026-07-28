@@ -390,6 +390,10 @@ impl SettingsApp {
 
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
+        if ui_config.ui.menu_style == "floating" {
+            chk_enable_blur.set_sensitive(false);
+            chk_enable_blur.set_active(false);
+        }
 
         let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
         icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Your Wayland compositor must support this protocol for blur to work."));
@@ -414,12 +418,24 @@ impl SettingsApp {
         lbl_menu_style.set_halign(gtk::Align::Start);
         let combo_menu_style = gtk::ComboBoxText::new();
         combo_menu_style.append(Some("pie"), "Pie (Continuous Ring)");
-        combo_menu_style.append(Some("floating"), "Floating Pills (Kando)");
+        combo_menu_style.append(Some("floating"), "Floating Pills");
         combo_menu_style.set_active_id(Some(&ui_config.ui.menu_style));
 
         let menu_style_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         menu_style_hbox.append(&lbl_menu_style);
         menu_style_hbox.append(&combo_menu_style);
+
+        let chk_enable_blur_style = chk_enable_blur.clone();
+        combo_menu_style.connect_changed(move |combo| {
+            if let Some(id) = combo.active_id() {
+                if id == "floating" {
+                    chk_enable_blur_style.set_sensitive(false);
+                    chk_enable_blur_style.set_active(false);
+                } else {
+                    chk_enable_blur_style.set_sensitive(true);
+                }
+            }
+        });
 
         settings_hbox.append(&lbl_extra_radius);
         settings_hbox.append(&spin_extra_radius);
