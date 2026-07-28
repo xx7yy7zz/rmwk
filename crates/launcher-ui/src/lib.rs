@@ -56,6 +56,7 @@ struct MenuState {
     center_layout: bool,
     disable_hover_animation: bool,
     hover_visual_cue: String,
+    menu_style: String,
     enable_blur: bool,
     last_cx: f64,
     last_cy: f64,
@@ -542,6 +543,7 @@ impl LauncherApp {
             extra_radius: ui_config.extra_radius,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
+            menu_style: ui_config.menu_style,
             center_layout: ui_config.center_layout,
             disable_hover_animation: ui_config.disable_hover_animation,
             hover_visual_cue: ui_config.hover_visual_cue.clone(),
@@ -776,102 +778,229 @@ impl LauncherApp {
                 pangocairo::functions::show_layout(&cr, &layout);
             };
 
-            // 1. Draw continuous base background ring if fill_color is visible
-            let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-            let base_inner_radius = BASE_R * ease_progress;
-            if fill_color.alpha() > 0.001 {
-                cr.new_path();
-                cr.arc(cx, cy, base_outer_radius, 0.0, 2.0 * PI);
-                cr.arc_negative(cx, cy, base_inner_radius, 2.0 * PI, 0.0);
-                cr.close_path();
-                cr.set_source_rgba(
-                    fill_color.red() as f64,
-                    fill_color.green() as f64,
-                    fill_color.blue() as f64,
-                    fill_color.alpha() as f64 * ease_progress,
-                );
-                cr.fill().unwrap();
-            }
-
-            if n > 0 {
-                let angle_per_slice = 2.0 * PI / n as f64;
-
-                // Determine draw order so the hovered slice paints over its neighbors' strokes
-                let mut draw_order: Vec<usize> = (0..n).collect();
-                if let Some(hovered_i) = state_ref.hovered_index {
-                    if !state_ref.is_closing && hovered_i < n {
-                        draw_order.retain(|&idx| idx != hovered_i);
-                        draw_order.push(hovered_i);
-                    }
-                }
-
-                for i in draw_order {
-                    cr.new_path();
-                    let item = &display_items[i];
-                    let hp = if i < state_ref.hover_progresses.len() {
-                        state_ref.hover_progresses[i]
-                    } else {
-                        0.0
-                    };
-
-                    let mut base_start_angle = i as f64 * angle_per_slice - PI / 2.0;
-                    if state_ref.center_layout {
-                        base_start_angle -= angle_per_slice / 2.0;
-                    }
-                    let base_end_angle = base_start_angle + angle_per_slice;
-
-                    let hp_curr = hp;
-                    let hp_prev = if state_ref.hover_progresses.len() > 0 {
-                        state_ref.hover_progresses[(i + n - 1) % n]
-                    } else {
-                        0.0
-                    };
-                    let hp_next = if state_ref.hover_progresses.len() > 0 {
-                        state_ref.hover_progresses[(i + 1) % n]
-                    } else {
-                        0.0
-                    };
-
-                    let is_hovered = state_ref.hovered_index == Some(i) && !state_ref.is_closing;
-
-                    let mut start_angle = base_start_angle;
-                    let mut end_angle = base_end_angle;
-
-                    let mut fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-                    let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-
-                    match state_ref.hover_visual_cue.as_str() {
-                        "sides" => {
-                            let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH);
-                            start_angle += (hp_prev - hp_curr) * hover_angle_grow;
-                            end_angle += (hp_curr - hp_next) * hover_angle_grow;
+            if state_ref.menu_style == "floating" {
+                if n > 0 {
+                    let angle_per_slice = 2.0 * std::f64::consts::PI / n as f64;
+                    let mut draw_order: Vec<usize> = (0..n).rev().collect();
+                    if let Some(hovered_i) = state_ref.hovered_index {
+                        if !state_ref.is_closing && hovered_i < n {
+                            draw_order.retain(|&idx| idx != hovered_i);
+                            draw_order.push(hovered_i);
                         }
-                        "outwards" => {
-                            stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW)
-                                - 0.5)
-                                * ease_progress;
+                    }
 
-                            if is_hovered {
-                                fill_outer_radius = stroke_outer_radius;
-                            } else {
-                                // Instantly retreat the fill when unhovering so it doesn't leave an invisible trail
-                                fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                    for &i in &draw_order {
+                        let item = &display_items[i];
+                        let hp = if i < state_ref.hover_progresses.len() {
+                            state_ref.hover_progresses[i]
+                        } else {
+                            0.0
+                        };
+                        let is_hovered =
+                            state_ref.hovered_index == Some(i) && !state_ref.is_closing;
+
+                        let mut base_start_angle =
+                            i as f64 * angle_per_slice - std::f64::consts::PI / 2.0;
+                        if state_ref.center_layout {
+                            base_start_angle -= angle_per_slice / 2.0;
+                        }
+                        let mid_angle = base_start_angle + angle_per_slice / 2.0;
+
+                        // Dynamic radius scaling
+                        let required_r = n as f64 * 82.0 / (2.0 * std::f64::consts::PI);
+                        let base_dist = BASE_R + 60.0;
+                        let pill_dist =
+                            base_dist.max(required_r) + (hp * HOVER_GROW) * ease_progress;
+
+                        let icon_center_x = cx + pill_dist * mid_angle.cos();
+                        let icon_center_y = cy + pill_dist * mid_angle.sin();
+
+                        // Measure text
+                        let text = &item.label;
+                        let text_layout = area.create_pango_layout(Some(text));
+                        let mut font_desc = gtk::pango::FontDescription::new();
+                        font_desc.set_family("Sans");
+                        font_desc.set_size(gtk::pango::units_from_double(14.0 * ease_progress));
+                        text_layout.set_font_description(Some(&font_desc));
+                        let (tw, th) = text_layout.pixel_size();
+                        let (tw_f, th_f) = (tw as f64, th as f64);
+
+                        // Measure icon
+                        let mut icon_w = 0.0;
+                        let mut icon_h = 0.0;
+                        let icon_size = 32.0 * ease_progress; // fixed icon size for pills
+                        let mut icon_layout: Option<gtk::pango::Layout> = None;
+
+                        if let Some(icon_name) = &item.icon {
+                            if icon_name.chars().count() == 1 {
+                                let l = if let Some(l) = state_ref.text_layout_cache.get(icon_name)
+                                {
+                                    l.clone()
+                                } else {
+                                    let l = area.create_pango_layout(Some(icon_name));
+                                    let mut font_desc = gtk::pango::FontDescription::new();
+                                    font_desc.set_family("Sans");
+                                    let weight = if state_ref.bold_single_chars {
+                                        gtk::pango::Weight::Bold
+                                    } else {
+                                        gtk::pango::Weight::Normal
+                                    };
+                                    font_desc.set_weight(weight);
+                                    font_desc
+                                        .set_size(gtk::pango::units_from_double(icon_size * 0.75));
+                                    l.set_font_description(Some(&font_desc));
+                                    state_ref
+                                        .text_layout_cache
+                                        .insert(icon_name.clone(), l.clone());
+                                    l
+                                };
+                                let (iw, ih) = l.pixel_size();
+                                let _ih = ih;
+                                icon_layout = Some(l);
+                                icon_w = icon_size * 0.75;
+                                icon_h = icon_size * 0.75;
+                            } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                                cr.save().unwrap();
+                                cr.select_font_face(
+                                    "Material Symbols Rounded",
+                                    cairo::FontSlant::Normal,
+                                    cairo::FontWeight::Normal,
+                                );
+                                cr.set_font_size(icon_size);
+                                if let Ok(ext) = cr.text_extents(&codepoint.to_string()) {
+                                    icon_w = ext.width();
+                                    icon_h = ext.height();
+                                }
+                                cr.restore().unwrap();
+                            } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                                let cw = surf.width() as f64;
+                                let ch = surf.height() as f64;
+                                let scale = icon_size / cw.max(ch).max(1.0);
+                                icon_w = cw * scale;
+                                icon_h = ch * scale;
                             }
                         }
-                        _ => { // "none"
-                             // keep default values
+
+                        let padding_x = 16.0 * ease_progress;
+                        let padding_y = 12.0 * ease_progress;
+                        let gap = if icon_w > 0.0 && tw_f > 0.0 {
+                            8.0 * ease_progress
+                        } else {
+                            0.0
+                        };
+
+                        #[derive(PartialEq)]
+                        enum PillMode {
+                            Right,
+                            Left,
+                            Top,
+                            Bottom,
                         }
-                    }
+                        let threshold = if n >= 12 {
+                            (angle_per_slice / 2.0).sin().abs() + 0.02
+                        } else {
+                            0.15
+                        };
+                        let mode = if mid_angle.cos().abs() <= threshold {
+                            if mid_angle.sin() < 0.0 {
+                                PillMode::Top
+                            } else {
+                                PillMode::Bottom
+                            }
+                        } else if mid_angle.cos() >= 0.0 {
+                            PillMode::Right
+                        } else {
+                            PillMode::Left
+                        };
 
-                    let stroke_inner_radius = BASE_R * ease_progress;
+                        let has_text = tw_f > 0.0;
+                        let r = (icon_size / 2.0 + 8.0) * ease_progress;
 
-                    // Fill wedge only if hovered, or if fill_color was transparent
-                    if is_hovered || fill_color.alpha() <= 0.001 {
-                        cr.new_path();
-                        cr.arc(cx, cy, fill_outer_radius, start_angle, end_angle);
-                        cr.arc_negative(cx, cy, stroke_inner_radius, end_angle, start_angle);
-                        cr.close_path();
+                        // ADJUST THESE PARAMETERS to control spacing between label and icon
+                        let gap_between = 12.0 * ease_progress; // Horizontal gap for Left/Right entries
+                        let vertical_gap = -8.0 * ease_progress; // Vertical gap for Top/Bottom entries (negative means they overlap into a single shape)
 
+                        let mut text_pill_x = 0.0;
+                        let mut text_pill_y = 0.0;
+                        let mut text_pill_w = 0.0;
+                        let text_pill_h = r * 2.0; // Enforce strict height for all labels
+
+                        let icon_x = icon_center_x - icon_w / 2.0;
+                        let icon_y = icon_center_y - icon_h / 2.0;
+                        let mut text_x = 0.0;
+                        let mut text_y = 0.0;
+
+                        match mode {
+                            PillMode::Right => {
+                                text_x = icon_center_x + r + gap_between;
+                                text_y = icon_center_y - th_f / 2.0;
+                                text_pill_x = icon_center_x - r;
+                                text_pill_y = icon_center_y - r;
+                                text_pill_w = (text_x + tw_f + padding_x) - text_pill_x;
+                            }
+                            PillMode::Left => {
+                                text_x = icon_center_x - r - gap_between - tw_f;
+                                text_y = icon_center_y - th_f / 2.0;
+                                text_pill_x = text_x - padding_x;
+                                text_pill_y = icon_center_y - r;
+                                text_pill_w = (icon_center_x + r) - text_pill_x;
+                            }
+                            PillMode::Top => {
+                                text_x = icon_center_x - tw_f / 2.0;
+                                text_pill_w = (tw_f + padding_x * 2.0).max(r * 2.0);
+                                text_pill_x = icon_center_x - text_pill_w / 2.0;
+                                text_pill_y = icon_center_y - r - vertical_gap - text_pill_h;
+                                text_y = text_pill_y + r - th_f / 2.0;
+                            }
+                            PillMode::Bottom => {
+                                text_x = icon_center_x - tw_f / 2.0;
+                                text_pill_w = (tw_f + padding_x * 2.0).max(r * 2.0);
+                                text_pill_x = icon_center_x - text_pill_w / 2.0;
+                                text_pill_y = icon_center_y + r + vertical_gap;
+                                text_y = text_pill_y + r - th_f / 2.0;
+                            }
+                        }
+
+                        // Helper closure to draw the raw paths of BOTH shapes
+                        let draw_base_paths = |cr: &cairo::Context| {
+                            cr.new_path();
+                            if !has_text {
+                                cr.arc(
+                                    icon_center_x,
+                                    icon_center_y,
+                                    r,
+                                    0.0,
+                                    2.0 * std::f64::consts::PI,
+                                );
+                            } else {
+                                cr.arc(
+                                    icon_center_x,
+                                    icon_center_y,
+                                    r,
+                                    0.0,
+                                    2.0 * std::f64::consts::PI,
+                                );
+                                cr.new_sub_path();
+                                cr.arc(
+                                    text_pill_x + text_pill_w - r,
+                                    text_pill_y + r,
+                                    r,
+                                    -std::f64::consts::PI / 2.0,
+                                    std::f64::consts::PI / 2.0,
+                                );
+                                cr.arc(
+                                    text_pill_x + r,
+                                    text_pill_y + r,
+                                    r,
+                                    std::f64::consts::PI / 2.0,
+                                    3.0 * std::f64::consts::PI / 2.0,
+                                );
+                                cr.close_path();
+                            }
+                        };
+
+                        // 1. Fill translucent background for the union
+                        draw_base_paths(&cr);
                         if is_hovered {
                             cr.set_source_rgba(
                                 hover_fill_color.red() as f64,
@@ -879,9 +1008,6 @@ impl LauncherApp {
                                 hover_fill_color.blue() as f64,
                                 hover_fill_color.alpha() as f64 * ease_progress,
                             );
-                            cr.set_operator(cairo::Operator::Source);
-                            cr.fill().unwrap();
-                            cr.set_operator(cairo::Operator::Over);
                         } else {
                             cr.set_source_rgba(
                                 fill_color.red() as f64,
@@ -889,104 +1015,92 @@ impl LauncherApp {
                                 fill_color.blue() as f64,
                                 fill_color.alpha() as f64 * ease_progress,
                             );
-                            cr.fill().unwrap();
                         }
-                    }
+                        cr.fill().unwrap();
 
-                    // Now establish the stroke path (radial sides and outer arc)
-                    cr.new_path();
-                    cr.move_to(
-                        cx + stroke_inner_radius * start_angle.cos(),
-                        cy + stroke_inner_radius * start_angle.sin(),
-                    );
-                    cr.line_to(
-                        cx + stroke_outer_radius * start_angle.cos(),
-                        cy + stroke_outer_radius * start_angle.sin(),
-                    );
-                    cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
-                    cr.line_to(
-                        cx + stroke_inner_radius * end_angle.cos(),
-                        cy + stroke_inner_radius * end_angle.sin(),
-                    );
-
-                    let draw_wedge_stroke = |cr: &cairo::Context| {
-                        let alpha = if is_hovered {
-                            hover_border_color.alpha()
+                        // 2. Draw Opaque Icon Circle on top
+                        cr.new_path();
+                        cr.arc(
+                            icon_center_x,
+                            icon_center_y,
+                            r,
+                            0.0,
+                            2.0 * std::f64::consts::PI,
+                        );
+                        if is_hovered {
+                            cr.set_source_rgba(
+                                hover_fill_color.red() as f64,
+                                hover_fill_color.green() as f64,
+                                hover_fill_color.blue() as f64,
+                                1.0 * ease_progress,
+                            );
                         } else {
-                            border_color.alpha()
-                        };
-                        if alpha > 0.001 {
+                            cr.set_source_rgba(
+                                fill_color.red() as f64,
+                                fill_color.green() as f64,
+                                fill_color.blue() as f64,
+                                1.0 * ease_progress,
+                            );
+                        }
+                        cr.fill().unwrap();
+
+                        // 3. Stroke the Combined Outline robustly (using outer-stroke trick)
+                        cr.push_group();
+                        draw_base_paths(&cr);
+
+                        // Stroke with double width
+                        if is_hovered {
+                            cr.set_source_rgba(
+                                hover_border_color.red() as f64,
+                                hover_border_color.green() as f64,
+                                hover_border_color.blue() as f64,
+                                hover_border_color.alpha() as f64 * ease_progress,
+                            );
+                            cr.set_line_width(6.0 * ease_progress); // Double of 3.0
+                        } else {
+                            cr.set_source_rgba(
+                                border_color.red() as f64,
+                                border_color.green() as f64,
+                                border_color.blue() as f64,
+                                border_color.alpha() as f64 * ease_progress,
+                            );
+                            cr.set_line_width(4.0 * ease_progress); // Double of 2.0
+                        }
+                        cr.stroke_preserve().unwrap();
+
+                        // Erase the interior to leave only the outer stroke
+                        cr.set_operator(cairo::Operator::Clear);
+                        cr.fill().unwrap();
+
+                        // Paint the resulting outer border
+                        cr.pop_group_to_source().unwrap();
+                        cr.set_operator(cairo::Operator::Over);
+                        cr.paint().unwrap();
+
+                        // 4. Render Text
+                        if has_text {
                             if is_hovered {
                                 cr.set_source_rgba(
-                                    hover_border_color.red() as f64,
-                                    hover_border_color.green() as f64,
-                                    hover_border_color.blue() as f64,
-                                    hover_border_color.alpha() as f64 * ease_progress,
+                                    hover_label_color.red() as f64,
+                                    hover_label_color.green() as f64,
+                                    hover_label_color.blue() as f64,
+                                    hover_label_color.alpha() as f64 * ease_progress,
                                 );
-                                cr.set_line_width(3.0);
                             } else {
                                 cr.set_source_rgba(
-                                    border_color.red() as f64,
-                                    border_color.green() as f64,
-                                    border_color.blue() as f64,
-                                    border_color.alpha() as f64 * ease_progress,
+                                    label_color.red() as f64,
+                                    label_color.green() as f64,
+                                    label_color.blue() as f64,
+                                    label_color.alpha() as f64 * ease_progress,
                                 );
-                                cr.set_line_width(2.0);
                             }
-                            cr.stroke().unwrap();
-                        } else {
-                            cr.new_path();
-                        }
-                    };
-
-                    let draw_outer_stroke = |cr: &cairo::Context| {
-                        if outer_border_color.alpha() > 0.001 {
-                            cr.new_path();
-                            cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
-                            cr.set_source_rgba(
-                                outer_border_color.red() as f64,
-                                outer_border_color.green() as f64,
-                                outer_border_color.blue() as f64,
-                                outer_border_color.alpha() as f64 * ease_progress,
-                            );
-                            cr.set_line_width(2.0);
-                            cr.stroke().unwrap();
-                        }
-                    };
-
-                    if is_hovered {
-                        // Preserve path for wedge stroke to be drawn after
-                        let path = cr.copy_path().unwrap();
-                        cr.new_path(); // Clear it so outer stroke doesn't stroke it
-
-                        if state_ref.hover_visual_cue != "outwards" {
-                            draw_outer_stroke(cr);
+                            cr.move_to(text_x, text_y);
+                            pangocairo::functions::show_layout(&cr, &text_layout);
                         }
 
-                        cr.append_path(&path);
-                        draw_wedge_stroke(cr);
-                    } else {
-                        // Wedge stroke first, then outer stroke on top
-                        draw_wedge_stroke(cr);
-                        draw_outer_stroke(cr);
-                    }
-
-                    // Draw icon if present (labels are only in the center hub now)
-                    let mid_angle = (start_angle + end_angle) / 2.0;
-                    let r_center = (stroke_inner_radius + stroke_outer_radius) / 2.0;
-
-                    let arc_width = r_center * angle_per_slice;
-                    let radial_depth = stroke_outer_radius - stroke_inner_radius;
-                    let max_space = arc_width.min(radial_depth);
-                    let icon_size = (max_space * 0.5).clamp(16.0, 64.0);
-
-                    if let Some(icon_name) = &item.icon {
-                        if icon_name.chars().count() == 1 {
-                            let ix = cx + r_center * mid_angle.cos();
-                            let iy = cy + r_center * mid_angle.sin();
-                            let _ = cr.save();
-
-                            if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                        // 5. Render Icon
+                        if icon_w > 0.0 {
+                            if is_hovered {
                                 cr.set_source_rgba(
                                     hover_label_color.red() as f64,
                                     hover_label_color.green() as f64,
@@ -1002,53 +1116,268 @@ impl LauncherApp {
                                 );
                             }
 
-                            let layout = if let Some(l) = state_ref.text_layout_cache.get(icon_name)
-                            {
-                                l.clone()
-                            } else {
-                                let l = area.create_pango_layout(Some(icon_name));
-                                let mut font_desc = gtk::pango::FontDescription::new();
-                                font_desc.set_family("Sans");
-                                let weight = if state_ref.bold_single_chars {
-                                    gtk::pango::Weight::Bold
+                            if let Some(icon_name) = &item.icon {
+                                if icon_name.chars().count() == 1 {
+                                    if let Some(l) = icon_layout {
+                                        let (pango_w, pango_h) = l.pixel_size();
+                                        let scale = (icon_size * 0.75) / (pango_w as f64).max(1.0);
+                                        cr.save().unwrap();
+                                        cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
+                                        cr.scale(scale, scale);
+                                        cr.move_to(
+                                            -(pango_w as f64 / 2.0),
+                                            -(pango_h as f64 / 2.0),
+                                        );
+                                        pangocairo::functions::show_layout(&cr, &l);
+                                        cr.restore().unwrap();
+                                    }
+                                } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name)
+                                {
+                                    cr.save().unwrap();
+                                    cr.select_font_face(
+                                        "Material Symbols Rounded",
+                                        cairo::FontSlant::Normal,
+                                        cairo::FontWeight::Normal,
+                                    );
+                                    cr.set_font_size(icon_size);
+                                    if let Ok(extents) = cr.text_extents(&codepoint.to_string()) {
+                                        cr.move_to(
+                                            icon_x - extents.x_bearing(),
+                                            icon_y - extents.y_bearing(),
+                                        );
+                                        let _ = cr.show_text(&codepoint.to_string());
+                                    }
+                                    cr.restore().unwrap();
+                                } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name)
+                                {
+                                    let cw = surf.width() as f64;
+                                    let ch = surf.height() as f64;
+                                    let scale = icon_size / cw.max(ch).max(1.0);
+                                    cr.save().unwrap();
+                                    cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
+                                    cr.scale(scale, scale);
+                                    cr.set_source_surface(surf, -cw / 2.0, -ch / 2.0).unwrap();
+                                    let _ = cr.paint_with_alpha(ease_progress);
+                                    cr.restore().unwrap();
+                                }
+                            }
+                        }
+                    }
+                }
+                draw_hub();
+            } else {
+                // 1. Draw continuous base background ring if fill_color is visible
+                let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                let base_inner_radius = BASE_R * ease_progress;
+                if fill_color.alpha() > 0.001 {
+                    cr.new_path();
+                    cr.arc(cx, cy, base_outer_radius, 0.0, 2.0 * PI);
+                    cr.arc_negative(cx, cy, base_inner_radius, 2.0 * PI, 0.0);
+                    cr.close_path();
+                    cr.set_source_rgba(
+                        fill_color.red() as f64,
+                        fill_color.green() as f64,
+                        fill_color.blue() as f64,
+                        fill_color.alpha() as f64 * ease_progress,
+                    );
+                    cr.fill().unwrap();
+                }
+
+                if n > 0 {
+                    let angle_per_slice = 2.0 * PI / n as f64;
+
+                    // Determine draw order so the hovered slice paints over its neighbors' strokes
+                    let mut draw_order: Vec<usize> = (0..n).collect();
+                    if let Some(hovered_i) = state_ref.hovered_index {
+                        if !state_ref.is_closing && hovered_i < n {
+                            draw_order.retain(|&idx| idx != hovered_i);
+                            draw_order.push(hovered_i);
+                        }
+                    }
+
+                    for i in draw_order {
+                        cr.new_path();
+                        let item = &display_items[i];
+                        let hp = if i < state_ref.hover_progresses.len() {
+                            state_ref.hover_progresses[i]
+                        } else {
+                            0.0
+                        };
+
+                        let mut base_start_angle = i as f64 * angle_per_slice - PI / 2.0;
+                        if state_ref.center_layout {
+                            base_start_angle -= angle_per_slice / 2.0;
+                        }
+                        let base_end_angle = base_start_angle + angle_per_slice;
+
+                        let hp_curr = hp;
+                        let hp_prev = if state_ref.hover_progresses.len() > 0 {
+                            state_ref.hover_progresses[(i + n - 1) % n]
+                        } else {
+                            0.0
+                        };
+                        let hp_next = if state_ref.hover_progresses.len() > 0 {
+                            state_ref.hover_progresses[(i + 1) % n]
+                        } else {
+                            0.0
+                        };
+
+                        let is_hovered =
+                            state_ref.hovered_index == Some(i) && !state_ref.is_closing;
+
+                        let mut start_angle = base_start_angle;
+                        let mut end_angle = base_end_angle;
+
+                        let mut fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                        let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+
+                        match state_ref.hover_visual_cue.as_str() {
+                            "sides" => {
+                                let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH);
+                                start_angle += (hp_prev - hp_curr) * hover_angle_grow;
+                                end_angle += (hp_curr - hp_next) * hover_angle_grow;
+                            }
+                            "outwards" => {
+                                stroke_outer_radius =
+                                    (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5)
+                                        * ease_progress;
+
+                                if is_hovered {
+                                    fill_outer_radius = stroke_outer_radius;
                                 } else {
-                                    gtk::pango::Weight::Normal
-                                };
-                                font_desc.set_weight(weight);
-                                font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
-                                l.set_font_description(Some(&font_desc));
-                                state_ref
-                                    .text_layout_cache
-                                    .insert(icon_name.clone(), l.clone());
-                                l
+                                    // Instantly retreat the fill when unhovering so it doesn't leave an invisible trail
+                                    fill_outer_radius =
+                                        (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                                }
+                            }
+                            _ => { // "none"
+                                 // keep default values
+                            }
+                        }
+
+                        let stroke_inner_radius = BASE_R * ease_progress;
+
+                        // Fill wedge only if hovered, or if fill_color was transparent
+                        if is_hovered || fill_color.alpha() <= 0.001 {
+                            cr.new_path();
+                            cr.arc(cx, cy, fill_outer_radius, start_angle, end_angle);
+                            cr.arc_negative(cx, cy, stroke_inner_radius, end_angle, start_angle);
+                            cr.close_path();
+
+                            if is_hovered {
+                                cr.set_source_rgba(
+                                    hover_fill_color.red() as f64,
+                                    hover_fill_color.green() as f64,
+                                    hover_fill_color.blue() as f64,
+                                    hover_fill_color.alpha() as f64 * ease_progress,
+                                );
+                                cr.set_operator(cairo::Operator::Source);
+                                cr.fill().unwrap();
+                                cr.set_operator(cairo::Operator::Over);
+                            } else {
+                                cr.set_source_rgba(
+                                    fill_color.red() as f64,
+                                    fill_color.green() as f64,
+                                    fill_color.blue() as f64,
+                                    fill_color.alpha() as f64 * ease_progress,
+                                );
+                                cr.fill().unwrap();
+                            }
+                        }
+
+                        // Now establish the stroke path (radial sides and outer arc)
+                        cr.new_path();
+                        cr.move_to(
+                            cx + stroke_inner_radius * start_angle.cos(),
+                            cy + stroke_inner_radius * start_angle.sin(),
+                        );
+                        cr.line_to(
+                            cx + stroke_outer_radius * start_angle.cos(),
+                            cy + stroke_outer_radius * start_angle.sin(),
+                        );
+                        cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
+                        cr.line_to(
+                            cx + stroke_inner_radius * end_angle.cos(),
+                            cy + stroke_inner_radius * end_angle.sin(),
+                        );
+
+                        let draw_wedge_stroke = |cr: &cairo::Context| {
+                            let alpha = if is_hovered {
+                                hover_border_color.alpha()
+                            } else {
+                                border_color.alpha()
                             };
+                            if alpha > 0.001 {
+                                if is_hovered {
+                                    cr.set_source_rgba(
+                                        hover_border_color.red() as f64,
+                                        hover_border_color.green() as f64,
+                                        hover_border_color.blue() as f64,
+                                        hover_border_color.alpha() as f64 * ease_progress,
+                                    );
+                                    cr.set_line_width(3.0);
+                                } else {
+                                    cr.set_source_rgba(
+                                        border_color.red() as f64,
+                                        border_color.green() as f64,
+                                        border_color.blue() as f64,
+                                        border_color.alpha() as f64 * ease_progress,
+                                    );
+                                    cr.set_line_width(2.0);
+                                }
+                                cr.stroke().unwrap();
+                            } else {
+                                cr.new_path();
+                            }
+                        };
 
-                            let (pango_w, pango_h) = layout.pixel_size();
-                            let scale = (icon_size * ease_progress) / 64.0;
+                        let draw_outer_stroke = |cr: &cairo::Context| {
+                            if outer_border_color.alpha() > 0.001 {
+                                cr.new_path();
+                                cr.arc(cx, cy, stroke_outer_radius, start_angle, end_angle);
+                                cr.set_source_rgba(
+                                    outer_border_color.red() as f64,
+                                    outer_border_color.green() as f64,
+                                    outer_border_color.blue() as f64,
+                                    outer_border_color.alpha() as f64 * ease_progress,
+                                );
+                                cr.set_line_width(2.0);
+                                cr.stroke().unwrap();
+                            }
+                        };
 
-                            if scale > 0.001 {
-                                cr.translate(ix, iy);
-                                cr.scale(scale, scale);
-                                cr.move_to(-(pango_w as f64 / 2.0), -(pango_h as f64 / 2.0));
-                                pangocairo::functions::show_layout(&cr, &layout);
+                        if is_hovered {
+                            // Preserve path for wedge stroke to be drawn after
+                            let path = cr.copy_path().unwrap();
+                            cr.new_path(); // Clear it so outer stroke doesn't stroke it
+
+                            if state_ref.hover_visual_cue != "outwards" {
+                                draw_outer_stroke(cr);
                             }
 
-                            let _ = cr.restore();
-                        } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                            let ix = cx + r_center * mid_angle.cos();
-                            let iy = cy + r_center * mid_angle.sin();
-                            let _ = cr.save();
-                            cr.select_font_face(
-                                "Material Symbols Rounded",
-                                cairo::FontSlant::Normal,
-                                cairo::FontWeight::Normal,
-                            );
-                            cr.set_font_size(icon_size * ease_progress);
-                            let glyph_str = codepoint.to_string();
-                            if let Ok(extents) = cr.text_extents(&glyph_str) {
-                                let rx = ix - extents.width() / 2.0 - extents.x_bearing();
-                                let ry = iy - extents.height() / 2.0 - extents.y_bearing();
-                                cr.move_to(rx, ry);
+                            cr.append_path(&path);
+                            draw_wedge_stroke(cr);
+                        } else {
+                            // Wedge stroke first, then outer stroke on top
+                            draw_wedge_stroke(cr);
+                            draw_outer_stroke(cr);
+                        }
+
+                        // Draw icon if present (labels are only in the center hub now)
+                        let mid_angle = (start_angle + end_angle) / 2.0;
+                        let r_center = (stroke_inner_radius + stroke_outer_radius) / 2.0;
+
+                        let arc_width = r_center * angle_per_slice;
+                        let radial_depth = stroke_outer_radius - stroke_inner_radius;
+                        let max_space = arc_width.min(radial_depth);
+                        let icon_size = (max_space * 0.5).clamp(16.0, 64.0);
+
+                        if let Some(icon_name) = &item.icon {
+                            if icon_name.chars().count() == 1 {
+                                let ix = cx + r_center * mid_angle.cos();
+                                let iy = cy + r_center * mid_angle.sin();
+                                let _ = cr.save();
+
                                 if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
                                     cr.set_source_rgba(
                                         hover_label_color.red() as f64,
@@ -1064,140 +1393,210 @@ impl LauncherApp {
                                         label_color.alpha() as f64 * ease_progress,
                                     );
                                 }
-                                let _ = cr.show_text(&glyph_str);
-                            }
-                            let _ = cr.restore();
-                        } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
-                            let current_w = surf.width() as f64;
-                            let current_h = surf.height() as f64;
-                            let scale =
-                                (icon_size * ease_progress) / current_w.max(current_h).max(1.0);
-                            if scale > 0.001 {
-                                let _ = cr.save();
-                                cr.translate(
-                                    cx + r_center * mid_angle.cos(),
-                                    cy + r_center * mid_angle.sin(),
-                                );
-                                cr.scale(scale, scale);
-                                cr.set_source_surface(surf, -current_w / 2.0, -current_h / 2.0)
-                                    .unwrap();
-                                let _ = cr.paint_with_alpha(ease_progress);
+
+                                let layout = if let Some(l) =
+                                    state_ref.text_layout_cache.get(icon_name)
+                                {
+                                    l.clone()
+                                } else {
+                                    let l = area.create_pango_layout(Some(icon_name));
+                                    let mut font_desc = gtk::pango::FontDescription::new();
+                                    font_desc.set_family("Sans");
+                                    let weight = if state_ref.bold_single_chars {
+                                        gtk::pango::Weight::Bold
+                                    } else {
+                                        gtk::pango::Weight::Normal
+                                    };
+                                    font_desc.set_weight(weight);
+                                    font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
+                                    l.set_font_description(Some(&font_desc));
+                                    state_ref
+                                        .text_layout_cache
+                                        .insert(icon_name.clone(), l.clone());
+                                    l
+                                };
+
+                                let (pango_w, pango_h) = layout.pixel_size();
+                                let scale = (icon_size * ease_progress) / 64.0;
+
+                                if scale > 0.001 {
+                                    cr.translate(ix, iy);
+                                    cr.scale(scale, scale);
+                                    cr.move_to(-(pango_w as f64 / 2.0), -(pango_h as f64 / 2.0));
+                                    pangocairo::functions::show_layout(&cr, &layout);
+                                }
+
                                 let _ = cr.restore();
+                            } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                                let ix = cx + r_center * mid_angle.cos();
+                                let iy = cy + r_center * mid_angle.sin();
+                                let _ = cr.save();
+                                cr.select_font_face(
+                                    "Material Symbols Rounded",
+                                    cairo::FontSlant::Normal,
+                                    cairo::FontWeight::Normal,
+                                );
+                                cr.set_font_size(icon_size * ease_progress);
+                                let glyph_str = codepoint.to_string();
+                                if let Ok(extents) = cr.text_extents(&glyph_str) {
+                                    let rx = ix - extents.width() / 2.0 - extents.x_bearing();
+                                    let ry = iy - extents.height() / 2.0 - extents.y_bearing();
+                                    cr.move_to(rx, ry);
+                                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                                        cr.set_source_rgba(
+                                            hover_label_color.red() as f64,
+                                            hover_label_color.green() as f64,
+                                            hover_label_color.blue() as f64,
+                                            hover_label_color.alpha() as f64 * ease_progress,
+                                        );
+                                    } else {
+                                        cr.set_source_rgba(
+                                            label_color.red() as f64,
+                                            label_color.green() as f64,
+                                            label_color.blue() as f64,
+                                            label_color.alpha() as f64 * ease_progress,
+                                        );
+                                    }
+                                    let _ = cr.show_text(&glyph_str);
+                                }
+                                let _ = cr.restore();
+                            } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                                let current_w = surf.width() as f64;
+                                let current_h = surf.height() as f64;
+                                let scale =
+                                    (icon_size * ease_progress) / current_w.max(current_h).max(1.0);
+                                if scale > 0.001 {
+                                    let _ = cr.save();
+                                    cr.translate(
+                                        cx + r_center * mid_angle.cos(),
+                                        cy + r_center * mid_angle.sin(),
+                                    );
+                                    cr.scale(scale, scale);
+                                    cr.set_source_surface(surf, -current_w / 2.0, -current_h / 2.0)
+                                        .unwrap();
+                                    let _ = cr.paint_with_alpha(ease_progress);
+                                    let _ = cr.restore();
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
-            // We draw this AFTER the wedge loop so that it completely covers the wedge strokes and prevents blur leakage
-            if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
-                let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
+                // We draw this AFTER the wedge loop so that it completely covers the wedge strokes and prevents blur leakage
+                if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
+                    let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
 
-                let draw_full = || {
-                    cr.new_path();
-                    cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
-                    cr.set_source_rgba(
-                        outer_border_color.red() as f64,
-                        outer_border_color.green() as f64,
-                        outer_border_color.blue() as f64,
-                        outer_border_color.alpha() as f64 * ease_progress,
-                    );
-                    cr.set_line_width(2.0);
-                    cr.stroke().unwrap();
-                };
-
-                if let Some(hovered_i) = state_ref.hovered_index {
-                    if !state_ref.is_closing && hovered_i < n {
-                        let angle_per_slice = 2.0 * PI / n as f64;
-                        let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
-                        if state_ref.center_layout {
-                            start_angle -= angle_per_slice / 2.0;
-                        }
-                        let end_angle = start_angle + angle_per_slice;
-
+                    let draw_full = || {
+                        cr.new_path();
+                        cr.arc(cx, cy, base_outer, 0.0, 2.0 * PI);
                         cr.set_source_rgba(
                             outer_border_color.red() as f64,
                             outer_border_color.green() as f64,
                             outer_border_color.blue() as f64,
                             outer_border_color.alpha() as f64 * ease_progress,
                         );
-
-                        // Draw unhovered segment (2px width)
-                        cr.new_path();
-                        cr.arc(cx, cy, base_outer, end_angle, start_angle + 2.0 * PI);
                         cr.set_line_width(2.0);
                         cr.stroke().unwrap();
+                    };
+
+                    if let Some(hovered_i) = state_ref.hovered_index {
+                        if !state_ref.is_closing && hovered_i < n {
+                            let angle_per_slice = 2.0 * PI / n as f64;
+                            let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
+                            if state_ref.center_layout {
+                                start_angle -= angle_per_slice / 2.0;
+                            }
+                            let end_angle = start_angle + angle_per_slice;
+
+                            cr.set_source_rgba(
+                                outer_border_color.red() as f64,
+                                outer_border_color.green() as f64,
+                                outer_border_color.blue() as f64,
+                                outer_border_color.alpha() as f64 * ease_progress,
+                            );
+
+                            // Draw unhovered segment (2px width)
+                            cr.new_path();
+                            cr.arc(cx, cy, base_outer, end_angle, start_angle + 2.0 * PI);
+                            cr.set_line_width(2.0);
+                            cr.stroke().unwrap();
+                        } else {
+                            draw_full();
+                        }
                     } else {
                         draw_full();
                     }
-                } else {
-                    draw_full();
                 }
-            }
 
-            draw_hub();
+                draw_hub();
 
-            // Re-stroke the inner arc for the hovered slice to cover the hub's active border
-            if let Some(hovered_i) = state_ref.hovered_index {
-                let n_items = display_items.len();
-                if !state_ref.is_closing && hovered_i < n_items {
-                    let angle_per_slice = 2.0 * PI / n_items as f64;
-                    let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
-                    if state_ref.center_layout {
-                        start_angle -= angle_per_slice / 2.0;
-                    }
-                    let end_angle = start_angle + angle_per_slice;
+                // Re-stroke the inner arc for the hovered slice to cover the hub's active border
+                if let Some(hovered_i) = state_ref.hovered_index {
+                    let n_items = display_items.len();
+                    if !state_ref.is_closing && hovered_i < n_items {
+                        let angle_per_slice = 2.0 * PI / n_items as f64;
+                        let mut start_angle = hovered_i as f64 * angle_per_slice - PI / 2.0;
+                        if state_ref.center_layout {
+                            start_angle -= angle_per_slice / 2.0;
+                        }
+                        let end_angle = start_angle + angle_per_slice;
 
-                    let hp = if hovered_i < state_ref.hover_progresses.len() {
-                        state_ref.hover_progresses[hovered_i]
-                    } else {
-                        0.0
-                    };
+                        let hp = if hovered_i < state_ref.hover_progresses.len() {
+                            state_ref.hover_progresses[hovered_i]
+                        } else {
+                            0.0
+                        };
 
-                    let hp_curr = hp;
-                    let hp_prev = if state_ref.hover_progresses.len() > 0 {
-                        state_ref.hover_progresses[(hovered_i + n_items - 1) % n_items]
-                    } else {
-                        0.0
-                    };
-                    let hp_next = if state_ref.hover_progresses.len() > 0 {
-                        state_ref.hover_progresses[(hovered_i + 1) % n_items]
-                    } else {
-                        0.0
-                    };
+                        let hp_curr = hp;
+                        let hp_prev = if state_ref.hover_progresses.len() > 0 {
+                            state_ref.hover_progresses[(hovered_i + n_items - 1) % n_items]
+                        } else {
+                            0.0
+                        };
+                        let hp_next = if state_ref.hover_progresses.len() > 0 {
+                            state_ref.hover_progresses[(hovered_i + 1) % n_items]
+                        } else {
+                            0.0
+                        };
 
-                    let mut start_a = start_angle;
-                    let mut end_a = end_angle;
+                        let mut start_a = start_angle;
+                        let mut end_a = end_angle;
 
-                    if state_ref.hover_visual_cue == "sides" {
-                        let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH);
-                        start_a += (hp_prev - hp_curr) * hover_angle_grow;
-                        end_a += (hp_curr - hp_next) * hover_angle_grow;
-                    }
+                        if state_ref.hover_visual_cue == "sides" {
+                            let hover_angle_grow = HOVER_GROW / (BASE_R + SLICE_WIDTH);
+                            start_a += (hp_prev - hp_curr) * hover_angle_grow;
+                            end_a += (hp_curr - hp_next) * hover_angle_grow;
+                        }
 
-                    let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-                    if state_ref.hover_visual_cue == "outwards" {
-                        stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5) * ease_progress;
-                    }
-                    let stroke_inner_radius = BASE_R * ease_progress;
+                        let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                        if state_ref.hover_visual_cue == "outwards" {
+                            stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW)
+                                - 0.5)
+                                * ease_progress;
+                        }
+                        let stroke_inner_radius = BASE_R * ease_progress;
 
-                    if hover_border_color.alpha() > 0.001 {
-                        cr.new_path();
-                        cr.arc(cx, cy, stroke_inner_radius, start_a, end_a);
-                        cr.line_to(cx + stroke_outer_radius * end_a.cos(), cy + stroke_outer_radius * end_a.sin());
-                        cr.arc_negative(cx, cy, stroke_outer_radius, end_a, start_a);
-                        cr.close_path();
+                        if hover_border_color.alpha() > 0.001 {
+                            cr.new_path();
+                            cr.arc(cx, cy, stroke_inner_radius, start_a, end_a);
+                            cr.line_to(
+                                cx + stroke_outer_radius * end_a.cos(),
+                                cy + stroke_outer_radius * end_a.sin(),
+                            );
+                            cr.arc_negative(cx, cy, stroke_outer_radius, end_a, start_a);
+                            cr.close_path();
 
-                        cr.set_line_join(cairo::LineJoin::Round);
-                        cr.set_source_rgba(
-                            hover_border_color.red() as f64,
-                            hover_border_color.green() as f64,
-                            hover_border_color.blue() as f64,
-                            hover_border_color.alpha() as f64 * ease_progress,
-                        );
-                        cr.set_line_width(3.0);
-                        cr.stroke().unwrap();
+                            cr.set_line_join(cairo::LineJoin::Round);
+                            cr.set_source_rgba(
+                                hover_border_color.red() as f64,
+                                hover_border_color.green() as f64,
+                                hover_border_color.blue() as f64,
+                                hover_border_color.alpha() as f64 * ease_progress,
+                            );
+                            cr.set_line_width(3.0);
+                            cr.stroke().unwrap();
+                        }
                     }
                 }
             }
@@ -1645,6 +2044,9 @@ impl LauncherApp {
                             state.center_layout = cfg.ui.center_layout;
                             if state.disable_hover_animation != cfg.ui.disable_hover_animation {
                                 state.disable_hover_animation = cfg.ui.disable_hover_animation;
+                            }
+                            if state.menu_style != cfg.ui.menu_style {
+                                state.menu_style = cfg.ui.menu_style.clone();
                             }
                             if state.hover_visual_cue != cfg.ui.hover_visual_cue {
                                 state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();

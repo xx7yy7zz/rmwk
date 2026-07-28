@@ -60,6 +60,8 @@ pub struct UiConfig {
     pub theme: String,
     #[serde(default = "default_font")]
     pub font: String,
+    #[serde(default = "default_menu_style")]
+    pub menu_style: String,
     #[serde(default = "default_extra_radius")]
     pub extra_radius: f64,
     #[serde(default = "default_use_symbolic_icons")]
@@ -88,6 +90,7 @@ impl Default for UiConfig {
         Self {
             theme: default_theme(),
             font: default_font(),
+            menu_style: default_menu_style(),
             extra_radius: default_extra_radius(),
             use_symbolic_icons: default_use_symbolic_icons(),
             bold_single_chars: default_bold_single_chars(),
@@ -107,6 +110,10 @@ fn default_theme() -> String {
 
 fn default_font() -> String {
     "Sans 11".to_string()
+}
+
+fn default_menu_style() -> String {
+    "pie".to_string()
 }
 
 fn default_extra_radius() -> f64 {

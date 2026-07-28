@@ -410,6 +410,17 @@ impl SettingsApp {
         visual_cue_hbox.append(&lbl_visual_cue);
         visual_cue_hbox.append(&combo_visual_cue);
 
+        let lbl_menu_style = gtk::Label::new(Some("Menu Style:"));
+        lbl_menu_style.set_halign(gtk::Align::Start);
+        let combo_menu_style = gtk::ComboBoxText::new();
+        combo_menu_style.append(Some("pie"), "Pie (Continuous Ring)");
+        combo_menu_style.append(Some("floating"), "Floating Pills (Kando)");
+        combo_menu_style.set_active_id(Some(&ui_config.ui.menu_style));
+
+        let menu_style_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        menu_style_hbox.append(&lbl_menu_style);
+        menu_style_hbox.append(&combo_menu_style);
+
         settings_hbox.append(&lbl_extra_radius);
         settings_hbox.append(&spin_extra_radius);
         right_vbox.append(&settings_hbox);
@@ -421,6 +432,7 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_disable_hover_anim);
         checkboxes_vbox.append(&blur_hbox);
         checkboxes_vbox.append(&visual_cue_hbox);
+        checkboxes_vbox.append(&menu_style_hbox);
         right_vbox.append(&checkboxes_vbox);
 
         // Save & Save/Reload buttons at the bottom
@@ -762,6 +774,7 @@ impl SettingsApp {
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
+        let combo_menu_style_save = combo_menu_style.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
@@ -790,8 +803,12 @@ impl SettingsApp {
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = combo_visual_cue_save
                     .active_id()
-                    .unwrap_or_else(|| glib::GString::from("outwards"))
-                    .to_string();
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "outwards".to_string());
+                cfg.ui.menu_style = combo_menu_style_save
+                    .active_id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "pie".to_string());
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
 
                 // Write back config.toml
