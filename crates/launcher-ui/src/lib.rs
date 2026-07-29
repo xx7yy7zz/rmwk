@@ -2093,6 +2093,7 @@ impl LauncherApp {
                                 blur_needs_update = true;
                             }
                             state.icon_cache.clear();
+                            state.text_layout_cache.clear();
                             *state.theme_colors.borrow_mut() = None;
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
