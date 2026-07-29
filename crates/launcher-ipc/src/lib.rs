@@ -13,13 +13,26 @@ pub enum IpcMessage {
     Close,
     Toggle,
     ReloadConfig,
+    OpenMenu { menu_path: PathBuf },
 }
 
 pub fn get_socket_path() -> PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         Path::new(&runtime_dir).join("rmwk.sock")
     } else {
-        Path::new("/tmp").join("rmwk.sock")
+        // Fallback for WM keybinds that strip environment variables
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "1000".to_string());
+        
+        let run_user = format!("/run/user/{}", uid);
+        if Path::new(&run_user).exists() {
+            Path::new(&run_user).join("rmwk.sock")
+        } else {
+            Path::new("/tmp").join("rmwk.sock")
+        }
     }
 }
 

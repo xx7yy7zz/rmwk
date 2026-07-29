@@ -25,7 +25,9 @@ struct Cli {
 #[derive(Subcommand, Clone)]
 enum Commands {
     /// Open the rmwk menu (default)
-    Open,
+    Open {
+        menu_name: Option<String>,
+    },
     /// Open the settings GUI editor
     Settings,
     /// Reload config and themes of the running instance
@@ -49,41 +51,23 @@ fn get_default_paths() -> (PathBuf, PathBuf) {
         .unwrap_or_else(|| PathBuf::from("/home/karim/.config"))
         .join("rmwk");
 
-    (base_dir.join("menu.toml"), base_dir.join("config.toml"))
+    (base_dir.join("menus").join("menu.toml"), base_dir.join("config.toml"))
 }
 
 fn ensure_default_configs(menu_path: &Path, config_path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = menu_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if !menu_path.exists() {
-        info!("Writing default menu.toml to {:?}", menu_path);
-        let default_menu = r#"# Default menu configuration
-[[menu]]
-label = "Apps"
-icon = "application-x-executable"
-
-  [[menu.children]]
-  label = "Terminal"
-  icon = "utilities-terminal"
-  action = { type = "exec", cmd = "foot" }
-
-  [[menu.children]]
-  label = "Browser"
-  icon = "firefox"
-  action = { type = "exec", cmd = "firefox" }
-
-[[menu]]
-label = "System"
-icon = "preferences-desktop"
-
-  [[menu.children]]
-  label = "Reload config"
-  icon = "view-refresh"
-  action = { type = "shell", cmd = "swaymsg reload" }
-"#;
-        fs::write(menu_path, default_menu)?;
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        // Migration: move old menu.toml to menus/menu.toml if it exists
+        if let Some(base_dir) = parent.parent() {
+            let old_menu = base_dir.join("menu.toml");
+            if old_menu.exists() && !menu_path.exists() {
+                info!("Migrating old menu.toml to menus/menu.toml");
+                fs::rename(&old_menu, menu_path)?;
+            }
+        }
     }
 
     if !config_path.exists() {
@@ -103,7 +87,8 @@ fn main() -> anyhow::Result<()> {
     init_logging();
 
     let cli = Cli::parse();
-    let command = cli.command.clone().unwrap_or(Commands::Open);
+    let command = cli.command.clone().unwrap_or(Commands::Open { menu_name: None });
+    let cli_menu_was_none = cli.menu.is_none();
 
     // Resolve config and menu paths
     let (def_menu, def_config) = get_default_paths();
@@ -115,7 +100,24 @@ fn main() -> anyhow::Result<()> {
     }
 
     match command {
-        Commands::Open => {
+        Commands::Open { menu_name } => {
+            if menu_name.is_none() && cli_menu_was_none {
+                info!("No menu specified. Doing nothing.");
+                return Ok(());
+            }
+
+            let mut menu_path = menu_path.clone();
+            if let Some(name) = &menu_name {
+                let base_dir = dirs::config_dir()
+                    .unwrap_or_else(|| PathBuf::from("/home/karim/.config"))
+                    .join("rmwk");
+                menu_path = base_dir.join("menus").join(format!("{}.toml", name));
+            }
+            if !menu_path.exists() {
+                error!("Specified menu file does not exist: {:?}", menu_path);
+                return Ok(());
+            }
+
             // Check if there is an active running instance we can toggle
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -124,10 +126,10 @@ fn main() -> anyhow::Result<()> {
             let socket_path = launcher_ipc::get_socket_path();
             let toggle_succeeded = rt.block_on(async {
                 if socket_path.exists() {
-                    debug!("Socket file exists at {:?}, attempting to send Toggle command", socket_path);
-                    match launcher_ipc::send_message(&socket_path, &IpcMessage::Toggle).await {
+                    debug!("Socket file exists at {:?}, attempting to send OpenMenu command", socket_path);
+                    match launcher_ipc::send_message(&socket_path, &IpcMessage::OpenMenu { menu_path: menu_path.clone() }).await {
                         Ok(_) => {
-                            info!("Toggled running instance of rmwk");
+                            info!("Toggled running instance of rmwk with new menu");
                             true
                         }
                         Err(e) => {

@@ -34,6 +34,7 @@ struct ThemeColors {
 }
 
 struct MenuState {
+    current_menu_path: PathBuf,
     root_items: Vec<launcher_core::MenuItem>,
     current_items: Vec<launcher_core::MenuItem>,
     history: Vec<Vec<launcher_core::MenuItem>>,
@@ -419,7 +420,15 @@ impl LauncherApp {
         let config_path = self.config_path.clone();
         let start_hidden = self.start_hidden;
 
+        let activated = std::rc::Rc::new(std::cell::RefCell::new(false));
+
         self.app.connect_activate(move |app| {
+            if *activated.borrow() {
+                tracing::debug!("App already activated. Ignoring secondary D-Bus activation.");
+                return;
+            }
+            *activated.borrow_mut() = true;
+
             let guard = app.hold(); // Hold application alive even when windows are hidden
             std::mem::forget(guard); // Keep the hold active for the lifecycle of the daemon
             if let Err(e) =
@@ -539,6 +548,7 @@ impl LauncherApp {
 
         // Initialize state
         let state = Rc::new(RefCell::new(MenuState {
+            current_menu_path: menu_path.clone(),
             root_items: menu_config.menu.clone(),
             current_items: menu_config.menu.clone(),
             history: vec![],
@@ -2104,10 +2114,55 @@ impl LauncherApp {
                             state.is_closing = true;
                         }
                     }
+                    IpcMessage::OpenMenu { menu_path: new_menu_path } => {
+                        let is_visible = window_clone_ipc.is_visible();
+                        let mut state = ipc_state.borrow_mut();
+                        
+                        let same_menu = state.current_menu_path == new_menu_path;
+                        state.current_menu_path = new_menu_path.clone();
+
+                        match launcher_core::load_menu(&new_menu_path) {
+                            Ok(m) => {
+                                state.root_items = m.menu.clone();
+                                state.current_items = m.menu;
+                                state.history.clear();
+                                state.hovered_index = None;
+                                if let Some(display) = gdk::Display::default() {
+                                    state.preload_icons(&display);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to load new menu from {:?}: {}", new_menu_path, e);
+                            }
+                        }
+
+                        if !is_visible || state.is_closing {
+                            state.is_closing = false;
+                            *state.theme_colors.borrow_mut() = None;
+                            drop(state);
+
+                            load_and_apply_theme(
+                                &config_path_clone,
+                                &theme_provider_clone,
+                                &user_provider_clone,
+                            );
+                            window_clone_ipc.present();
+                            area_clone_ipc.queue_draw();
+                        } else if !same_menu {
+                            drop(state);
+                            area_clone_ipc.queue_draw();
+                        } else {
+                            // same_menu is true, and it's currently visible and not closing
+                            tracing::info!("Hiding window via IPC OpenMenu (toggle)");
+                            state.is_closing = true;
+                            drop(state);
+                            area_clone_ipc.queue_draw();
+                        }
+                    }
                     IpcMessage::Open => {
                         let is_visible = window_clone_ipc.is_visible();
-                        if !is_visible {
-                            info!("Showing window via IPC Open");
+                        if !is_visible || ipc_state.borrow().is_closing {
+                            tracing::info!("Showing window via IPC Open");
                             let mut state = ipc_state.borrow_mut();
                             state.current_items = state.root_items.clone();
                             state.history.clear();
@@ -2183,7 +2238,8 @@ impl LauncherApp {
                                 blur.update_circular_region(radius, cx, cy);
                             }
                         }
-                        match launcher_core::load_menu(&menu_path_clone) {
+                        let current_path = { state.current_menu_path.clone() };
+                        match launcher_core::load_menu(&current_path) {
                             Ok(m) => {
                                 state.root_items = m.menu.clone();
                                 state.current_items = m.menu;

@@ -112,6 +112,34 @@ impl SettingsApp {
         let left_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
         left_vbox.set_vexpand(true);
 
+        let active_menu_path = Rc::new(RefCell::new(menu_path.clone()));
+
+        // Menu Selector
+        let menu_selector_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let lbl_menu = gtk::Label::new(Some("Menu:"));
+        let combo_menu_files = gtk::ComboBoxText::new();
+        let btn_new_menu = gtk::Button::from_icon_name("document-new-symbolic");
+        let btn_delete_menu = gtk::Button::from_icon_name("user-trash-symbolic");
+        
+        let available_menus = Self::get_available_menus(&config_path);
+        for m in &available_menus {
+            combo_menu_files.append(Some(m), m);
+        }
+        if let Some(stem) = menu_path.file_stem().and_then(|s| s.to_str()) {
+            if !available_menus.contains(&stem.to_string()) && menu_path.exists() {
+                 combo_menu_files.append(Some(stem), stem);
+            }
+            combo_menu_files.set_active_id(Some(stem));
+        } else if !available_menus.is_empty() {
+            combo_menu_files.set_active_id(Some(&available_menus[0]));
+        }
+
+        menu_selector_hbox.append(&lbl_menu);
+        menu_selector_hbox.append(&combo_menu_files);
+        menu_selector_hbox.append(&btn_new_menu);
+        menu_selector_hbox.append(&btn_delete_menu);
+        left_vbox.append(&menu_selector_hbox);
+
         // Scrollable window for TreeView
         let scroll_win = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -135,12 +163,13 @@ impl SettingsApp {
             glib::Type::STRING, // Col 5: Quick Select Key
         ]);
 
+        let stem_name = active_menu_path.borrow().file_stem().and_then(|s| s.to_str()).unwrap_or("menu").to_string();
         let root_iter = store.insert_with_values(
             None,
             None,
             &[
                 (0, &"menu".to_value()),
-                (1, &"Menu (Root)".to_value()),
+                (1, &format!("{} (Root)", stem_name).to_value()),
                 (2, &"root".to_value()),
                 (3, &"".to_value()),
                 (4, &false.to_value()),
@@ -794,6 +823,7 @@ impl SettingsApp {
         let config_path_save = config_path.clone();
         let menu_path_save = menu_path.clone();
 
+        let active_menu_path_save = active_menu_path.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
@@ -801,10 +831,15 @@ impl SettingsApp {
                 items = Self::serialize_store(&store_save, Some(&root_iter));
             }
             let menu_config = launcher_core::MenuConfig { menu: items };
-            if let Err(e) = launcher_core::save_menu(&menu_path_save, &menu_config) {
-                error!("Failed to save menu configuration: {}", e);
-            } else {
-                info!("Menu config saved successfully to {:?}", menu_path_save);
+            let current_menu_path = active_menu_path_save.borrow().clone();
+            
+            // Only save if there's a valid menu selected
+            if let Some(_) = current_menu_path.file_stem() {
+                if let Err(e) = launcher_core::save_menu(&current_menu_path, &menu_config) {
+                    error!("Failed to save menu configuration: {}", e);
+                } else {
+                    info!("Menu config saved successfully to {:?}", current_menu_path);
+                }
             }
 
             // 2. Save active theme, extra_radius, etc. back to config.toml
@@ -1006,6 +1041,171 @@ impl SettingsApp {
             gtk::glib::Propagation::Proceed
         });
 
+
+        // Menu Selector Callbacks
+        let combo_menu_files_clone = combo_menu_files.clone();
+        let active_menu_path_clone = active_menu_path.clone();
+        let config_path_clone = config_path.clone();
+        let store_clone = store.clone();
+        let tree_view_clone = tree_view.clone();
+
+        combo_menu_files.connect_changed(move |combo| {
+            if let Some(id) = combo.active_id() {
+                let name = id.to_string();
+                let parent = config_path_clone.parent().unwrap();
+                let new_path = parent.join("menus").join(format!("{}.toml", name));
+                *active_menu_path_clone.borrow_mut() = new_path.clone();
+
+                // Load and repopulate
+                if let Ok(m) = launcher_core::load_menu(&new_path) {
+                    store_clone.clear();
+                    let root_iter = store_clone.insert_with_values(
+                        None,
+                        None,
+                        &[
+                            (0, &"menu".to_value()),
+                            (1, &format!("{} (Root)", name).to_value()),
+                            (2, &"root".to_value()),
+                            (3, &"".to_value()),
+                            (4, &false.to_value()),
+                            (5, &"".to_value()),
+                        ],
+                    );
+                    Self::populate_store(&store_clone, Some(&root_iter), &m.menu);
+                    let path = store_clone.path(&root_iter);
+                    tree_view_clone.expand_row(&path, false);
+                }
+            }
+        });
+
+        let window_for_dialog = window.clone();
+        let combo_menu_files_clone2 = combo_menu_files.clone();
+        let config_path_clone2 = config_path.clone();
+        btn_new_menu.connect_clicked(move |_| {
+            let input_window = gtk::Window::builder()
+                .title("New Menu")
+                .modal(true)
+                .transient_for(&window_for_dialog)
+                .default_width(300)
+                .default_height(100)
+                .build();
+
+            let vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
+            vbox.set_margin_start(10);
+            vbox.set_margin_end(10);
+            vbox.set_margin_top(10);
+            vbox.set_margin_bottom(10);
+            let entry = gtk::Entry::new();
+            entry.set_placeholder_text(Some("menu_name"));
+            let btn_ok = gtk::Button::with_label("Create");
+            vbox.append(&entry);
+            vbox.append(&btn_ok);
+            input_window.set_child(Some(&vbox));
+
+            let input_window_clone = input_window.clone();
+            let combo_menu_files_clone3 = combo_menu_files_clone2.clone();
+            let config_path_clone3 = config_path_clone2.clone();
+            let window_for_alert = window_for_dialog.clone();
+
+            btn_ok.connect_clicked(move |_| {
+                let text = entry.text().to_string();
+                if !text.is_empty() {
+                    let parent = config_path_clone3.parent().unwrap();
+                    let new_path = parent.join("menus").join(format!("{}.toml", text));
+
+                    let do_create = {
+                        let np = new_path.clone();
+                        let t = text.clone();
+                        let combo = combo_menu_files_clone3.clone();
+                        move || {
+                            let default_content = format!(
+                                r#"# {} menu configuration
+[[menu]]
+label = "Example"
+icon = "application-x-executable"
+"#, t);
+                            if let Some(p) = np.parent() {
+                                let _ = std::fs::create_dir_all(p);
+                            }
+                            let _ = std::fs::write(&np, default_content);
+                            combo.append(Some(&t), &t);
+                            combo.set_active_id(Some(&t));
+                        }
+                    };
+
+                    if new_path.exists() {
+                        let dialog = gtk::MessageDialog::builder()
+                            .text("Menu already exists")
+                            .secondary_text("Overwrite?")
+                            .buttons(gtk::ButtonsType::YesNo)
+                            .modal(true)
+                            .transient_for(&window_for_alert)
+                            .build();
+
+                        let iw_clone = input_window_clone.clone();
+                        dialog.connect_response(move |d, response| {
+                            if response == gtk::ResponseType::Yes {
+                                do_create();
+                            }
+                            d.destroy();
+                            iw_clone.destroy();
+                        });
+                        dialog.present();
+                    } else {
+                        do_create();
+                        input_window_clone.destroy();
+                    }
+                }
+            });
+            input_window.present();
+        });
+
+        let active_menu_path_del = active_menu_path.clone();
+        let combo_menu_files_del = combo_menu_files.clone();
+        let config_path_clone_del = config_path.clone();
+        let window_for_del = window.clone();
+        let store_del = store.clone();
+        
+        btn_delete_menu.connect_clicked(move |_| {
+            let path = active_menu_path_del.borrow().clone();
+            if let Some(stem) = path.file_stem() {
+                let stem_str = stem.to_string_lossy().into_owned();
+                let dialog = gtk::MessageDialog::builder()
+                    .text("Confirm Deletion")
+                    .secondary_text(&format!(
+                        "Are you sure you want to delete {}.toml?",
+                        stem_str
+                    ))
+                    .buttons(gtk::ButtonsType::OkCancel)
+                    .modal(true)
+                    .transient_for(&window_for_del)
+                    .build();
+
+                let combo = combo_menu_files_del.clone();
+                let cp = config_path_clone_del.clone();
+                let store_response = store_del.clone();
+                
+                dialog.connect_response(move |d, response| {
+                    if response == gtk::ResponseType::Ok {
+                        let _ = std::fs::remove_file(&path);
+                        combo.remove_all();
+                        let menus = Self::get_available_menus(&cp);
+                        for m in &menus {
+                            combo.append(Some(m), m);
+                        }
+                        if menus.is_empty() {
+                            combo.set_active_id(None);
+                            store_response.clear();
+                        } else {
+                            combo.set_active_id(Some(&menus[0]));
+                        }
+                    }
+                    d.destroy();
+                });
+                dialog.present();
+            }
+        });
+
         window.present();
         Ok(())
     }
@@ -1073,6 +1273,28 @@ impl SettingsApp {
                 Self::populate_store(store, Some(&current_iter), &item.children);
             }
         }
+    }
+
+    fn get_available_menus(config_path: &Path) -> Vec<String> {
+        let parent = config_path.parent().unwrap();
+        let menus_dir = parent.join("menus");
+        let mut menus = vec![];
+        if let Ok(entries) = std::fs::read_dir(menus_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_file() {
+                        let path = entry.path();
+                        if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                menus.push(stem.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        menus.sort();
+        menus
     }
 
     fn serialize_store(
