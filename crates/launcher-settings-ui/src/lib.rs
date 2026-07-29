@@ -791,6 +791,9 @@ impl SettingsApp {
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
         let combo_menu_style_save = combo_menu_style.clone();
+        let config_path_save = config_path.clone();
+        let menu_path_save = menu_path.clone();
+
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
@@ -798,10 +801,10 @@ impl SettingsApp {
                 items = Self::serialize_store(&store_save, Some(&root_iter));
             }
             let menu_config = launcher_core::MenuConfig { menu: items };
-            if let Err(e) = launcher_core::save_menu(&menu_path, &menu_config) {
+            if let Err(e) = launcher_core::save_menu(&menu_path_save, &menu_config) {
                 error!("Failed to save menu configuration: {}", e);
             } else {
-                info!("Menu config saved successfully to {:?}", menu_path);
+                info!("Menu config saved successfully to {:?}", menu_path_save);
             }
 
             // 2. Save active theme, extra_radius, etc. back to config.toml
@@ -917,6 +920,91 @@ impl SettingsApp {
         });
 
         window.add_controller(key_ctrl);
+
+        let file_monitors = Rc::new(RefCell::new(Vec::new()));
+
+        // Monitor config.toml
+        let config_file = gtk::gio::File::for_path(&config_path);
+        let config_path_watch = config_path.clone();
+        
+        let combo_theme_watch = combo_theme.clone();
+        let sys_overrides_watch = sys_overrides.clone();
+        let spin_extra_radius_watch = spin_extra_radius.clone();
+        let chk_symbolic_icons_watch = chk_symbolic_icons.clone();
+        let chk_bold_chars_watch = chk_bold_chars.clone();
+        let chk_center_layout_watch = chk_center_layout.clone();
+        let chk_disable_hover_anim_watch = chk_disable_hover_anim.clone();
+        let combo_visual_cue_watch = combo_visual_cue.clone();
+        let combo_menu_style_watch = combo_menu_style.clone();
+        let chk_enable_blur_watch = chk_enable_blur.clone();
+
+        if let Ok(monitor) = config_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+            monitor.connect_changed(move |_, _, _, event| {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                    if let Ok(cfg) = launcher_core::load_config(&config_path_watch) {
+                        combo_theme_watch.set_active_id(Some(&cfg.ui.theme));
+                        spin_extra_radius_watch.set_value(cfg.ui.extra_radius);
+                        chk_symbolic_icons_watch.set_active(cfg.ui.use_symbolic_icons);
+                        chk_bold_chars_watch.set_active(cfg.ui.bold_single_chars);
+                        chk_center_layout_watch.set_active(cfg.ui.center_layout);
+                        chk_disable_hover_anim_watch.set_active(cfg.ui.disable_hover_animation);
+                        chk_enable_blur_watch.set_active(cfg.ui.enable_blur);
+                        combo_visual_cue_watch.set_active_id(Some(&cfg.ui.hover_visual_cue));
+                        combo_menu_style_watch.set_active_id(Some(&cfg.ui.menu_style));
+                        if let Some(sys) = cfg.ui.system_theme_overrides {
+                            *sys_overrides_watch.borrow_mut() = sys;
+                        }
+                        combo_theme_watch.emit_by_name::<()>("changed", &[]);
+                    }
+                }
+            });
+            file_monitors.borrow_mut().push(monitor);
+        }
+
+        // Monitor menu.toml
+        let menu_file = gtk::gio::File::for_path(&menu_path);
+        let menu_path_watch = menu_path.clone();
+        let store_watch = store.clone();
+        let tree_view_watch = tree_view.clone();
+        
+        if let Ok(monitor) = menu_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+            monitor.connect_changed(move |_, _, _, event| {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                    if let Ok(m) = launcher_core::load_menu(&menu_path_watch) {
+                        let mut expanded = Vec::new();
+                        tree_view_watch.map_expanded_rows(|_, path| {
+                            expanded.push(path.clone());
+                        });
+
+                        store_watch.clear();
+                        let root_iter = store_watch.insert_with_values(
+                            None,
+                            None,
+                            &[
+                                (0, &"menu".to_value()),
+                                (1, &"Menu (Root)".to_value()),
+                                (2, &"root".to_value()),
+                                (3, &"".to_value()),
+                                (4, &false.to_value()),
+                                (5, &"".to_value()),
+                            ],
+                        );
+                        Self::populate_store(&store_watch, Some(&root_iter), &m.menu);
+                        
+                        for path in expanded {
+                            tree_view_watch.expand_row(&path, false);
+                        }
+                    }
+                }
+            });
+            file_monitors.borrow_mut().push(monitor);
+        }
+
+        let monitors_keep = file_monitors.clone();
+        window.connect_close_request(move |_| {
+            let _ = monitors_keep.borrow();
+            gtk::glib::Propagation::Proceed
+        });
 
         window.present();
         Ok(())

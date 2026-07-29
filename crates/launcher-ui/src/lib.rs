@@ -70,6 +70,10 @@ struct MenuState {
 
     // Temporarily suppress close-on-focus-loss for hotkey macros
     suppress_focus_loss: std::rc::Rc<std::cell::Cell<bool>>,
+
+    // Keep monitors alive
+    _config_monitor: Option<gtk::gio::FileMonitor>,
+    _menu_monitor: Option<gtk::gio::FileMonitor>,
 }
 
 impl MenuState {
@@ -554,6 +558,8 @@ impl LauncherApp {
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
             suppress_focus_loss: std::rc::Rc::new(std::cell::Cell::new(false)),
+            _config_monitor: None,
+            _menu_monitor: None,
         }));
 
         if let Some(display) = gdk::Display::default() {
@@ -1945,13 +1951,43 @@ impl LauncherApp {
 
         // Start the IPC server and forward its commands to this channel
         let socket_path = launcher_ipc::get_socket_path();
+        let ipc_tx_server = ipc_tx.clone();
         let server_handle = launcher_ipc::start_server(socket_path, move |msg| {
-            let _ = ipc_tx.send(msg);
+            let _ = ipc_tx_server.send(msg);
         })?;
 
         // Keep the server handle alive as long as the window exists
         let server_handle_wrapper = Arc::new(Mutex::new(Some(server_handle)));
         let server_handle_clone = server_handle_wrapper.clone();
+
+        // Monitor config and menu files using exact same logic as theme_editor
+        let config_file = gtk::gio::File::for_path(&config_path);
+        let ipc_tx_config = ipc_tx.clone();
+        if let Ok(monitor) = config_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+            monitor.connect_changed(move |_, _, _, event| {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                    let tx = ipc_tx_config.clone();
+                    gtk::glib::MainContext::default().invoke(move || {
+                        let _ = tx.send(IpcMessage::ReloadConfig);
+                    });
+                }
+            });
+            state.borrow_mut()._config_monitor = Some(monitor);
+        }
+
+        let menu_file = gtk::gio::File::for_path(&menu_path);
+        let ipc_tx_menu = ipc_tx.clone();
+        if let Ok(monitor) = menu_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+            monitor.connect_changed(move |_, _, _, event| {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                    let tx = ipc_tx_menu.clone();
+                    gtk::glib::MainContext::default().invoke(move || {
+                        let _ = tx.send(IpcMessage::ReloadConfig);
+                    });
+                }
+            });
+            state.borrow_mut()._menu_monitor = Some(monitor);
+        }
 
         let ipc_state = state.clone();
         let area_clone_ipc = drawing_area.clone();
