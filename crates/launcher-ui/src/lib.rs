@@ -49,6 +49,9 @@ struct MenuState {
     // Cached Pango layouts for single char icons (avoids shaping every frame)
     text_layout_cache: HashMap<String, gtk::pango::Layout>,
 
+    // Cached Pango layouts for slice labels
+    label_layout_cache: HashMap<String, gtk::pango::Layout>,
+
     // Extra interactivity margin beyond slices
     extra_radius: f64,
     use_symbolic_icons: bool,
@@ -544,6 +547,7 @@ impl LauncherApp {
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
             text_layout_cache: HashMap::new(),
+            label_layout_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
@@ -738,6 +742,19 @@ impl LauncherApp {
                 "Radial Menu".to_string()
             };
 
+            let center_layout = if let Some(l) = state_ref.label_layout_cache.get(&center_text) {
+                l.clone()
+            } else {
+                let l = area.create_pango_layout(Some(&center_text));
+                let mut font_desc = gtk::pango::FontDescription::new();
+                font_desc.set_family("Sans");
+                font_desc.set_weight(gtk::pango::Weight::Bold);
+                font_desc.set_absolute_size(16.0 * gtk::pango::SCALE as f64);
+                l.set_font_description(Some(&font_desc));
+                state_ref.label_layout_cache.insert(center_text.clone(), l.clone());
+                l
+            };
+
             let draw_hub = || {
                 // Draw center circular hub if visible
                 if hub_fill.alpha() > 0.001 {
@@ -765,23 +782,22 @@ impl LauncherApp {
                     cr.stroke().unwrap();
                 }
 
-                // Render hub label
                 cr.set_source_rgba(
                     hub_text_color.red() as f64,
                     hub_text_color.green() as f64,
                     hub_text_color.blue() as f64,
                     hub_text_color.alpha() as f64 * ease_progress,
                 );
-                let layout = area.create_pango_layout(Some(&center_text));
-                let mut font_desc = gtk::pango::FontDescription::new();
-                font_desc.set_family("Sans");
-                font_desc.set_weight(gtk::pango::Weight::Bold);
-                font_desc.set_absolute_size(16.0 * ease_progress * gtk::pango::SCALE as f64);
-                layout.set_font_description(Some(&font_desc));
-
-                let (pango_w, pango_h) = layout.pixel_size();
-                cr.move_to(cx - (pango_w as f64) / 2.0, cy - (pango_h as f64) / 2.0);
-                pangocairo::functions::show_layout(&cr, &layout);
+                
+                let (pango_w, pango_h) = center_layout.pixel_size();
+                cr.save().unwrap();
+                cr.translate(cx, cy);
+                if ease_progress > 0.001 {
+                    cr.scale(ease_progress, ease_progress);
+                }
+                cr.move_to(-(pango_w as f64) / 2.0, -(pango_h as f64) / 2.0);
+                pangocairo::functions::show_layout(&cr, &center_layout);
+                cr.restore().unwrap();
             };
 
             if state_ref.menu_style == "floating" {
@@ -823,13 +839,19 @@ impl LauncherApp {
 
                         // Measure text
                         let text = &item.label;
-                        let text_layout = area.create_pango_layout(Some(text));
-                        let mut font_desc = gtk::pango::FontDescription::new();
-                        font_desc.set_family("Sans");
-                        font_desc.set_size(gtk::pango::units_from_double(14.0 * ease_progress));
-                        text_layout.set_font_description(Some(&font_desc));
+                        let text_layout = if let Some(l) = state_ref.label_layout_cache.get(text) {
+                            l.clone()
+                        } else {
+                            let l = area.create_pango_layout(Some(text));
+                            let mut font_desc = gtk::pango::FontDescription::new();
+                            font_desc.set_family("Sans");
+                            font_desc.set_size(gtk::pango::units_from_double(14.0));
+                            l.set_font_description(Some(&font_desc));
+                            state_ref.label_layout_cache.insert(text.clone(), l.clone());
+                            l
+                        };
                         let (tw, th) = text_layout.pixel_size();
-                        let (tw_f, th_f) = (tw as f64, th as f64);
+                        let (tw_f, th_f) = (tw as f64 * ease_progress, th as f64 * ease_progress);
 
                         // Measure icon
                         let mut icon_w = 0.0;
@@ -853,7 +875,7 @@ impl LauncherApp {
                                     };
                                     font_desc.set_weight(weight);
                                     font_desc
-                                        .set_size(gtk::pango::units_from_double(icon_size * 0.75));
+                                        .set_size(gtk::pango::units_from_double(64.0 * 0.75));
                                     l.set_font_description(Some(&font_desc));
                                     state_ref
                                         .text_layout_cache
@@ -872,10 +894,10 @@ impl LauncherApp {
                                     cairo::FontSlant::Normal,
                                     cairo::FontWeight::Normal,
                                 );
-                                cr.set_font_size(icon_size);
+                                cr.set_font_size(32.0);
                                 if let Ok(ext) = cr.text_extents(&codepoint.to_string()) {
-                                    icon_w = ext.width();
-                                    icon_h = ext.height();
+                                    icon_w = ext.width() * ease_progress;
+                                    icon_h = ext.height() * ease_progress;
                                 }
                                 cr.restore().unwrap();
                             } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
@@ -967,10 +989,10 @@ impl LauncherApp {
                             }
                         }
 
-                        // Helper closure to draw the raw paths of BOTH shapes
+                        // Helper closure to draw the raw paths of BOTH shapes as a single unified perimeter
                         let draw_base_paths = |cr: &cairo::Context| {
                             cr.new_path();
-                            if !has_text {
+                            if !has_text || r < 0.1 {
                                 cr.arc(
                                     icon_center_x,
                                     icon_center_y,
@@ -978,30 +1000,73 @@ impl LauncherApp {
                                     0.0,
                                     2.0 * std::f64::consts::PI,
                                 );
-                            } else {
-                                cr.arc(
-                                    icon_center_x,
-                                    icon_center_y,
-                                    r,
-                                    0.0,
-                                    2.0 * std::f64::consts::PI,
-                                );
-                                cr.new_sub_path();
-                                cr.arc(
-                                    text_pill_x + text_pill_w - r,
-                                    text_pill_y + r,
-                                    r,
-                                    -std::f64::consts::PI / 2.0,
-                                    std::f64::consts::PI / 2.0,
-                                );
-                                cr.arc(
-                                    text_pill_x + r,
-                                    text_pill_y + r,
-                                    r,
-                                    std::f64::consts::PI / 2.0,
-                                    3.0 * std::f64::consts::PI / 2.0,
-                                );
-                                cr.close_path();
+                                return;
+                            }
+
+                            match mode {
+                                PillMode::Right | PillMode::Left => {
+                                    cr.arc(
+                                        text_pill_x + text_pill_w - r,
+                                        text_pill_y + r,
+                                        r,
+                                        -std::f64::consts::PI / 2.0,
+                                        std::f64::consts::PI / 2.0,
+                                    );
+                                    cr.arc(
+                                        text_pill_x + r,
+                                        text_pill_y + r,
+                                        r,
+                                        std::f64::consts::PI / 2.0,
+                                        3.0 * std::f64::consts::PI / 2.0,
+                                    );
+                                    cr.close_path();
+                                }
+                                PillMode::Top => {
+                                    let dy = text_pill_y + 2.0 * r - icon_center_y;
+                                    let theta = (dy / r).clamp(-1.0, 1.0).asin();
+                                    cr.arc(icon_center_x, icon_center_y, r, theta, std::f64::consts::PI - theta);
+                                    cr.arc(
+                                        text_pill_x + r,
+                                        text_pill_y + r,
+                                        r,
+                                        std::f64::consts::PI / 2.0,
+                                        3.0 * std::f64::consts::PI / 2.0,
+                                    );
+                                    cr.arc(
+                                        text_pill_x + text_pill_w - r,
+                                        text_pill_y + r,
+                                        r,
+                                        -std::f64::consts::PI / 2.0,
+                                        std::f64::consts::PI / 2.0,
+                                    );
+                                    cr.close_path();
+                                }
+                                PillMode::Bottom => {
+                                    let dy = text_pill_y - icon_center_y;
+                                    let theta = (dy / r).clamp(-1.0, 1.0).asin();
+                                    cr.arc(
+                                        icon_center_x,
+                                        icon_center_y,
+                                        r,
+                                        std::f64::consts::PI - theta,
+                                        2.0 * std::f64::consts::PI + theta,
+                                    );
+                                    cr.arc(
+                                        text_pill_x + text_pill_w - r,
+                                        text_pill_y + r,
+                                        r,
+                                        -std::f64::consts::PI / 2.0,
+                                        std::f64::consts::PI / 2.0,
+                                    );
+                                    cr.arc(
+                                        text_pill_x + r,
+                                        text_pill_y + r,
+                                        r,
+                                        std::f64::consts::PI / 2.0,
+                                        3.0 * std::f64::consts::PI / 2.0,
+                                    );
+                                    cr.close_path();
+                                }
                             }
                         };
 
@@ -1050,11 +1115,8 @@ impl LauncherApp {
                         }
                         cr.fill().unwrap();
 
-                        // 3. Stroke the Combined Outline robustly (using outer-stroke trick)
-                        cr.push_group();
+                        // 3. Stroke the Combined Outline (single unified path)
                         draw_base_paths(&cr);
-
-                        // Stroke with double width
                         if is_hovered {
                             cr.set_source_rgba(
                                 hover_border_color.red() as f64,
@@ -1062,7 +1124,7 @@ impl LauncherApp {
                                 hover_border_color.blue() as f64,
                                 hover_border_color.alpha() as f64 * ease_progress,
                             );
-                            cr.set_line_width(6.0 * ease_progress); // Double of 3.0
+                            cr.set_line_width(3.0 * ease_progress);
                         } else {
                             cr.set_source_rgba(
                                 border_color.red() as f64,
@@ -1070,18 +1132,9 @@ impl LauncherApp {
                                 border_color.blue() as f64,
                                 border_color.alpha() as f64 * ease_progress,
                             );
-                            cr.set_line_width(4.0 * ease_progress); // Double of 2.0
+                            cr.set_line_width(2.0 * ease_progress);
                         }
-                        cr.stroke_preserve().unwrap();
-
-                        // Erase the interior to leave only the outer stroke
-                        cr.set_operator(cairo::Operator::Clear);
-                        cr.fill().unwrap();
-
-                        // Paint the resulting outer border
-                        cr.pop_group_to_source().unwrap();
-                        cr.set_operator(cairo::Operator::Over);
-                        cr.paint().unwrap();
+                        cr.stroke().unwrap();
 
                         // 4. Render Text
                         if has_text {
@@ -1100,8 +1153,14 @@ impl LauncherApp {
                                     label_color.alpha() as f64 * ease_progress,
                                 );
                             }
-                            cr.move_to(text_x, text_y);
+                            cr.save().unwrap();
+                            cr.translate(text_x, text_y);
+                            if ease_progress > 0.001 {
+                                cr.scale(ease_progress, ease_progress);
+                            }
+                            cr.move_to(0.0, 0.0);
                             pangocairo::functions::show_layout(&cr, &text_layout);
+                            cr.restore().unwrap();
                         }
 
                         // 5. Render Icon
@@ -1140,29 +1199,35 @@ impl LauncherApp {
                                 } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name)
                                 {
                                     cr.save().unwrap();
+                                    cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
+                                    if ease_progress > 0.001 {
+                                        cr.scale(ease_progress, ease_progress);
+                                    }
                                     cr.select_font_face(
                                         "Material Symbols Rounded",
                                         cairo::FontSlant::Normal,
                                         cairo::FontWeight::Normal,
                                     );
-                                    cr.set_font_size(icon_size);
+                                    cr.set_font_size(32.0);
                                     if let Ok(extents) = cr.text_extents(&codepoint.to_string()) {
                                         cr.move_to(
-                                            icon_x - extents.x_bearing(),
-                                            icon_y - extents.y_bearing(),
+                                            -extents.width() / 2.0 - extents.x_bearing(),
+                                            -extents.height() / 2.0 - extents.y_bearing(),
                                         );
-                                        let _ = cr.show_text(&codepoint.to_string());
+                                        cr.show_text(&codepoint.to_string()).unwrap();
                                     }
                                     cr.restore().unwrap();
                                 } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name)
                                 {
-                                    let cw = surf.width() as f64;
-                                    let ch = surf.height() as f64;
-                                    let scale = icon_size / cw.max(ch).max(1.0);
                                     cr.save().unwrap();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
+                                    let scale = icon_size / surf.width().max(surf.height()) as f64;
                                     cr.scale(scale, scale);
-                                    cr.set_source_surface(surf, -cw / 2.0, -ch / 2.0).unwrap();
+                                    cr.set_source_surface(
+                                        surf,
+                                        -(surf.width() as f64) / 2.0,
+                                        -(surf.height() as f64) / 2.0,
+                                    ).unwrap();
                                     let _ = cr.paint_with_alpha(ease_progress);
                                     cr.restore().unwrap();
                                 }
@@ -1437,16 +1502,20 @@ impl LauncherApp {
                                 let ix = cx + r_center * mid_angle.cos();
                                 let iy = cy + r_center * mid_angle.sin();
                                 let _ = cr.save();
+                                cr.translate(ix, iy);
+                                if ease_progress > 0.001 {
+                                    cr.scale(ease_progress, ease_progress);
+                                }
                                 cr.select_font_face(
                                     "Material Symbols Rounded",
                                     cairo::FontSlant::Normal,
                                     cairo::FontWeight::Normal,
                                 );
-                                cr.set_font_size(icon_size * ease_progress);
+                                cr.set_font_size(icon_size);
                                 let glyph_str = codepoint.to_string();
                                 if let Ok(extents) = cr.text_extents(&glyph_str) {
-                                    let rx = ix - extents.width() / 2.0 - extents.x_bearing();
-                                    let ry = iy - extents.height() / 2.0 - extents.y_bearing();
+                                    let rx = -extents.width() / 2.0 - extents.x_bearing();
+                                    let ry = -extents.height() / 2.0 - extents.y_bearing();
                                     cr.move_to(rx, ry);
                                     if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
                                         cr.set_source_rgba(
@@ -2094,6 +2163,7 @@ impl LauncherApp {
                             }
                             state.icon_cache.clear();
                             state.text_layout_cache.clear();
+                            state.label_layout_cache.clear();
                             *state.theme_colors.borrow_mut() = None;
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
