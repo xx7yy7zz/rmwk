@@ -520,6 +520,7 @@ impl SettingsApp {
         let btn_delete_clone = btn_delete.clone();
         let btn_up_clone = btn_up.clone();
         let btn_down_clone = btn_down.clone();
+        let btn_copy_clone = btn_copy.clone();
 
         selection.connect_changed(move |sel| {
             if let Some((model, iter)) = sel.selected() {
@@ -542,6 +543,7 @@ impl SettingsApp {
                     btn_delete_clone.set_sensitive(false);
                     btn_up_clone.set_sensitive(false);
                     btn_down_clone.set_sensitive(false);
+                    btn_copy_clone.set_sensitive(false);
 
                     lbl_cmd_clone.set_visible(false);
                     entry_cmd_clone.set_visible(false);
@@ -560,6 +562,7 @@ impl SettingsApp {
                     btn_delete_clone.set_sensitive(true);
                     btn_up_clone.set_sensitive(true);
                     btn_down_clone.set_sensitive(true);
+                    btn_copy_clone.set_sensitive(true);
 
                     // Show/hide command input dynamically
                     if act_type == "submenu" {
