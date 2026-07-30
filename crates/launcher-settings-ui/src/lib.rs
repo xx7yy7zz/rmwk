@@ -119,15 +119,16 @@ impl SettingsApp {
         let lbl_menu = gtk::Label::new(Some("Menu:"));
         let combo_menu_files = gtk::ComboBoxText::new();
         let btn_new_menu = gtk::Button::from_icon_name("document-new-symbolic");
+        let btn_edit_menu = gtk::Button::from_icon_name("document-edit-symbolic");
         let btn_delete_menu = gtk::Button::from_icon_name("user-trash-symbolic");
-        
+
         let available_menus = Self::get_available_menus(&config_path);
         for m in &available_menus {
             combo_menu_files.append(Some(m), m);
         }
         if let Some(stem) = menu_path.file_stem().and_then(|s| s.to_str()) {
             if !available_menus.contains(&stem.to_string()) && menu_path.exists() {
-                 combo_menu_files.append(Some(stem), stem);
+                combo_menu_files.append(Some(stem), stem);
             }
             combo_menu_files.set_active_id(Some(stem));
         } else if !available_menus.is_empty() {
@@ -137,6 +138,7 @@ impl SettingsApp {
         menu_selector_hbox.append(&lbl_menu);
         menu_selector_hbox.append(&combo_menu_files);
         menu_selector_hbox.append(&btn_new_menu);
+        menu_selector_hbox.append(&btn_edit_menu);
         menu_selector_hbox.append(&btn_delete_menu);
         left_vbox.append(&menu_selector_hbox);
 
@@ -163,7 +165,12 @@ impl SettingsApp {
             glib::Type::STRING, // Col 5: Quick Select Key
         ]);
 
-        let stem_name = active_menu_path.borrow().file_stem().and_then(|s| s.to_str()).unwrap_or("menu").to_string();
+        let stem_name = active_menu_path
+            .borrow()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("menu")
+            .to_string();
         let root_iter = store.insert_with_values(
             None,
             None,
@@ -832,7 +839,7 @@ impl SettingsApp {
             }
             let menu_config = launcher_core::MenuConfig { menu: items };
             let current_menu_path = active_menu_path_save.borrow().clone();
-            
+
             // Only save if there's a valid menu selected
             if let Some(_) = current_menu_path.file_stem() {
                 if let Err(e) = launcher_core::save_menu(&current_menu_path, &menu_config) {
@@ -961,7 +968,7 @@ impl SettingsApp {
         // Monitor config.toml
         let config_file = gtk::gio::File::for_path(&config_path);
         let config_path_watch = config_path.clone();
-        
+
         let combo_theme_watch = combo_theme.clone();
         let sys_overrides_watch = sys_overrides.clone();
         let spin_extra_radius_watch = spin_extra_radius.clone();
@@ -973,9 +980,14 @@ impl SettingsApp {
         let combo_menu_style_watch = combo_menu_style.clone();
         let chk_enable_blur_watch = chk_enable_blur.clone();
 
-        if let Ok(monitor) = config_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+        if let Ok(monitor) = config_file.monitor_file(
+            gtk::gio::FileMonitorFlags::NONE,
+            gtk::gio::Cancellable::NONE,
+        ) {
             monitor.connect_changed(move |_, _, _, event| {
-                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
+                    || event == gtk::gio::FileMonitorEvent::Created
+                {
                     if let Ok(cfg) = launcher_core::load_config(&config_path_watch) {
                         combo_theme_watch.set_active_id(Some(&cfg.ui.theme));
                         spin_extra_radius_watch.set_value(cfg.ui.extra_radius);
@@ -1001,10 +1013,15 @@ impl SettingsApp {
         let menu_path_watch = menu_path.clone();
         let store_watch = store.clone();
         let tree_view_watch = tree_view.clone();
-        
-        if let Ok(monitor) = menu_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+
+        if let Ok(monitor) = menu_file.monitor_file(
+            gtk::gio::FileMonitorFlags::NONE,
+            gtk::gio::Cancellable::NONE,
+        ) {
             monitor.connect_changed(move |_, _, _, event| {
-                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
+                    || event == gtk::gio::FileMonitorEvent::Created
+                {
                     if let Ok(m) = launcher_core::load_menu(&menu_path_watch) {
                         let mut expanded = Vec::new();
                         tree_view_watch.map_expanded_rows(|_, path| {
@@ -1025,7 +1042,7 @@ impl SettingsApp {
                             ],
                         );
                         Self::populate_store(&store_watch, Some(&root_iter), &m.menu);
-                        
+
                         for path in expanded {
                             tree_view_watch.expand_row(&path, false);
                         }
@@ -1040,7 +1057,6 @@ impl SettingsApp {
             let _ = monitors_keep.borrow();
             gtk::glib::Propagation::Proceed
         });
-
 
         // Menu Selector Callbacks
         let combo_menu_files_clone = combo_menu_files.clone();
@@ -1096,7 +1112,7 @@ impl SettingsApp {
             vbox.set_margin_top(10);
             vbox.set_margin_bottom(10);
             let entry = gtk::Entry::new();
-            entry.set_placeholder_text(Some("menu_name"));
+            entry.set_placeholder_text(Some("Menu Name"));
             let btn_ok = gtk::Button::with_label("Create");
             vbox.append(&entry);
             vbox.append(&btn_ok);
@@ -1123,7 +1139,9 @@ impl SettingsApp {
 [[menu]]
 label = "Example"
 icon = "application-x-executable"
-"#, t);
+"#,
+                                t
+                            );
                             if let Some(p) = np.parent() {
                                 let _ = std::fs::create_dir_all(p);
                             }
@@ -1160,12 +1178,120 @@ icon = "application-x-executable"
             input_window.present();
         });
 
+        let window_for_rename_dialog = window.clone();
+        let active_menu_path_rename = active_menu_path.clone();
+        let combo_menu_files_rename = combo_menu_files.clone();
+        btn_edit_menu.connect_clicked(move |_| {
+            let path = active_menu_path_rename.borrow().clone();
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                let current_name = stem.to_string();
+                let input_window = gtk::Window::builder()
+                    .title("Rename Menu")
+                    .modal(true)
+                    .transient_for(&window_for_rename_dialog)
+                    .default_width(300)
+                    .default_height(100)
+                    .build();
+
+                let vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
+                vbox.set_margin_start(10);
+                vbox.set_margin_end(10);
+                vbox.set_margin_top(10);
+                vbox.set_margin_bottom(10);
+                let entry = gtk::Entry::new();
+                entry.set_text(&current_name);
+                let btn_ok = gtk::Button::with_label("Rename");
+                vbox.append(&entry);
+                vbox.append(&btn_ok);
+                input_window.set_child(Some(&vbox));
+
+                let input_window_clone = input_window.clone();
+                let window_for_alert = window_for_rename_dialog.clone();
+                let combo_rename = combo_menu_files_rename.clone();
+                let active_path = active_menu_path_rename.clone();
+                let old_path = path.clone();
+
+                btn_ok.connect_clicked(move |_| {
+                    let new_text = entry.text().to_string();
+                    if !new_text.is_empty() && new_text != current_name {
+                        let new_path = old_path.with_file_name(format!("{}.toml", new_text));
+                        let do_rename = {
+                            let old_p = old_path.clone();
+                            let new_p = new_path.clone();
+                            let n_txt = new_text.clone();
+                            let o_txt = current_name.clone();
+                            let combo = combo_rename.clone();
+                            let active_p = active_path.clone();
+                            move || {
+                                if let Err(e) = std::fs::rename(&old_p, &new_p) {
+                                    tracing::error!("Failed to rename menu: {}", e);
+                                    return;
+                                }
+                                // Remove old item from combo, add new one, and set active
+                                let mut to_remove_index = None;
+                                if let Some(model) = combo.model() {
+                                    let mut iter = model.iter_first();
+                                    let mut i = 0;
+                                    while let Some(mut it) = iter {
+                                        let val: Option<String> = model.get(&it, 0);
+                                        if val == Some(o_txt.clone()) {
+                                            to_remove_index = Some(i);
+                                            break;
+                                        }
+                                        i += 1;
+                                        if !model.iter_next(&mut it) {
+                                            break;
+                                        }
+                                        iter = Some(it);
+                                    }
+                                }
+                                if let Some(idx) = to_remove_index {
+                                    combo.remove(idx);
+                                }
+                                combo.append(Some(&n_txt), &n_txt);
+                                
+                                // Update active path pointer
+                                *active_p.borrow_mut() = new_p.clone();
+                                combo.set_active_id(Some(&n_txt));
+                            }
+                        };
+
+                        if new_path.exists() {
+                            let dialog = gtk::MessageDialog::builder()
+                                .text("Menu already exists")
+                                .secondary_text("Overwrite?")
+                                .buttons(gtk::ButtonsType::YesNo)
+                                .modal(true)
+                                .transient_for(&window_for_alert)
+                                .build();
+
+                            let iw_clone = input_window_clone.clone();
+                            dialog.connect_response(move |d, response| {
+                                if response == gtk::ResponseType::Yes {
+                                    do_rename();
+                                }
+                                d.destroy();
+                                iw_clone.destroy();
+                            });
+                            dialog.present();
+                        } else {
+                            do_rename();
+                            input_window_clone.destroy();
+                        }
+                    } else if new_text == current_name {
+                        input_window_clone.destroy();
+                    }
+                });
+                input_window.present();
+            }
+        });
+
         let active_menu_path_del = active_menu_path.clone();
         let combo_menu_files_del = combo_menu_files.clone();
         let config_path_clone_del = config_path.clone();
         let window_for_del = window.clone();
         let store_del = store.clone();
-        
+
         btn_delete_menu.connect_clicked(move |_| {
             let path = active_menu_path_del.borrow().clone();
             if let Some(stem) = path.file_stem() {
@@ -1184,7 +1310,7 @@ icon = "application-x-executable"
                 let combo = combo_menu_files_del.clone();
                 let cp = config_path_clone_del.clone();
                 let store_response = store_del.clone();
-                
+
                 dialog.connect_response(move |d, response| {
                     if response == gtk::ResponseType::Ok {
                         let _ = std::fs::remove_file(&path);
