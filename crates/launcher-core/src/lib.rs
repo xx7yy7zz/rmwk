@@ -7,12 +7,15 @@ use std::path::Path;
 pub struct Config {
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub last_edited_menu: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             ui: UiConfig::default(),
+            last_edited_menu: None,
         }
     }
 }

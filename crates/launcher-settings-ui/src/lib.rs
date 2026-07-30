@@ -118,6 +118,7 @@ impl SettingsApp {
         let menu_selector_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         let lbl_menu = gtk::Label::new(Some("Menu:"));
         let combo_menu_files = gtk::ComboBoxText::new();
+        let is_rebuilding_combo = Rc::new(std::cell::Cell::new(false));
         let btn_new_menu = gtk::Button::from_icon_name("document-new-symbolic");
         let btn_edit_menu = gtk::Button::from_icon_name("document-edit-symbolic");
         let btn_delete_menu = gtk::Button::from_icon_name("user-trash-symbolic");
@@ -871,6 +872,7 @@ impl SettingsApp {
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "pie".to_string());
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
+                cfg.last_edited_menu = current_menu_path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
 
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();
@@ -1008,44 +1010,59 @@ impl SettingsApp {
             file_monitors.borrow_mut().push(monitor);
         }
 
-        // Monitor menu.toml
-        let menu_file = gtk::gio::File::for_path(&menu_path);
-        let menu_path_watch = menu_path.clone();
-        let store_watch = store.clone();
-        let tree_view_watch = tree_view.clone();
+        let active_menu_monitor = Rc::new(RefCell::new(None::<gtk::gio::FileMonitor>));
 
-        if let Ok(monitor) = menu_file.monitor_file(
+        // Directory monitor for menus
+        let menus_dir_path = config_path.parent().unwrap().join("menus");
+        let menus_dir_file = gtk::gio::File::for_path(&menus_dir_path);
+        let combo_menu_files_dir_watch = combo_menu_files.clone();
+        let config_path_dir_watch = config_path.clone();
+        let is_rebuilding_dir = is_rebuilding_combo.clone();
+        let active_menu_path_dir_watch = active_menu_path.clone();
+        let pending_dir_update = Rc::new(std::cell::Cell::new(false));
+        
+        if let Ok(monitor) = menus_dir_file.monitor_directory(
             gtk::gio::FileMonitorFlags::NONE,
             gtk::gio::Cancellable::NONE,
         ) {
             monitor.connect_changed(move |_, _, _, event| {
-                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
-                    || event == gtk::gio::FileMonitorEvent::Created
+                if event == gtk::gio::FileMonitorEvent::Created
+                    || event == gtk::gio::FileMonitorEvent::Deleted
+                    || event == gtk::gio::FileMonitorEvent::Renamed
+                    || event == gtk::gio::FileMonitorEvent::Moved
                 {
-                    if let Ok(m) = launcher_core::load_menu(&menu_path_watch) {
-                        let mut expanded = Vec::new();
-                        tree_view_watch.map_expanded_rows(|_, path| {
-                            expanded.push(path.clone());
+                    if !pending_dir_update.get() {
+                        pending_dir_update.set(true);
+                        let combo = combo_menu_files_dir_watch.clone();
+                        let cp = config_path_dir_watch.clone();
+                        let is_reb = is_rebuilding_dir.clone();
+                        let pending = pending_dir_update.clone();
+                        let active_path_ref = active_menu_path_dir_watch.clone();
+                        
+                        gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+                            pending.set(false);
+                            is_reb.set(true);
+                            
+                            let intended_active = active_path_ref.borrow().file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+                            
+                            combo.remove_all();
+                            let available = Self::get_available_menus(&cp);
+                            for m in &available {
+                                combo.append(Some(m), m);
+                            }
+                            if let Some(act) = intended_active {
+                                if available.contains(&act) {
+                                    combo.set_active_id(Some(&act));
+                                } else {
+                                    combo.set_active_id(None::<&str>);
+                                    is_reb.set(false);
+                                    combo.emit_by_name::<()>("changed", &[]);
+                                    return gtk::glib::ControlFlow::Break;
+                                }
+                            }
+                            is_reb.set(false);
+                            gtk::glib::ControlFlow::Break
                         });
-
-                        store_watch.clear();
-                        let root_iter = store_watch.insert_with_values(
-                            None,
-                            None,
-                            &[
-                                (0, &"menu".to_value()),
-                                (1, &"Menu (Root)".to_value()),
-                                (2, &"root".to_value()),
-                                (3, &"".to_value()),
-                                (4, &false.to_value()),
-                                (5, &"".to_value()),
-                            ],
-                        );
-                        Self::populate_store(&store_watch, Some(&root_iter), &m.menu);
-
-                        for path in expanded {
-                            tree_view_watch.expand_row(&path, false);
-                        }
                     }
                 }
             });
@@ -1065,12 +1082,24 @@ impl SettingsApp {
         let store_clone = store.clone();
         let tree_view_clone = tree_view.clone();
 
+        let active_menu_monitor_clone = active_menu_monitor.clone();
+        let is_rebuilding_changed = is_rebuilding_combo.clone();
         combo_menu_files.connect_changed(move |combo| {
+            if is_rebuilding_changed.get() {
+                return;
+            }
             if let Some(id) = combo.active_id() {
                 let name = id.to_string();
                 let parent = config_path_clone.parent().unwrap();
                 let new_path = parent.join("menus").join(format!("{}.toml", name));
                 *active_menu_path_clone.borrow_mut() = new_path.clone();
+                
+                // Save last_edited_menu
+                if let Ok(mut cfg) = launcher_core::load_config(&config_path_clone) {
+                    cfg.last_edited_menu = Some(name.clone());
+                    let content = toml::to_string_pretty(&cfg).unwrap();
+                    let _ = std::fs::write(&config_path_clone, content);
+                }
 
                 // Load and repopulate
                 if let Ok(m) = launcher_core::load_menu(&new_path) {
@@ -1091,8 +1120,75 @@ impl SettingsApp {
                     let path = store_clone.path(&root_iter);
                     tree_view_clone.expand_row(&path, false);
                 }
+
+                // Set up file monitor for this newly active menu file
+                let menu_file = gtk::gio::File::for_path(&new_path);
+                let store_watch = store_clone.clone();
+                let tree_view_watch = tree_view_clone.clone();
+                let menu_path_watch = new_path.clone();
+                let combo_watch = combo.clone();
+
+                let pending_file_update = Rc::new(std::cell::Cell::new(false));
+                if let Ok(monitor) = menu_file.monitor_file(
+                    gtk::gio::FileMonitorFlags::NONE,
+                    gtk::gio::Cancellable::NONE,
+                ) {
+                    monitor.connect_changed(move |_, _, _, event| {
+                        if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
+                            || event == gtk::gio::FileMonitorEvent::Created
+                        {
+                            if !pending_file_update.get() {
+                                pending_file_update.set(true);
+                                let store_w = store_watch.clone();
+                                let tree_w = tree_view_watch.clone();
+                                let path_w = menu_path_watch.clone();
+                                let pending = pending_file_update.clone();
+                                let name_w = name.clone();
+                                
+                                gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+                                    pending.set(false);
+                                    if let Ok(m) = launcher_core::load_menu(&path_w) {
+                                        let mut expanded = Vec::new();
+                                        tree_w.map_expanded_rows(|_, path| {
+                                            expanded.push(path.clone());
+                                        });
+
+                                        store_w.clear();
+                                        let root_iter = store_w.insert_with_values(
+                                            None,
+                                            None,
+                                            &[
+                                                (0, &"menu".to_value()),
+                                                (1, &format!("{} (Root)", name_w).to_value()),
+                                                (2, &"root".to_value()),
+                                                (3, &"".to_value()),
+                                                (4, &false.to_value()),
+                                                (5, &"".to_value()),
+                                            ],
+                                        );
+                                        Self::populate_store(&store_w, Some(&root_iter), &m.menu);
+
+                                        for path in expanded {
+                                            tree_w.expand_row(&path, false);
+                                        }
+                                    }
+                                    gtk::glib::ControlFlow::Break
+                                });
+                            }
+                        }
+                    });
+                    *active_menu_monitor_clone.borrow_mut() = Some(monitor);
+                } else {
+                    *active_menu_monitor_clone.borrow_mut() = None;
+                }
+            } else {
+                store_clone.clear();
+                *active_menu_monitor_clone.borrow_mut() = None;
+                *active_menu_path_clone.borrow_mut() = std::path::PathBuf::new();
             }
         });
+        // Initial setup for the first file monitor
+        combo_menu_files.emit_by_name::<()>("changed", &[]);
 
         let window_for_dialog = window.clone();
         let combo_menu_files_clone2 = combo_menu_files.clone();

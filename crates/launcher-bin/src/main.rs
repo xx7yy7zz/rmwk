@@ -155,7 +155,18 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Settings => {
             info!("Starting settings window...");
-            let app = launcher_settings_ui::SettingsApp::new(menu_path, config_path);
+            let mut resolved_menu_path = menu_path;
+            if cli_menu_was_none {
+                if let Ok(cfg) = launcher_core::load_config(&config_path) {
+                    if let Some(last) = cfg.last_edited_menu {
+                        let potential_path = config_path.parent().unwrap().join("menus").join(format!("{}.toml", last));
+                        if potential_path.exists() {
+                            resolved_menu_path = potential_path;
+                        }
+                    }
+                }
+            }
+            let app = launcher_settings_ui::SettingsApp::new(resolved_menu_path, config_path);
             let exit_code = app.run();
             if exit_code != 0 {
                 std::process::exit(exit_code);
