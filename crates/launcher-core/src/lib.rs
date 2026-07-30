@@ -243,8 +243,10 @@ pub fn parse_hotkey(hotkey: &str) -> Result<Vec<String>, String> {
     Ok(wtype_args)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MenuConfig {
+    #[serde(default)]
+    pub icon: Option<String>,
     pub menu: Vec<MenuItem>,
 }
 

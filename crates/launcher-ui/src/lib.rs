@@ -38,6 +38,9 @@ struct MenuState {
     root_items: Vec<launcher_core::MenuItem>,
     current_items: Vec<launcher_core::MenuItem>,
     history: Vec<Vec<launcher_core::MenuItem>>,
+    root_icon: Option<String>,
+    current_icon: Option<String>,
+    history_icons: Vec<Option<String>>,
     hovered_index: Option<usize>,
 
     // Animation state
@@ -81,6 +84,15 @@ struct MenuState {
 }
 
 impl MenuState {
+    fn reset_to_root(&mut self) {
+        self.current_items = self.root_items.clone();
+        self.current_icon = self.root_icon.clone();
+        self.history.clear();
+        self.history_icons.clear();
+        self.hovered_index = None;
+    }
+
+
     fn get_display_items(&self) -> Vec<launcher_core::MenuItem> {
         let mut items = self.current_items.clone();
         if !self.history.is_empty() {
@@ -105,38 +117,45 @@ impl MenuState {
 
     fn preload_icons(&mut self, display: &gdk::Display) {
         let display_items = self.get_display_items();
+        let mut icons_to_load = Vec::new();
+        if let Some(icon) = &self.current_icon {
+            icons_to_load.push(icon.clone());
+        }
         for item in &display_items {
-            if let Some(raw_icon_name) = &item.icon {
-                if self.codepoints.contains_key(raw_icon_name) {
-                    continue;
-                }
-                if !self.icon_cache.contains_key(raw_icon_name) {
-                    let is_sys_forced = raw_icon_name.starts_with("sys:");
-                    let icon_name = if is_sys_forced {
-                        &raw_icon_name[4..]
-                    } else {
-                        raw_icon_name.as_str()
-                    };
+            if let Some(icon) = &item.icon {
+                icons_to_load.push(icon.clone());
+            }
+        }
+        for raw_icon_name in &icons_to_load {
+            if self.codepoints.contains_key(raw_icon_name) {
+                continue;
+            }
+            if !self.icon_cache.contains_key(raw_icon_name) {
+                let is_sys_forced = raw_icon_name.starts_with("sys:");
+                let icon_name = if is_sys_forced {
+                    &raw_icon_name[4..]
+                } else {
+                    raw_icon_name.as_str()
+                };
 
-                    let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
-                    let surface = pixbuf.and_then(|p| {
-                        let format = if p.has_alpha() {
-                            cairo::Format::ARgb32
-                        } else {
-                            cairo::Format::Rgb24
-                        };
-                        if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height())
-                        {
-                            if let Ok(cr) = cairo::Context::new(&surf) {
-                                cr.set_source_pixbuf(&p, 0.0, 0.0);
-                                cr.paint().unwrap();
-                                return Some(surf);
-                            }
+                let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
+                let surface = pixbuf.and_then(|p| {
+                    let format = if p.has_alpha() {
+                        cairo::Format::ARgb32
+                    } else {
+                        cairo::Format::Rgb24
+                    };
+                    if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height())
+                    {
+                        if let Ok(cr) = cairo::Context::new(&surf) {
+                            cr.set_source_pixbuf(&p, 0.0, 0.0);
+                            cr.paint().unwrap();
+                            return Some(surf);
                         }
-                        None
-                    });
-                    self.icon_cache.insert(raw_icon_name.clone(), surface);
-                }
+                    }
+                    None
+                });
+                self.icon_cache.insert(raw_icon_name.clone(), surface);
             }
         }
     }
@@ -321,6 +340,9 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
     if !state.history.is_empty() && index == display_items_count - 1 {
         debug!("Back wedge activated, popping history");
         if let Some(prev) = state.history.pop() {
+            if let Some(prev_icon) = state.history_icons.pop() {
+                state.current_icon = prev_icon;
+            }
             state.current_items = prev;
             state.hovered_index = None;
             if let Some(display) = gdk::Display::default() {
@@ -333,6 +355,8 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
         if !selected.children.is_empty() {
             let current_items = state.current_items.clone();
             state.history.push(current_items);
+            state.history_icons.push(state.current_icon.clone());
+            state.current_icon = selected.icon.clone();
             state.current_items = selected.children;
             state.hovered_index = None;
             if let Some(display) = gdk::Display::default() {
@@ -456,7 +480,7 @@ impl LauncherApp {
                     "Failed to load menu config from {:?}, using empty menu: {}",
                     menu_path, e
                 );
-                launcher_core::MenuConfig { menu: vec![] }
+                launcher_core::MenuConfig { icon: None, menu: vec![] }
             }
         };
 
@@ -551,7 +575,10 @@ impl LauncherApp {
             current_menu_path: menu_path.clone(),
             root_items: menu_config.menu.clone(),
             current_items: menu_config.menu.clone(),
+            root_icon: menu_config.icon.clone(),
+            current_icon: menu_config.icon.clone(),
             history: vec![],
+            history_icons: vec![],
             hovered_index: None,
             is_closing: false,
             hover_progresses: vec![],
@@ -740,32 +767,23 @@ impl LauncherApp {
             let hub_text_color = colors.hub_text_color;
             let outer_border_color = colors.outer_border_color;
 
-            let center_text = if let Some(idx) = state_ref.hovered_index {
-                if idx < display_items.len() {
-                    display_items[idx].label.clone()
-                } else {
-                    "Radial Menu".to_string()
+                        let mut center_text = None;
+            let mut center_icon = None;
+
+            if state_ref.menu_style == "floating" || state_ref.menu_style == "pill" {
+                center_icon = state_ref.current_icon.clone();
+            } else {
+                if let Some(idx) = state_ref.hovered_index {
+                    if idx < display_items.len() {
+                        center_text = Some(display_items[idx].label.clone());
+                    }
                 }
-            } else if !state_ref.history.is_empty() {
-                "Back".to_string()
-            } else {
-                "Radial Menu".to_string()
-            };
+                if center_text.is_none() {
+                    center_icon = state_ref.current_icon.clone();
+                }
+            }
 
-            let center_layout = if let Some(l) = state_ref.label_layout_cache.get(&center_text) {
-                l.clone()
-            } else {
-                let l = area.create_pango_layout(Some(&center_text));
-                let mut font_desc = gtk::pango::FontDescription::new();
-                font_desc.set_family("Sans");
-                font_desc.set_weight(gtk::pango::Weight::Bold);
-                font_desc.set_absolute_size(16.0 * gtk::pango::SCALE as f64);
-                l.set_font_description(Some(&font_desc));
-                state_ref.label_layout_cache.insert(center_text.clone(), l.clone());
-                l
-            };
-
-            let draw_hub = || {
+            let mut draw_hub = |state_ref: &mut std::cell::RefMut<MenuState>| {
                 // Draw center circular hub if visible
                 if hub_fill.alpha() > 0.001 {
                     cr.new_path();
@@ -775,13 +793,13 @@ impl LauncherApp {
                         hub_fill.blue() as f64,
                         hub_fill.alpha() as f64 * ease_progress,
                     );
-                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
+                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * std::f64::consts::PI);
                     cr.fill().unwrap();
                 }
 
                 if hub_border.alpha() > 0.001 {
                     cr.new_path();
-                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * PI);
+                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * std::f64::consts::PI);
                     cr.set_source_rgba(
                         hub_border.red() as f64,
                         hub_border.green() as f64,
@@ -798,16 +816,113 @@ impl LauncherApp {
                     hub_text_color.blue() as f64,
                     hub_text_color.alpha() as f64 * ease_progress,
                 );
-                
-                let (pango_w, pango_h) = center_layout.pixel_size();
-                cr.save().unwrap();
-                cr.translate(cx, cy);
-                if ease_progress > 0.001 {
-                    cr.scale(ease_progress, ease_progress);
+
+                if let Some(ref icon_name) = center_icon {
+                    let mut icon_w = 0.0;
+                    let mut icon_h = 0.0;
+                    let mut icon_layout = None;
+                    let icon_size = 48.0 * ease_progress; // slightly larger for center
+                    let mut surf_to_draw = None;
+
+                    if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
+                        let l = if let Some(l) = state_ref.text_layout_cache.get(icon_name) {
+                            l.clone()
+                        } else {
+                            let l = area.create_pango_layout(Some(icon_name));
+                            let mut font_desc = gtk::pango::FontDescription::new();
+                            if state_ref.bold_single_chars {
+                                font_desc.set_weight(gtk::pango::Weight::Bold);
+                            }
+                            font_desc.set_family("Sans");
+                            font_desc.set_absolute_size(icon_size * gtk::pango::SCALE as f64);
+                            l.set_font_description(Some(&font_desc));
+                            state_ref.text_layout_cache.insert(icon_name.clone(), l.clone());
+                            l
+                        };
+                        let (iw, ih) = l.pixel_size();
+                        icon_w = iw as f64 * ease_progress;
+                        icon_h = ih as f64 * ease_progress;
+                        icon_layout = Some(l);
+                    } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                        cr.save().unwrap();
+                        cr.select_font_face(
+                            "Material Symbols Rounded",
+                            cairo::FontSlant::Normal,
+                            cairo::FontWeight::Normal,
+                        );
+                        cr.set_font_size(icon_size);
+                        if let Ok(ext) = cr.text_extents(&codepoint.to_string()) {
+                            icon_w = ext.width();
+                            icon_h = ext.height();
+                        }
+                        cr.restore().unwrap();
+                    } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                        let cw = surf.width() as f64;
+                        let ch = surf.height() as f64;
+                        let scale = icon_size / cw.max(ch).max(1.0);
+                        icon_w = cw * scale;
+                        icon_h = ch * scale;
+                        surf_to_draw = Some((surf.clone(), scale));
+                    }
+
+                    if let Some(l) = icon_layout {
+                        cr.save().unwrap();
+                        cr.translate(cx, cy);
+                        if ease_progress > 0.001 {
+                            cr.scale(ease_progress, ease_progress);
+                        }
+                        cr.move_to(-(icon_w / 2.0), -(icon_h / 2.0));
+                        pangocairo::functions::show_layout(&cr, &l);
+                        cr.restore().unwrap();
+                    } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                        cr.save().unwrap();
+                        cr.translate(cx, cy);
+                        if ease_progress > 0.001 {
+                            cr.scale(ease_progress, ease_progress);
+                        }
+                        cr.select_font_face(
+                            "Material Symbols Rounded",
+                            cairo::FontSlant::Normal,
+                            cairo::FontWeight::Normal,
+                        );
+                        cr.set_font_size(icon_size);
+                        cr.move_to(-(icon_w / 2.0), icon_h / 2.0); // cairo text baseline is bottom
+                        cr.show_text(&codepoint.to_string()).unwrap();
+                        cr.restore().unwrap();
+                    } else if let Some((surf, scale)) = surf_to_draw {
+                        cr.save().unwrap();
+                        cr.translate(cx - icon_w / 2.0, cy - icon_h / 2.0);
+                        if scale * ease_progress > 0.001 {
+                            cr.scale(scale * ease_progress, scale * ease_progress);
+                        }
+                        cr.set_source_surface(&surf, 0.0, 0.0).unwrap();
+                        cr.paint().unwrap();
+                        cr.restore().unwrap();
+                    }
+                } else if let Some(text) = &center_text {
+                    let center_layout = if let Some(l) = state_ref.label_layout_cache.get(text) {
+                        l.clone()
+                    } else {
+                        let l = area.create_pango_layout(Some(text));
+                        let mut font_desc = gtk::pango::FontDescription::new();
+                        font_desc.set_family("Sans");
+                        font_desc.set_weight(gtk::pango::Weight::Bold);
+                        font_desc.set_absolute_size(16.0 * gtk::pango::SCALE as f64);
+                        l.set_font_description(Some(&font_desc));
+                        state_ref.label_layout_cache.insert(text.clone(), l.clone());
+                        l
+                    };
+                    
+                    let (pango_w, pango_h) = center_layout.pixel_size();
+                    cr.save().unwrap();
+                    cr.translate(cx, cy);
+                    if ease_progress > 0.001 {
+                        cr.scale(ease_progress, ease_progress);
+                    }
+                    cr.move_to(-(pango_w as f64) / 2.0, -(pango_h as f64) / 2.0);
+                    pangocairo::functions::show_layout(&cr, &center_layout);
+                    cr.restore().unwrap();
                 }
-                cr.move_to(-(pango_w as f64) / 2.0, -(pango_h as f64) / 2.0);
-                pangocairo::functions::show_layout(&cr, &center_layout);
-                cr.restore().unwrap();
             };
 
             if state_ref.menu_style == "floating" {
@@ -1245,7 +1360,7 @@ impl LauncherApp {
                         }
                     }
                 }
-                draw_hub();
+                draw_hub(&mut state_ref);
             } else {
                 // 1. Draw continuous base background ring if fill_color is visible
                 let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
@@ -1614,7 +1729,7 @@ impl LauncherApp {
                     }
                 }
 
-                draw_hub();
+                draw_hub(&mut state_ref);
 
                 // Re-stroke the inner arc for the hovered slice to cover the hub's active border
                 if let Some(hovered_i) = state_ref.hovered_index {
@@ -1982,9 +2097,9 @@ impl LauncherApp {
                 window_clone_tick.hide();
 
                 // Reset to root menu
-                state.current_items = menu_config_tick.menu.clone();
-                state.history.clear();
-                state.hovered_index = None;
+                state.root_items = menu_config_tick.menu.clone();
+                state.root_icon = menu_config_tick.icon.clone();
+                state.reset_to_root();
                 if let Some(display) = gdk::Display::default() {
                     state.preload_icons(&display);
                 }
@@ -2088,9 +2203,7 @@ impl LauncherApp {
                             state.is_closing = true;
                         } else {
                             info!("Showing window via IPC Toggle");
-                            state.current_items = state.root_items.clone();
-                            state.history.clear();
-                            state.hovered_index = None;
+                            state.reset_to_root();
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
@@ -2124,9 +2237,8 @@ impl LauncherApp {
                         match launcher_core::load_menu(&new_menu_path) {
                             Ok(m) => {
                                 state.root_items = m.menu.clone();
-                                state.current_items = m.menu;
-                                state.history.clear();
-                                state.hovered_index = None;
+                                state.root_icon = m.icon.clone();
+                                state.reset_to_root();
                                 if let Some(display) = gdk::Display::default() {
                                     state.preload_icons(&display);
                                 }
@@ -2164,9 +2276,7 @@ impl LauncherApp {
                         if !is_visible || ipc_state.borrow().is_closing {
                             tracing::info!("Showing window via IPC Open");
                             let mut state = ipc_state.borrow_mut();
-                            state.current_items = state.root_items.clone();
-                            state.history.clear();
-                            state.hovered_index = None;
+                            state.reset_to_root();
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
@@ -2242,9 +2352,8 @@ impl LauncherApp {
                         match launcher_core::load_menu(&current_path) {
                             Ok(m) => {
                                 state.root_items = m.menu.clone();
-                                state.current_items = m.menu;
-                                state.history.clear();
-                                state.hovered_index = None;
+                                state.root_icon = m.icon.clone();
+                                state.reset_to_root();
                                 if let Some(display) = gdk::Display::default() {
                                     state.preload_icons(&display);
                                 }

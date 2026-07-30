@@ -94,7 +94,7 @@ impl SettingsApp {
         // Load current config and menu
         let menu_config = match launcher_core::load_menu(&menu_path) {
             Ok(m) => m,
-            Err(_) => launcher_core::MenuConfig { menu: vec![] },
+            Err(_) => launcher_core::MenuConfig { icon: None, menu: vec![] },
         };
         let ui_config = match launcher_core::load_config(&config_path) {
             Ok(cfg) => cfg,
@@ -172,11 +172,12 @@ impl SettingsApp {
             .and_then(|s| s.to_str())
             .unwrap_or("menu")
             .to_string();
+        let root_icon = menu_config.icon.clone().unwrap_or_else(|| "menu".to_string());
         let root_iter = store.insert_with_values(
             None,
             None,
             &[
-                (0, &"menu".to_value()),
+                (0, &root_icon.to_value()),
                 (1, &format!("{} (Root)", stem_name).to_value()),
                 (2, &"root".to_value()),
                 (3, &"".to_value()),
@@ -534,12 +535,12 @@ impl SettingsApp {
                 if act_type == "root" {
                     // Disable editing controls for Root node
                     sel_label.set_sensitive(false);
-                    sel_icon.set_sensitive(false);
-                    sel_icon_type.set_sensitive(false);
+                    sel_icon.set_sensitive(true);
+                    sel_icon_type.set_sensitive(true);
+                    btn_pick_icon_clone.set_sensitive(true);
                     sel_cmd.set_sensitive(false);
                     sel_keep_open.set_sensitive(false);
                     sel_quick_select.set_sensitive(false);
-                    btn_pick_icon_clone.set_sensitive(false);
                     btn_delete_clone.set_sensitive(false);
                     btn_up_clone.set_sensitive(false);
                     btn_down_clone.set_sensitive(false);
@@ -838,10 +839,15 @@ impl SettingsApp {
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
+            let mut root_icon = None;
             if let Some(root_iter) = store_save.iter_children(None) {
+                let icon_val: String = store_save.get(&root_iter, 0);
+                if !icon_val.is_empty() {
+                    root_icon = Some(icon_val);
+                }
                 items = Self::serialize_store(&store_save, Some(&root_iter));
             }
-            let menu_config = launcher_core::MenuConfig { menu: items };
+            let menu_config = launcher_core::MenuConfig { icon: root_icon, menu: items };
             let current_menu_path = active_menu_path_save.borrow().clone();
 
             // Only save if there's a valid menu selected
@@ -1107,11 +1113,12 @@ impl SettingsApp {
                 // Load and repopulate
                 if let Ok(m) = launcher_core::load_menu(&new_path) {
                     store_clone.clear();
+                    let root_icon = m.icon.clone().unwrap_or_else(|| "menu".to_string());
                     let root_iter = store_clone.insert_with_values(
                         None,
                         None,
                         &[
-                            (0, &"menu".to_value()),
+                            (0, &root_icon.to_value()),
                             (1, &format!("{} (Root)", name).to_value()),
                             (2, &"root".to_value()),
                             (3, &"".to_value()),
@@ -1155,13 +1162,19 @@ impl SettingsApp {
                                         tree_w.map_expanded_rows(|_, path| {
                                             expanded.push(path.clone());
                                         });
+                                        
+                                        let mut selected_path = None;
+                                        if let Some((_, iter)) = tree_w.selection().selected() {
+                                            selected_path = Some(store_w.path(&iter));
+                                        }
 
                                         store_w.clear();
+                                        let root_icon = m.icon.clone().unwrap_or_else(|| "menu".to_string());
                                         let root_iter = store_w.insert_with_values(
                                             None,
                                             None,
                                             &[
-                                                (0, &"menu".to_value()),
+                                                (0, &root_icon.to_value()),
                                                 (1, &format!("{} (Root)", name_w).to_value()),
                                                 (2, &"root".to_value()),
                                                 (3, &"".to_value()),
@@ -1173,6 +1186,10 @@ impl SettingsApp {
 
                                         for path in expanded {
                                             tree_w.expand_row(&path, false);
+                                        }
+                                        
+                                        if let Some(path) = selected_path {
+                                            tree_w.selection().select_path(&path);
                                         }
                                     }
                                     gtk::glib::ControlFlow::Break
