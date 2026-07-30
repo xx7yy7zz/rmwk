@@ -92,7 +92,6 @@ impl MenuState {
         self.hovered_index = None;
     }
 
-
     fn get_display_items(&self) -> Vec<launcher_core::MenuItem> {
         let mut items = self.current_items.clone();
         if !self.history.is_empty() {
@@ -145,8 +144,7 @@ impl MenuState {
                     } else {
                         cairo::Format::Rgb24
                     };
-                    if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height())
-                    {
+                    if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height()) {
                         if let Ok(cr) = cairo::Context::new(&surf) {
                             cr.set_source_pixbuf(&p, 0.0, 0.0);
                             cr.paint().unwrap();
@@ -480,7 +478,10 @@ impl LauncherApp {
                     "Failed to load menu config from {:?}, using empty menu: {}",
                     menu_path, e
                 );
-                launcher_core::MenuConfig { icon: None, menu: vec![] }
+                launcher_core::MenuConfig {
+                    icon: None,
+                    menu: vec![],
+                }
             }
         };
 
@@ -767,7 +768,7 @@ impl LauncherApp {
             let hub_text_color = colors.hub_text_color;
             let outer_border_color = colors.outer_border_color;
 
-                        let mut center_text = None;
+            let mut center_text = None;
             let mut center_icon = None;
 
             if state_ref.menu_style == "floating" || state_ref.menu_style == "pill" {
@@ -793,13 +794,25 @@ impl LauncherApp {
                         hub_fill.blue() as f64,
                         hub_fill.alpha() as f64 * ease_progress,
                     );
-                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * std::f64::consts::PI);
+                    cr.arc(
+                        cx,
+                        cy,
+                        BASE_R * ease_progress,
+                        0.0,
+                        2.0 * std::f64::consts::PI,
+                    );
                     cr.fill().unwrap();
                 }
 
                 if hub_border.alpha() > 0.001 {
                     cr.new_path();
-                    cr.arc(cx, cy, BASE_R * ease_progress, 0.0, 2.0 * std::f64::consts::PI);
+                    cr.arc(
+                        cx,
+                        cy,
+                        BASE_R * ease_progress,
+                        0.0,
+                        2.0 * std::f64::consts::PI,
+                    );
                     cr.set_source_rgba(
                         hub_border.red() as f64,
                         hub_border.green() as f64,
@@ -821,7 +834,7 @@ impl LauncherApp {
                     let mut icon_w = 0.0;
                     let mut icon_h = 0.0;
                     let mut icon_layout = None;
-                    let icon_size = 48.0 * ease_progress; // slightly larger for center
+                    let icon_size = 72.0 * ease_progress; // slightly larger for center
                     let mut surf_to_draw = None;
 
                     if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
@@ -836,7 +849,9 @@ impl LauncherApp {
                             font_desc.set_family("Sans");
                             font_desc.set_absolute_size(icon_size * gtk::pango::SCALE as f64);
                             l.set_font_description(Some(&font_desc));
-                            state_ref.text_layout_cache.insert(icon_name.clone(), l.clone());
+                            state_ref
+                                .text_layout_cache
+                                .insert(icon_name.clone(), l.clone());
                             l
                         };
                         let (iw, ih) = l.pixel_size();
@@ -886,7 +901,12 @@ impl LauncherApp {
                             cairo::FontWeight::Normal,
                         );
                         cr.set_font_size(icon_size);
-                        cr.move_to(-(icon_w / 2.0), icon_h / 2.0); // cairo text baseline is bottom
+                        if let Ok(extents) = cr.text_extents(&codepoint.to_string()) {
+                            cr.move_to(
+                                -extents.width() / 2.0 - extents.x_bearing(),
+                                -extents.height() / 2.0 - extents.y_bearing(),
+                            );
+                        }
                         cr.show_text(&codepoint.to_string()).unwrap();
                         cr.restore().unwrap();
                     } else if let Some((surf, scale)) = surf_to_draw {
@@ -912,7 +932,7 @@ impl LauncherApp {
                         state_ref.label_layout_cache.insert(text.clone(), l.clone());
                         l
                     };
-                    
+
                     let (pango_w, pango_h) = center_layout.pixel_size();
                     cr.save().unwrap();
                     cr.translate(cx, cy);
@@ -999,8 +1019,7 @@ impl LauncherApp {
                                         gtk::pango::Weight::Normal
                                     };
                                     font_desc.set_weight(weight);
-                                    font_desc
-                                        .set_size(gtk::pango::units_from_double(64.0 * 0.75));
+                                    font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
                                     l.set_font_description(Some(&font_desc));
                                     state_ref
                                         .text_layout_cache
@@ -1149,7 +1168,13 @@ impl LauncherApp {
                                 PillMode::Top => {
                                     let dy = text_pill_y + 2.0 * r - icon_center_y;
                                     let theta = (dy / r).clamp(-1.0, 1.0).asin();
-                                    cr.arc(icon_center_x, icon_center_y, r, theta, std::f64::consts::PI - theta);
+                                    cr.arc(
+                                        icon_center_x,
+                                        icon_center_y,
+                                        r,
+                                        theta,
+                                        std::f64::consts::PI - theta,
+                                    );
                                     cr.arc(
                                         text_pill_x + r,
                                         text_pill_y + r,
@@ -1352,7 +1377,8 @@ impl LauncherApp {
                                         surf,
                                         -(surf.width() as f64) / 2.0,
                                         -(surf.height() as f64) / 2.0,
-                                    ).unwrap();
+                                    )
+                                    .unwrap();
                                     let _ = cr.paint_with_alpha(ease_progress);
                                     cr.restore().unwrap();
                                 }
@@ -2157,9 +2183,14 @@ impl LauncherApp {
         // Monitor config and menu files using exact same logic as theme_editor
         let config_file = gtk::gio::File::for_path(&config_path);
         let ipc_tx_config = ipc_tx.clone();
-        if let Ok(monitor) = config_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+        if let Ok(monitor) = config_file.monitor_file(
+            gtk::gio::FileMonitorFlags::NONE,
+            gtk::gio::Cancellable::NONE,
+        ) {
             monitor.connect_changed(move |_, _, _, event| {
-                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
+                    || event == gtk::gio::FileMonitorEvent::Created
+                {
                     let tx = ipc_tx_config.clone();
                     gtk::glib::MainContext::default().invoke(move || {
                         let _ = tx.send(IpcMessage::ReloadConfig);
@@ -2171,9 +2202,14 @@ impl LauncherApp {
 
         let menu_file = gtk::gio::File::for_path(&menu_path);
         let ipc_tx_menu = ipc_tx.clone();
-        if let Ok(monitor) = menu_file.monitor_file(gtk::gio::FileMonitorFlags::NONE, gtk::gio::Cancellable::NONE) {
+        if let Ok(monitor) = menu_file.monitor_file(
+            gtk::gio::FileMonitorFlags::NONE,
+            gtk::gio::Cancellable::NONE,
+        ) {
             monitor.connect_changed(move |_, _, _, event| {
-                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint || event == gtk::gio::FileMonitorEvent::Created {
+                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
+                    || event == gtk::gio::FileMonitorEvent::Created
+                {
                     let tx = ipc_tx_menu.clone();
                     gtk::glib::MainContext::default().invoke(move || {
                         let _ = tx.send(IpcMessage::ReloadConfig);
@@ -2227,10 +2263,12 @@ impl LauncherApp {
                             state.is_closing = true;
                         }
                     }
-                    IpcMessage::OpenMenu { menu_path: new_menu_path } => {
+                    IpcMessage::OpenMenu {
+                        menu_path: new_menu_path,
+                    } => {
                         let is_visible = window_clone_ipc.is_visible();
                         let mut state = ipc_state.borrow_mut();
-                        
+
                         let same_menu = state.current_menu_path == new_menu_path;
                         state.current_menu_path = new_menu_path.clone();
 
@@ -2244,7 +2282,11 @@ impl LauncherApp {
                                 }
                             }
                             Err(e) => {
-                                tracing::error!("Failed to load new menu from {:?}: {}", new_menu_path, e);
+                                tracing::error!(
+                                    "Failed to load new menu from {:?}: {}",
+                                    new_menu_path,
+                                    e
+                                );
                             }
                         }
 
