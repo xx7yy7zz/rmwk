@@ -46,14 +46,6 @@ fn init_logging() {
         .init();
 }
 
-fn get_default_paths() -> (PathBuf, PathBuf) {
-    let base_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("/home/karim/.config"))
-        .join("rmwk");
-
-    (base_dir.join("menus").join("menu.toml"), base_dir.join("config.toml"))
-}
-
 fn ensure_default_configs(menu_path: &Path, config_path: &Path) -> anyhow::Result<()> {
     if let Some(parent) = menu_path.parent() {
         if !parent.exists() {
@@ -84,16 +76,16 @@ font = "Sans 11"
 }
 
 fn main() -> anyhow::Result<()> {
+    launcher_core::init_process_reaper();
     init_logging();
 
     let cli = Cli::parse();
     let command = cli.command.clone().unwrap_or(Commands::Open { menu_name: None });
     let cli_menu_was_none = cli.menu.is_none();
 
-    // Resolve config and menu paths
-    let (def_menu, def_config) = get_default_paths();
-    let menu_path = cli.menu.unwrap_or(def_menu);
-    let config_path = cli.config.unwrap_or(def_config);
+    // Resolve config and menu paths using centralized XDG paths
+    let menu_path = cli.menu.unwrap_or_else(launcher_core::paths::get_default_menu_path);
+    let config_path = cli.config.unwrap_or_else(launcher_core::paths::get_default_config_path);
 
     if let Err(e) = ensure_default_configs(&menu_path, &config_path) {
         error!("Failed to initialize default configuration files: {}", e);
@@ -108,10 +100,9 @@ fn main() -> anyhow::Result<()> {
 
             let mut menu_path = menu_path.clone();
             if let Some(name) = &menu_name {
-                let base_dir = dirs::config_dir()
-                    .unwrap_or_else(|| PathBuf::from("/home/karim/.config"))
-                    .join("rmwk");
-                menu_path = base_dir.join("menus").join(format!("{}.toml", name));
+                menu_path = launcher_core::paths::get_config_dir()
+                    .join("menus")
+                    .join(format!("{}.toml", name));
             }
             if !menu_path.exists() {
                 error!("Specified menu file does not exist: {:?}", menu_path);
@@ -119,28 +110,25 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Check if there is an active running instance we can toggle
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
-
             let socket_path = launcher_ipc::get_socket_path();
-            let toggle_succeeded = rt.block_on(async {
-                if socket_path.exists() {
-                    debug!("Socket file exists at {:?}, attempting to send OpenMenu command", socket_path);
-                    match launcher_ipc::send_message(&socket_path, &IpcMessage::OpenMenu { menu_path: menu_path.clone() }).await {
-                        Ok(_) => {
-                            info!("Toggled running instance of rmwk with new menu");
-                            true
-                        }
-                        Err(e) => {
-                            debug!("Could not connect to existing socket: {}. Stale socket will be cleaned up by server.", e);
-                            false
-                        }
+            let toggle_succeeded = if socket_path.exists() {
+                debug!("Socket file exists at {:?}, attempting to send OpenMenu command", socket_path);
+                match launcher_ipc::send_message_sync(
+                    &socket_path,
+                    &IpcMessage::OpenMenu { menu_path: menu_path.clone() },
+                ) {
+                    Ok(_) => {
+                        info!("Toggled running instance of rmwk with new menu");
+                        true
                     }
-                } else {
-                    false
+                    Err(e) => {
+                        debug!("Could not connect to existing socket: {}. Stale socket will be cleaned up by server.", e);
+                        false
+                    }
                 }
-            });
+            } else {
+                false
+            };
 
             if toggle_succeeded {
                 return Ok(());
@@ -159,7 +147,9 @@ fn main() -> anyhow::Result<()> {
             if cli_menu_was_none {
                 if let Ok(cfg) = launcher_core::load_config(&config_path) {
                     if let Some(last) = cfg.last_edited_menu {
-                        let potential_path = config_path.parent().unwrap().join("menus").join(format!("{}.toml", last));
+                        let potential_path = launcher_core::paths::get_config_dir()
+                            .join("menus")
+                            .join(format!("{}.toml", last));
                         if potential_path.exists() {
                             resolved_menu_path = potential_path;
                         }
@@ -173,37 +163,24 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Reload => {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
             let socket_path = launcher_ipc::get_socket_path();
-            rt.block_on(async {
-                if socket_path.exists() {
-                    match launcher_ipc::send_message(&socket_path, &IpcMessage::ReloadConfig).await
-                    {
-                        Ok(_) => {
-                            info!("Sent ReloadConfig command to running instance.");
-                        }
-                        Err(e) => {
-                            error!("Failed to communicate with running instance: {}", e);
-                        }
+            if socket_path.exists() {
+                match launcher_ipc::send_message_sync(&socket_path, &IpcMessage::ReloadConfig) {
+                    Ok(_) => {
+                        info!("Sent ReloadConfig command to running instance.");
                     }
-                } else {
-                    error!("No running instance socket found at {:?}", socket_path);
+                    Err(e) => {
+                        error!("Failed to communicate with running instance: {}", e);
+                    }
                 }
-            });
+            } else {
+                error!("No running instance socket found at {:?}", socket_path);
+            }
         }
         Commands::Daemon => {
             let socket_path = launcher_ipc::get_socket_path();
             if socket_path.exists() {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                let is_alive = rt.block_on(async {
-                    launcher_ipc::send_message(&socket_path, &IpcMessage::Open)
-                        .await
-                        .is_ok()
-                });
+                let is_alive = launcher_ipc::send_message_sync(&socket_path, &IpcMessage::Open).is_ok();
                 if is_alive {
                     error!("Daemon is already running!");
                     std::process::exit(1);

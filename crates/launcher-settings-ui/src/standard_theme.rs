@@ -1,9 +1,5 @@
-use gtk4::prelude::*;
-use std::cell::RefCell;
-use std::rc::Rc;
 use gtk4::gdk;
 use std::str::FromStr;
-use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub struct StandardThemeOverrides {

@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{debug, error, info, warn};
@@ -20,29 +22,42 @@ pub fn get_socket_path() -> PathBuf {
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         Path::new(&runtime_dir).join("rmwk.sock")
     } else {
-        // Fallback for WM keybinds that strip environment variables
-        let uid = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|_| "1000".to_string());
-        
+        #[cfg(unix)]
+        let uid = unsafe { libc::getuid() };
+        #[cfg(not(unix))]
+        let uid = 1000;
+
         let run_user = format!("/run/user/{}", uid);
         if Path::new(&run_user).exists() {
             Path::new(&run_user).join("rmwk.sock")
         } else {
-            Path::new("/tmp").join("rmwk.sock")
+            Path::new("/tmp").join(format!("rmwk-{}.sock", uid))
         }
     }
 }
 
-/// Send a single message to a running instance and close connection.
+/// Send a single message to a running instance asynchronously.
 pub async fn send_message<P: AsRef<Path>>(socket_path: P, msg: &IpcMessage) -> Result<()> {
     let mut stream = UnixStream::connect(socket_path).await?;
     let mut serialized = serde_json::to_vec(msg)?;
     serialized.push(b'\n');
     stream.write_all(&serialized).await?;
     stream.flush().await?;
+    Ok(())
+}
+
+/// Send a single message to a running instance synchronously with a timeout.
+/// Avoids the overhead of spinning up an ephemeral Tokio runtime from CLI commands.
+pub fn send_message_sync<P: AsRef<Path>>(socket_path: P, msg: &IpcMessage) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream as StdUnixStream;
+
+    let mut stream = StdUnixStream::connect(socket_path)?;
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    let mut serialized = serde_json::to_vec(msg)?;
+    serialized.push(b'\n');
+    stream.write_all(&serialized)?;
+    stream.flush()?;
     Ok(())
 }
 
@@ -59,21 +74,26 @@ impl ServerHandle {
 
 /// Start an IPC listener server on the Unix socket.
 ///
-/// Whenever a message is received, it is sent to `event_tx`.
-pub fn start_server<P, F>(socket_path: P, mut on_message: F) -> Result<ServerHandle>
+/// Whenever a message is received, it is forwarded via `on_message`.
+pub fn start_server<P, F>(socket_path: P, on_message: F) -> Result<ServerHandle>
 where
     P: AsRef<Path> + Send + 'static,
-    F: FnMut(IpcMessage) + Send + 'static,
+    F: Fn(IpcMessage) + Send + Sync + 'static,
 {
     let path = socket_path.as_ref().to_path_buf();
 
-    // Remove existing stale socket file
+    // Check for stale socket file
     if path.exists() {
         debug!("Cleaning up stale socket file: {:?}", path);
         let _ = fs::remove_file(&path);
     }
 
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let on_message = Arc::new(on_message);
 
     // Start a background thread to run the Tokio event loop for IPC
     std::thread::Builder::new()
@@ -105,26 +125,33 @@ where
                         accept_res = listener.accept() => {
                             match accept_res {
                                 Ok((stream, _addr)) => {
-                                    // Handle connection asynchronously
-                                    let mut reader = BufReader::new(stream);
-                                    let mut line = String::new();
-                                    match reader.read_line(&mut line).await {
-                                        Ok(0) => {}, // EOF
-                                        Ok(_) => {
-                                            match serde_json::from_str::<IpcMessage>(&line.trim()) {
-                                                Ok(msg) => {
-                                                    debug!("Received IPC command: {:?}", msg);
-                                                    on_message(msg);
-                                                }
-                                                Err(e) => {
-                                                    warn!("Received invalid IPC message JSON: {} (raw: {:?})", e, line);
+                                    let on_message_handler = on_message.clone();
+                                    tokio::spawn(async move {
+                                        let mut reader = BufReader::new(stream);
+                                        let mut line = String::new();
+                                        let read_future = reader.read_line(&mut line);
+
+                                        match tokio::time::timeout(Duration::from_secs(2), read_future).await {
+                                            Ok(Ok(0)) => {}, // EOF
+                                            Ok(Ok(_)) => {
+                                                match serde_json::from_str::<IpcMessage>(line.trim()) {
+                                                    Ok(msg) => {
+                                                        debug!("Received IPC command: {:?}", msg);
+                                                        on_message_handler(msg);
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Received invalid IPC message JSON: {} (raw: {:?})", e, line);
+                                                    }
                                                 }
                                             }
+                                            Ok(Err(e)) => {
+                                                warn!("Error reading from IPC stream: {}", e);
+                                            }
+                                            Err(_) => {
+                                                warn!("IPC stream read timed out after 2s");
+                                            }
                                         }
-                                        Err(e) => {
-                                            warn!("Error reading from IPC stream: {}", e);
-                                        }
-                                    }
+                                    });
                                 }
                                 Err(e) => {
                                     error!("Failed to accept Unix socket connection: {}", e);

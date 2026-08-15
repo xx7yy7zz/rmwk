@@ -60,28 +60,15 @@ impl SettingsApp {
         window.set_title(Some("rmwk Settings"));
         window.set_default_size(800, 500);
 
-        let font_path = config_path
-            .parent()
-            .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
-            .unwrap_or_else(|| {
-                PathBuf::from("/home/karim/.config/rmwk/fonts/MaterialSymbolsRounded.ttf")
-            });
 
         let font_provider = gtk::CssProvider::new();
-        let font_css = format!(
-            "
-            @font-face {{
-                font-family: 'Material Symbols Rounded';
-                src: url('{}');
-            }}
-            .material-icon-glyph {{
+        let font_css = "
+            .material-icon-glyph {
                 font-family: 'Material Symbols Rounded';
                 font-size: 24px;
-            }}
-        ",
-            font_path.to_string_lossy()
-        );
-        font_provider.load_from_data(&font_css);
+            }
+        ";
+        font_provider.load_from_data(font_css);
 
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
@@ -832,9 +819,6 @@ impl SettingsApp {
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
         let combo_menu_style_save = combo_menu_style.clone();
-        let config_path_save = config_path.clone();
-        let menu_path_save = menu_path.clone();
-
         let active_menu_path_save = active_menu_path.clone();
         btn_save.connect_clicked(move |_| {
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
@@ -1022,7 +1006,10 @@ impl SettingsApp {
         let active_menu_monitor = Rc::new(RefCell::new(None::<gtk::gio::FileMonitor>));
 
         // Directory monitor for menus
-        let menus_dir_path = config_path.parent().unwrap().join("menus");
+        let menus_dir_path = config_path
+            .parent()
+            .map(|p| p.join("menus"))
+            .unwrap_or_else(|| launcher_core::paths::get_config_dir().join("menus"));
         let menus_dir_file = gtk::gio::File::for_path(&menus_dir_path);
         let combo_menu_files_dir_watch = combo_menu_files.clone();
         let config_path_dir_watch = config_path.clone();
@@ -1085,7 +1072,6 @@ impl SettingsApp {
         });
 
         // Menu Selector Callbacks
-        let combo_menu_files_clone = combo_menu_files.clone();
         let active_menu_path_clone = active_menu_path.clone();
         let config_path_clone = config_path.clone();
         let store_clone = store.clone();
@@ -1099,7 +1085,10 @@ impl SettingsApp {
             }
             if let Some(id) = combo.active_id() {
                 let name = id.to_string();
-                let parent = config_path_clone.parent().unwrap();
+                let parent = config_path_clone
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(launcher_core::paths::get_config_dir);
                 let new_path = parent.join("menus").join(format!("{}.toml", name));
                 *active_menu_path_clone.borrow_mut() = new_path.clone();
                 
@@ -1136,7 +1125,6 @@ impl SettingsApp {
                 let store_watch = store_clone.clone();
                 let tree_view_watch = tree_view_clone.clone();
                 let menu_path_watch = new_path.clone();
-                let combo_watch = combo.clone();
 
                 let pending_file_update = Rc::new(std::cell::Cell::new(false));
                 if let Ok(monitor) = menu_file.monitor_file(
@@ -1242,7 +1230,10 @@ impl SettingsApp {
             btn_ok.connect_clicked(move |_| {
                 let text = entry.text().to_string();
                 if !text.is_empty() {
-                    let parent = config_path_clone3.parent().unwrap();
+                    let parent = config_path_clone3
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(launcher_core::paths::get_config_dir);
                     let new_path = parent.join("menus").join(format!("{}.toml", text));
 
                     let do_create = {
@@ -1518,8 +1509,10 @@ icon = "application-x-executable"
     }
 
     fn get_available_menus(config_path: &Path) -> Vec<String> {
-        let parent = config_path.parent().unwrap();
-        let menus_dir = parent.join("menus");
+        let menus_dir = config_path
+            .parent()
+            .map(|p| p.join("menus"))
+            .unwrap_or_else(|| launcher_core::paths::get_config_dir().join("menus"));
         let mut menus = vec![];
         if let Ok(entries) = std::fs::read_dir(menus_dir) {
             for entry in entries.flatten() {

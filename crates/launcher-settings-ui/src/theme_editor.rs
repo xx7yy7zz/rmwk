@@ -2,12 +2,13 @@ use crate::standard_theme::{load_standard_theme, save_standard_theme, StandardTh
 use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
-use launcher_core::{SystemThemeColor, SystemThemeOverrides};
+use launcher_core::SystemThemeOverrides;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 
+#[allow(dead_code)]
 pub struct ThemeEditor {
     pub container: gtk4::Box,
     pub combo_theme: gtk4::ComboBoxText,
@@ -283,7 +284,7 @@ impl ThemeEditor {
             let lbl = gtk4::Label::new(Some(label));
             grid.attach(&lbl, 0, row, 1, 1);
 
-            let mut c = initial_color;
+            let c = initial_color;
 
             let color_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
             let hex_entry = gtk4::Entry::new();

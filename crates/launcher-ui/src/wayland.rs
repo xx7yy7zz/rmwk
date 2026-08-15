@@ -3,11 +3,10 @@ use gdk4_wayland::{WaylandDisplay, WaylandSurface};
 use gtk4::prelude::*;
 use wayland_backend::sys::client::Backend as SysBackend;
 use wayland_backend::sys::client::ObjectId as SysObjectId;
-use wayland_client::backend::Backend;
 use wayland_client::protocol::{
     wl_compositor::WlCompositor, wl_region::WlRegion, wl_registry, wl_surface::WlSurface,
 };
-use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1;
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 

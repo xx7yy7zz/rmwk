@@ -3,6 +3,58 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+pub mod paths {
+    use std::path::PathBuf;
+
+    /// Resolves the base rmwk config directory following XDG specification:
+    /// 1. $XDG_CONFIG_HOME/rmwk
+    /// 2. $HOME/.config/rmwk
+    /// 3. /tmp/rmwk (fallback)
+    pub fn get_config_dir() -> PathBuf {
+        dirs::config_dir()
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("rmwk")
+    }
+
+    pub fn get_default_menu_path() -> PathBuf {
+        get_config_dir().join("menus").join("menu.toml")
+    }
+
+    pub fn get_default_config_path() -> PathBuf {
+        get_config_dir().join("config.toml")
+    }
+
+    pub fn get_themes_dir() -> PathBuf {
+        get_config_dir().join("themes")
+    }
+
+    pub fn get_fonts_dir() -> PathBuf {
+        get_config_dir().join("fonts")
+    }
+
+    pub fn get_font_file() -> PathBuf {
+        get_fonts_dir().join("MaterialSymbolsRounded.ttf")
+    }
+
+    pub fn get_codepoints_file() -> PathBuf {
+        get_config_dir().join("MaterialSymbolsRounded.codepoints")
+    }
+
+    pub fn get_gtk_css_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|p| p.join("gtk-4.0").join("gtk.css"))
+    }
+}
+
+/// Automatically configure kernel process reaping for child processes
+/// without creating zombie/defunct processes or spawning background OS threads.
+pub fn init_process_reaper() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -184,60 +236,71 @@ impl Action {
 }
 
 pub fn parse_hotkey(hotkey: &str) -> Result<Vec<String>, String> {
-    let mut wtype_args = Vec::new();
-    let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
-    if parts.is_empty() || parts.iter().all(|s| s.is_empty()) {
+    let hotkey = hotkey.trim();
+    if hotkey.is_empty() {
         return Err("Hotkey cannot be empty".to_string());
     }
 
+    // Handle trailing "+" or "++" (e.g., "ctrl++" or "+")
+    let (prefix, key_part) = if hotkey.ends_with("++") {
+        (&hotkey[..hotkey.len() - 2], "+")
+    } else if hotkey == "+" {
+        ("", "+")
+    } else if let Some(last_plus) = hotkey.rfind('+') {
+        (&hotkey[..last_plus], hotkey[last_plus + 1..].trim())
+    } else {
+        ("", hotkey)
+    };
+
     let mut modifiers = Vec::new();
-    let mut key = None;
-
-    for (i, &part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            return Err("Missing key between '+'".to_string());
-        }
-
-        let is_last = i == parts.len() - 1;
-        let lower = part.to_lowercase();
-
-        let modifier = match lower.as_str() {
-            "ctrl" | "control" => Some("ctrl"),
-            "shift" => Some("shift"),
-            "alt" | "mod1" => Some("alt"),
-            "super" | "meta" | "win" | "windows" | "logo" | "mod4" => Some("logo"),
-            _ => None,
-        };
-
-        if let Some(m) = modifier {
-            if is_last && parts.len() > 1 {
-                return Err(format!("Trailing modifier '{}' without a final key", part));
+    if !prefix.is_empty() {
+        for part in prefix.split('+').map(|s| s.trim()) {
+            if part.is_empty() {
+                continue;
             }
-            modifiers.push(m);
-        } else {
-            if !is_last {
-                return Err(format!(
-                    "'{}' is not a valid modifier. Only the last item can be a regular key.",
-                    part
-                ));
-            }
-            key = Some(part);
+            let mod_name = match part.to_lowercase().as_str() {
+                "ctrl" | "control" => "ctrl",
+                "shift" => "shift",
+                "alt" | "mod1" => "alt",
+                "super" | "meta" | "win" | "windows" | "logo" | "mod4" => "logo",
+                "altgr" | "mod5" => "mod5",
+                _ => return Err(format!("'{}' is not a valid modifier.", part)),
+            };
+            modifiers.push(mod_name);
         }
     }
 
-    if let Some(k) = key {
-        for &m in &modifiers {
-            wtype_args.push("-M".to_string());
-            wtype_args.push(m.to_string());
-        }
-        wtype_args.push("-k".to_string());
-        wtype_args.push(k.to_string());
-        for &m in modifiers.iter().rev() {
-            wtype_args.push("-m".to_string());
-            wtype_args.push(m.to_string());
-        }
-    } else if !modifiers.is_empty() {
+    if key_part.is_empty() {
         return Err("Missing a key to press".to_string());
+    }
+
+    let normalized_key = match key_part.to_lowercase().as_str() {
+        "enter" | "return" => "Return",
+        "esc" | "escape" => "Escape",
+        "space" => "space",
+        "tab" => "Tab",
+        "backspace" => "BackSpace",
+        "delete" => "Delete",
+        "up" => "Up",
+        "down" => "Down",
+        "left" => "Left",
+        "right" => "Right",
+        "+" | "plus" => "plus",
+        "-" | "minus" => "minus",
+        "=" | "equal" => "equal",
+        _ => key_part,
+    };
+
+    let mut wtype_args = Vec::new();
+    for &m in &modifiers {
+        wtype_args.push("-M".to_string());
+        wtype_args.push(m.to_string());
+    }
+    wtype_args.push("-k".to_string());
+    wtype_args.push(normalized_key.to_string());
+    for &m in modifiers.iter().rev() {
+        wtype_args.push("-m".to_string());
+        wtype_args.push(m.to_string());
     }
 
     Ok(wtype_args)
@@ -274,37 +337,34 @@ pub fn save_menu<P: AsRef<Path>>(path: P, menu: &MenuConfig) -> Result<()> {
 pub fn run_action(action: &Action) -> Result<()> {
     match action {
         Action::Command { cmd, .. } => {
-            let mut child = std::process::Command::new("sh")
+            std::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
                 .context("Failed to spawn command")?;
-
-            // Reap the child in a background thread to prevent zombie (defunct) processes
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+            // With SIG_IGN on SIGCHLD (configured via init_process_reaper),
+            // the kernel auto-reaps child processes without thread overhead.
         }
         Action::Hotkey { keys, .. } => {
             match parse_hotkey(keys) {
                 Ok(args) => {
                     std::thread::spawn(move || {
-                        // Wait for the launcher window to close and relinquish Wayland focus
-                        std::thread::sleep(std::time::Duration::from_millis(350));
+                        // Wait for launcher window to close and relinquish Wayland focus
+                        std::thread::sleep(std::time::Duration::from_millis(100));
 
-                        let mut child =
-                            match std::process::Command::new("wtype").args(&args).spawn() {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    eprintln!("Failed to spawn wtype. Is it installed? {}", e);
-                                    return;
-                                }
-                            };
-                        let _ = child.wait();
+                        let _ = std::process::Command::new("wtype")
+                            .args(&args)
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
                     });
                 }
                 Err(e) => {
-                    eprintln!("Failed to parse hotkey '{}': {}", keys, e);
+                    tracing::error!("Failed to parse hotkey '{}': {}", keys, e);
                 }
             }
         }
@@ -319,10 +379,16 @@ pub fn load_material_codepoints<P: AsRef<Path>>(
     let path = config_path
         .as_ref()
         .parent()
-        .unwrap_or_else(|| Path::new("/home/karim/.config/rmwk"))
-        .join("MaterialSymbolsRounded.codepoints");
+        .map(|p| p.join("MaterialSymbolsRounded.codepoints"))
+        .unwrap_or_else(paths::get_codepoints_file);
 
-    if let Ok(content) = fs::read_to_string(&path) {
+    let resolved_path = if path.exists() {
+        path
+    } else {
+        paths::get_codepoints_file()
+    };
+
+    if let Ok(content) = fs::read_to_string(&resolved_path) {
         for line in content.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() == 2 {
@@ -336,4 +402,37 @@ pub fn load_material_codepoints<P: AsRef<Path>>(
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hotkey_combinations() {
+        assert_eq!(
+            parse_hotkey("ctrl+c").unwrap(),
+            vec!["-M", "ctrl", "-k", "c", "-m", "ctrl"]
+        );
+        assert_eq!(
+            parse_hotkey("ctrl+shift+t").unwrap(),
+            vec!["-M", "ctrl", "-M", "shift", "-k", "t", "-m", "shift", "-m", "ctrl"]
+        );
+        assert_eq!(
+            parse_hotkey("ctrl++").unwrap(),
+            vec!["-M", "ctrl", "-k", "plus", "-m", "ctrl"]
+        );
+        assert_eq!(
+            parse_hotkey("+").unwrap(),
+            vec!["-k", "plus"]
+        );
+        assert_eq!(
+            parse_hotkey("Return").unwrap(),
+            vec!["-k", "Return"]
+        );
+        assert_eq!(
+            parse_hotkey("super+space").unwrap(),
+            vec!["-M", "logo", "-k", "space", "-m", "logo"]
+        );
+    }
 }

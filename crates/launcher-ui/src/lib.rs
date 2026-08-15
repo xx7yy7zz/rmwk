@@ -51,7 +51,7 @@ struct MenuState {
     icon_cache: HashMap<String, Option<cairo::ImageSurface>>,
 
     // Cached Pango layouts for single char icons (avoids shaping every frame)
-    text_layout_cache: HashMap<String, gtk::pango::Layout>,
+    text_layout_cache: HashMap<(String, u32), gtk::pango::Layout>,
 
     // Cached Pango layouts for slice labels
     label_layout_cache: HashMap<String, gtk::pango::Layout>,
@@ -230,8 +230,7 @@ fn load_and_apply_theme(
     theme_provider: &gtk::CssProvider,
     user_provider: &gtk::CssProvider,
 ) {
-    if let Some(home) = std::env::var_os("HOME") {
-        let gtk_css = PathBuf::from(home).join(".config/gtk-4.0/gtk.css");
+    if let Some(gtk_css) = launcher_core::paths::get_gtk_css_path() {
         if gtk_css.exists() {
             user_provider.load_from_path(&gtk_css);
         }
@@ -251,7 +250,7 @@ fn load_and_apply_theme(
         .parent()
         .map(|p| p.join("themes").join(format!("{}.css", theme_name)))
         .unwrap_or_else(|| {
-            PathBuf::from("/home/karim/.config/rmwk/themes").join(format!("{}.css", theme_name))
+            launcher_core::paths::get_themes_dir().join(format!("{}.css", theme_name))
         });
 
     debug!("Loading theme from {:?}", theme_file);
@@ -523,25 +522,6 @@ impl LauncherApp {
         }
         load_and_apply_theme(&config_path, &theme_provider, &user_provider);
 
-        let font_path = config_path
-            .parent()
-            .map(|p| p.join("fonts").join("MaterialSymbolsRounded.ttf"))
-            .unwrap_or_else(|| {
-                PathBuf::from("/home/karim/.config/rmwk/fonts/MaterialSymbolsRounded.ttf")
-            });
-
-        let font_provider = gtk::CssProvider::new();
-        let font_css = format!(
-            "
-            @font-face {{
-                font-family: 'Material Symbols Rounded';
-                src: url('{}');
-            }}
-        ",
-            font_path.to_string_lossy()
-        );
-        font_provider.load_from_data(&font_css);
-
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,
@@ -551,11 +531,6 @@ impl LauncherApp {
             gtk::style_context_add_provider_for_display(
                 &display,
                 &theme_provider,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-            gtk::style_context_add_provider_for_display(
-                &display,
-                &font_provider,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
         }
@@ -658,7 +633,10 @@ impl LauncherApp {
             let cx = width as f64 / 2.0;
             let cy = height as f64 / 2.0;
 
-            let mut state_ref = draw_state.borrow_mut();
+            let mut state_ref = match draw_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
 
             // Update blur region based on animation progress
             if let Some(blur) = blur_draw.borrow().as_ref() {
@@ -784,7 +762,7 @@ impl LauncherApp {
                 }
             }
 
-            let mut draw_hub = |state_ref: &mut std::cell::RefMut<MenuState>| {
+            let draw_hub = |state_ref: &mut std::cell::RefMut<MenuState>| {
                 // Draw center circular hub if visible
                 if hub_fill.alpha() > 0.001 {
                     cr.new_path();
@@ -838,7 +816,9 @@ impl LauncherApp {
                     let mut surf_to_draw = None;
 
                     if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
-                        let l = if let Some(l) = state_ref.text_layout_cache.get(icon_name) {
+                        let font_size = icon_size.round() as u32;
+                        let key = (icon_name.clone(), font_size);
+                        let l = if let Some(l) = state_ref.text_layout_cache.get(&key) {
                             l.clone()
                         } else {
                             let l = area.create_pango_layout(Some(icon_name));
@@ -851,7 +831,7 @@ impl LauncherApp {
                             l.set_font_description(Some(&font_desc));
                             state_ref
                                 .text_layout_cache
-                                .insert(icon_name.clone(), l.clone());
+                                .insert(key, l.clone());
                             l
                         };
                         let (iw, ih) = l.pixel_size();
@@ -1006,7 +986,9 @@ impl LauncherApp {
 
                         if let Some(icon_name) = &item.icon {
                             if icon_name.chars().count() == 1 {
-                                let l = if let Some(l) = state_ref.text_layout_cache.get(icon_name)
+                                let font_size = 48u32;
+                                let key = (icon_name.clone(), font_size);
+                                let l = if let Some(l) = state_ref.text_layout_cache.get(&key)
                                 {
                                     l.clone()
                                 } else {
@@ -1023,11 +1005,10 @@ impl LauncherApp {
                                     l.set_font_description(Some(&font_desc));
                                     state_ref
                                         .text_layout_cache
-                                        .insert(icon_name.clone(), l.clone());
+                                        .insert(key, l.clone());
                                     l
                                 };
-                                let (iw, ih) = l.pixel_size();
-                                let _ih = ih;
+                                let (_iw, _ih) = l.pixel_size();
                                 icon_layout = Some(l);
                                 icon_w = icon_size * 0.75;
                                 icon_h = icon_size * 0.75;
@@ -1054,12 +1035,6 @@ impl LauncherApp {
                         }
 
                         let padding_x = 16.0 * ease_progress;
-                        let padding_y = 12.0 * ease_progress;
-                        let gap = if icon_w > 0.0 && tw_f > 0.0 {
-                            8.0 * ease_progress
-                        } else {
-                            0.0
-                        };
 
                         #[derive(PartialEq)]
                         enum PillMode {
@@ -1088,50 +1063,48 @@ impl LauncherApp {
                         let has_text = tw_f > 0.0;
                         let r = (icon_size / 2.0 + 8.0) * ease_progress;
 
-                        // ADJUST THESE PARAMETERS to control spacing between label and icon
+                        // Parameters controlling spacing between label and icon
                         let gap_between = 12.0 * ease_progress; // Horizontal gap for Left/Right entries
-                        let vertical_gap = -8.0 * ease_progress; // Vertical gap for Top/Bottom entries (negative means they overlap into a single shape)
-
-                        let mut text_pill_x = 0.0;
-                        let mut text_pill_y = 0.0;
-                        let mut text_pill_w = 0.0;
+                        let vertical_gap = -8.0 * ease_progress; // Vertical gap for Top/Bottom entries
                         let text_pill_h = r * 2.0; // Enforce strict height for all labels
 
                         let icon_x = icon_center_x - icon_w / 2.0;
                         let icon_y = icon_center_y - icon_h / 2.0;
-                        let mut text_x = 0.0;
-                        let mut text_y = 0.0;
 
-                        match mode {
+                        let (text_x, text_y, text_pill_x, text_pill_y, text_pill_w) = match mode {
                             PillMode::Right => {
-                                text_x = icon_center_x + r + gap_between;
-                                text_y = icon_center_y - th_f / 2.0;
-                                text_pill_x = icon_center_x - r;
-                                text_pill_y = icon_center_y - r;
-                                text_pill_w = (text_x + tw_f + padding_x) - text_pill_x;
+                                let tx = icon_center_x + r + gap_between;
+                                let ty = icon_center_y - th_f / 2.0;
+                                let tpx = icon_center_x - r;
+                                let tpy = icon_center_y - r;
+                                let tpw = (tx + tw_f + padding_x) - tpx;
+                                (tx, ty, tpx, tpy, tpw)
                             }
                             PillMode::Left => {
-                                text_x = icon_center_x - r - gap_between - tw_f;
-                                text_y = icon_center_y - th_f / 2.0;
-                                text_pill_x = text_x - padding_x;
-                                text_pill_y = icon_center_y - r;
-                                text_pill_w = (icon_center_x + r) - text_pill_x;
+                                let tx = icon_center_x - r - gap_between - tw_f;
+                                let ty = icon_center_y - th_f / 2.0;
+                                let tpx = tx - padding_x;
+                                let tpy = icon_center_y - r;
+                                let tpw = (icon_center_x + r) - tpx;
+                                (tx, ty, tpx, tpy, tpw)
                             }
                             PillMode::Top => {
-                                text_x = icon_center_x - tw_f / 2.0;
-                                text_pill_w = (tw_f + padding_x * 2.0).max(r * 2.0);
-                                text_pill_x = icon_center_x - text_pill_w / 2.0;
-                                text_pill_y = icon_center_y - r - vertical_gap - text_pill_h;
-                                text_y = text_pill_y + r - th_f / 2.0;
+                                let tx = icon_center_x - tw_f / 2.0;
+                                let tpw = (tw_f + padding_x * 2.0).max(r * 2.0);
+                                let tpx = icon_center_x - tpw / 2.0;
+                                let tpy = icon_center_y - r - vertical_gap - text_pill_h;
+                                let ty = tpy + r - th_f / 2.0;
+                                (tx, ty, tpx, tpy, tpw)
                             }
                             PillMode::Bottom => {
-                                text_x = icon_center_x - tw_f / 2.0;
-                                text_pill_w = (tw_f + padding_x * 2.0).max(r * 2.0);
-                                text_pill_x = icon_center_x - text_pill_w / 2.0;
-                                text_pill_y = icon_center_y + r + vertical_gap;
-                                text_y = text_pill_y + r - th_f / 2.0;
+                                let tx = icon_center_x - tw_f / 2.0;
+                                let tpw = (tw_f + padding_x * 2.0).max(r * 2.0);
+                                let tpx = icon_center_x - tpw / 2.0;
+                                let tpy = icon_center_y + r + vertical_gap;
+                                let ty = tpy + r - th_f / 2.0;
+                                (tx, ty, tpx, tpy, tpw)
                             }
-                        }
+                        };
 
                         // Helper closure to draw the raw paths of BOTH shapes as a single unified perimeter
                         let draw_base_paths = |cr: &cairo::Context| {
@@ -1616,8 +1589,10 @@ impl LauncherApp {
                                     );
                                 }
 
+                                let font_size = 48u32;
+                                let key = (icon_name.clone(), font_size);
                                 let layout = if let Some(l) =
-                                    state_ref.text_layout_cache.get(icon_name)
+                                    state_ref.text_layout_cache.get(&key)
                                 {
                                     l.clone()
                                 } else {
@@ -1634,7 +1609,7 @@ impl LauncherApp {
                                     l.set_font_description(Some(&font_desc));
                                     state_ref
                                         .text_layout_cache
-                                        .insert(icon_name.clone(), l.clone());
+                                        .insert(key, l.clone());
                                     l
                                 };
 
@@ -1829,12 +1804,119 @@ impl LauncherApp {
         });
         window.set_child(Some(&drawing_area));
 
+        // Pausable frame clock controller: ensures 0.0% CPU when stationary/closed
+        let is_animating = Rc::new(std::cell::Cell::new(false));
+        let last_frame_time = Rc::new(RefCell::new(None));
+
+        let trigger_anim = {
+            let is_animating = is_animating.clone();
+            let last_frame_time = last_frame_time.clone();
+            let tick_state = state.clone();
+            let area_clone_tick = drawing_area.clone();
+            let window_clone_tick = window.clone();
+            let menu_config_tick = menu_config.clone();
+
+            Rc::new(move || {
+                if is_animating.get() {
+                    return;
+                }
+
+                is_animating.set(true);
+                *last_frame_time.borrow_mut() = None;
+
+                let state_tick = tick_state.clone();
+                let area_tick = area_clone_tick.clone();
+                let win_tick = window_clone_tick.clone();
+                let config_tick = menu_config_tick.clone();
+                let anim_flag = is_animating.clone();
+                let lft = last_frame_time.clone();
+
+                area_clone_tick.add_tick_callback(move |_widget, frame_clock| {
+                    let mut state = match state_tick.try_borrow_mut() {
+                        Ok(s) => s,
+                        Err(_) => return glib::ControlFlow::Continue,
+                    };
+                    let now = frame_clock.frame_time();
+
+                    let dt = if let Some(last) = *lft.borrow() {
+                        let actual_dt = (now - last) as f64 / 1_000_000.0;
+                        actual_dt.min(0.050)
+                    } else {
+                        0.0
+                    };
+                    *lft.borrow_mut() = Some(now);
+
+                    // Close instantly
+                    if state.is_closing {
+                        state.is_closing = false;
+                        win_tick.hide();
+
+                        // Reset to root menu
+                        state.root_items = config_tick.menu.clone();
+                        state.root_icon = config_tick.icon.clone();
+                        state.reset_to_root();
+                        if let Some(display) = gdk::Display::default() {
+                            state.preload_icons(&display);
+                        }
+                        anim_flag.set(false);
+                        return glib::ControlFlow::Break;
+                    }
+
+                    let n = state.get_display_items_count();
+                    if state.hover_progresses.len() != n {
+                        state.hover_progresses.resize(n, 0.0);
+                    }
+
+                    let mut still_animating = false;
+                    let mut needs_redraw = false;
+
+                    for i in 0..n {
+                        let target = if state.hovered_index == Some(i) {
+                            1.0
+                        } else {
+                            0.0
+                        };
+                        let diff = target - state.hover_progresses[i];
+                        if state.disable_hover_animation {
+                            if diff != 0.0 {
+                                state.hover_progresses[i] = target;
+                                needs_redraw = true;
+                            }
+                        } else if diff.abs() > 0.005 {
+                            let step = dt / 0.080;
+                            state.hover_progresses[i] += diff.signum() * step.min(diff.abs());
+                            still_animating = true;
+                            needs_redraw = true;
+                        } else if diff != 0.0 {
+                            state.hover_progresses[i] = target;
+                            needs_redraw = true;
+                        }
+                    }
+
+                    if needs_redraw {
+                        area_tick.queue_draw();
+                    }
+
+                    if !still_animating {
+                        anim_flag.set(false);
+                        glib::ControlFlow::Break
+                    } else {
+                        glib::ControlFlow::Continue
+                    }
+                });
+            })
+        };
+
         // 5. Connect motion events to handle slice hover calculations
         let motion_controller = gtk::EventControllerMotion::new();
         let motion_state = state.clone();
         let area_clone = drawing_area.clone();
+        let trigger_anim_motion = trigger_anim.clone();
         motion_controller.connect_motion(move |_ctrl, x, y| {
-            let mut state = motion_state.borrow_mut();
+            let mut state = match motion_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
             if state.is_closing {
                 return;
             }
@@ -1850,6 +1932,7 @@ impl LauncherApp {
 
             let display_items_count = state.get_display_items_count();
             let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
+            let mut hovered_changed = false;
 
             if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
                 let angle_per_slice = 2.0 * PI / display_items_count as f64;
@@ -1868,29 +1951,35 @@ impl LauncherApp {
                 if index < display_items_count {
                     if state.hovered_index != Some(index) {
                         state.hovered_index = Some(index);
-                        area_clone.queue_draw();
+                        hovered_changed = true;
                     }
-                } else {
-                    if state.hovered_index.is_some() {
-                        state.hovered_index = None;
-                        area_clone.queue_draw();
-                    }
-                }
-            } else {
-                if state.hovered_index.is_some() {
+                } else if state.hovered_index.is_some() {
                     state.hovered_index = None;
-                    area_clone.queue_draw();
+                    hovered_changed = true;
                 }
+            } else if state.hovered_index.is_some() {
+                state.hovered_index = None;
+                hovered_changed = true;
+            }
+
+            drop(state);
+            if hovered_changed {
+                trigger_anim_motion();
             }
         });
 
         let leave_state = state.clone();
-        let area_clone_leave = drawing_area.clone();
+        let trigger_anim_leave = trigger_anim.clone();
         motion_controller.connect_leave(move |_ctrl| {
-            let mut state = leave_state.borrow_mut();
-            if state.hovered_index.is_some() {
-                state.hovered_index = None;
-                area_clone_leave.queue_draw();
+            let mut hovered_changed = false;
+            if let Ok(mut state) = leave_state.try_borrow_mut() {
+                if state.hovered_index.is_some() {
+                    state.hovered_index = None;
+                    hovered_changed = true;
+                }
+            }
+            if hovered_changed {
+                trigger_anim_leave();
             }
         });
         window.add_controller(motion_controller);
@@ -1900,20 +1989,26 @@ impl LauncherApp {
         click_controller.set_button(0); // Any mouse button
         let click_state = state.clone();
         let area_clone_click = drawing_area.clone();
+        let trigger_anim_click = trigger_anim.clone();
         click_controller.connect_pressed(move |gesture, _n_press, x, y| {
             let button = gesture.current_button();
             debug!("Mouse pressed at ({}, {}), button: {}", x, y, button);
 
+            let mut state = match click_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+
             if button == 3 {
                 // Right click dismisses launcher
-                let mut state = click_state.borrow_mut();
                 state.is_closing = true;
+                drop(state);
+                trigger_anim_click();
                 return;
             }
 
             if button == 1 {
                 // Left click
-                let mut state = click_state.borrow_mut();
                 if state.is_closing {
                     return;
                 }
@@ -1941,7 +2036,6 @@ impl LauncherApp {
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
-                            area_clone_click.queue_draw();
                             activated = true;
                         }
                     }
@@ -1971,6 +2065,9 @@ impl LauncherApp {
                     debug!("Clicked outside active area, closing");
                     state.is_closing = true;
                 }
+
+                drop(state);
+                trigger_anim_click();
             }
         });
         window.add_controller(click_controller);
@@ -1979,8 +2076,12 @@ impl LauncherApp {
         let key_controller = gtk::EventControllerKey::new();
         let key_state = state.clone();
         let area_clone_key = drawing_area.clone();
+        let trigger_anim_key = trigger_anim.clone();
         key_controller.connect_key_pressed(move |_ctrl, key, _keycode, _state| {
-            let mut state = key_state.borrow_mut();
+            let mut state = match key_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return glib::Propagation::Proceed,
+            };
             if state.is_closing {
                 return glib::Propagation::Proceed;
             }
@@ -1994,6 +2095,8 @@ impl LauncherApp {
                 gdk::Key::Escape => {
                     debug!("Escape pressed, initiating close animation");
                     state.is_closing = true;
+                    drop(state);
+                    trigger_anim_key();
                     glib::Propagation::Stop
                 }
                 gdk::Key::BackSpace => {
@@ -2004,11 +2107,16 @@ impl LauncherApp {
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
-                            area_clone_key.queue_draw();
+                            drop(state);
+                            trigger_anim_key();
+                        } else {
+                            drop(state);
                         }
                     } else {
                         debug!("Backspace pressed at root menu, initiating close animation");
                         state.is_closing = true;
+                        drop(state);
+                        trigger_anim_key();
                     }
                     glib::Propagation::Stop
                 }
@@ -2019,7 +2127,8 @@ impl LauncherApp {
                         None => 0,
                     };
                     state.hovered_index = Some(next);
-                    area_clone_key.queue_draw();
+                    drop(state);
+                    trigger_anim_key();
                     glib::Propagation::Stop
                 }
                 gdk::Key::ISO_Left_Tab | gdk::Key::Up | gdk::Key::Left => {
@@ -2029,13 +2138,18 @@ impl LauncherApp {
                         None => n - 1,
                     };
                     state.hovered_index = Some(next);
-                    area_clone_key.queue_draw();
+                    drop(state);
+                    trigger_anim_key();
                     glib::Propagation::Stop
                 }
                 gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::space => {
                     // Activate hovered item
                     if let Some(idx) = state.hovered_index {
                         activate_index(&mut state, idx, &area_clone_key);
+                        drop(state);
+                        trigger_anim_key();
+                    } else {
+                        drop(state);
                     }
                     glib::Propagation::Stop
                 }
@@ -2067,12 +2181,15 @@ impl LauncherApp {
                             }
                         }
 
+                        drop(state);
                         if activated {
+                            trigger_anim_key();
                             glib::Propagation::Stop
                         } else {
                             glib::Propagation::Proceed
                         }
                     } else {
+                        drop(state);
                         glib::Propagation::Proceed
                     }
                 }
@@ -2082,6 +2199,7 @@ impl LauncherApp {
 
         // 9. Watch for focus loss to trigger close animation
         let focus_state = state.clone();
+        let trigger_anim_focus = trigger_anim.clone();
         window.connect_notify_local(Some("is-active"), move |w, _| {
             if !w.is_active() {
                 if let Ok(mut state) = focus_state.try_borrow_mut() {
@@ -2091,82 +2209,13 @@ impl LauncherApp {
                     }
                     debug!("Window lost focus, initiating close animation");
                     state.is_closing = true;
+                    drop(state);
+                    trigger_anim_focus();
                 }
             }
         });
 
-        // 10. Setup main context tick callback to drive open/close and hover lerps
-        let tick_state = state.clone();
-        let area_clone_tick = drawing_area.clone();
-        let window_clone_tick = window.clone();
-        let last_frame_time = Rc::new(RefCell::new(None));
-        let menu_config_tick = menu_config.clone();
-
-        drawing_area.add_tick_callback(move |_widget, frame_clock| {
-            let mut state = tick_state.borrow_mut();
-            let now = frame_clock.frame_time(); // in microseconds
-
-            let dt = if let Some(last) = *last_frame_time.borrow() {
-                let actual_dt = (now - last) as f64 / 1_000_000.0;
-                // Cap dt at 50ms (20fps min) so we don't artificially slow down the animation on 30fps/60fps systems
-                actual_dt.min(0.050)
-            } else {
-                0.0
-            };
-            *last_frame_time.borrow_mut() = Some(now);
-
-            let mut needs_redraw = false;
-
-            // Close instantly
-            if state.is_closing {
-                state.is_closing = false;
-                window_clone_tick.hide();
-
-                // Reset to root menu
-                state.root_items = menu_config_tick.menu.clone();
-                state.root_icon = menu_config_tick.icon.clone();
-                state.reset_to_root();
-                if let Some(display) = gdk::Display::default() {
-                    state.preload_icons(&display);
-                }
-                return glib::ControlFlow::Continue;
-            }
-
-            // Hover animations (~100ms)
-            let n = state.get_display_items_count();
-            if state.hover_progresses.len() != n {
-                state.hover_progresses.resize(n, 0.0);
-            }
-
-            for i in 0..n {
-                let target = if state.hovered_index == Some(i) && !state.is_closing {
-                    1.0
-                } else {
-                    0.0
-                };
-                let diff = target - state.hover_progresses[i];
-                if state.disable_hover_animation {
-                    if diff != 0.0 {
-                        state.hover_progresses[i] = target;
-                        needs_redraw = true;
-                    }
-                } else if diff.abs() > 0.01 {
-                    let step = dt / 0.080;
-                    state.hover_progresses[i] += diff.signum() * step.min(diff.abs());
-                    needs_redraw = true;
-                } else {
-                    state.hover_progresses[i] = target;
-                }
-            }
-
-            if needs_redraw {
-                area_clone_tick.queue_draw();
-            }
-
-            glib::ControlFlow::Continue
-        });
-
-        // 11. Setup tokio channel to listen for IPC socket events
+        // 10. Setup tokio channel to listen for IPC socket events
         let (ipc_tx, mut ipc_rx) = tokio::sync::mpsc::unbounded_channel::<IpcMessage>();
 
         // Start the IPC server and forward its commands to this channel
@@ -2197,7 +2246,9 @@ impl LauncherApp {
                     });
                 }
             });
-            state.borrow_mut()._config_monitor = Some(monitor);
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s._config_monitor = Some(monitor);
+            }
         }
 
         let menu_file = gtk::gio::File::for_path(&menu_path);
@@ -2216,15 +2267,16 @@ impl LauncherApp {
                     });
                 }
             });
-            state.borrow_mut()._menu_monitor = Some(monitor);
+            if let Ok(mut s) = state.try_borrow_mut() {
+                s._menu_monitor = Some(monitor);
+            }
         }
 
         let ipc_state = state.clone();
-        let area_clone_ipc = drawing_area.clone();
         let theme_provider_clone = theme_provider.clone();
         let user_provider_clone = user_provider.clone();
         let config_path_clone = config_path.clone();
-        let menu_path_clone = menu_path.clone();
+        let trigger_anim_ipc = trigger_anim.clone();
 
         let window_clone_ipc = window.clone();
         glib::MainContext::default().spawn_local(async move {
@@ -2233,10 +2285,15 @@ impl LauncherApp {
                 match msg {
                     IpcMessage::Toggle => {
                         let is_visible = window_clone_ipc.is_visible();
-                        let mut state = ipc_state.borrow_mut();
+                        let mut state = match ipc_state.try_borrow_mut() {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
                         if is_visible && !state.is_closing {
                             info!("Hiding window via IPC Toggle");
                             state.is_closing = true;
+                            drop(state);
+                            trigger_anim_ipc();
                         } else {
                             info!("Showing window via IPC Toggle");
                             state.reset_to_root();
@@ -2253,21 +2310,29 @@ impl LauncherApp {
                                 &user_provider_clone,
                             );
                             window_clone_ipc.present();
-                            area_clone_ipc.queue_draw();
+                            trigger_anim_ipc();
                         }
                     }
                     IpcMessage::Close => {
-                        let mut state = ipc_state.borrow_mut();
+                        let mut state = match ipc_state.try_borrow_mut() {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
                         if window_clone_ipc.is_visible() && !state.is_closing {
                             info!("Hiding window via IPC Close");
                             state.is_closing = true;
+                            drop(state);
+                            trigger_anim_ipc();
                         }
                     }
                     IpcMessage::OpenMenu {
                         menu_path: new_menu_path,
                     } => {
                         let is_visible = window_clone_ipc.is_visible();
-                        let mut state = ipc_state.borrow_mut();
+                        let mut state = match ipc_state.try_borrow_mut() {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
 
                         let same_menu = state.current_menu_path == new_menu_path;
                         state.current_menu_path = new_menu_path.clone();
@@ -2301,30 +2366,31 @@ impl LauncherApp {
                                 &user_provider_clone,
                             );
                             window_clone_ipc.present();
-                            area_clone_ipc.queue_draw();
+                            trigger_anim_ipc();
                         } else if !same_menu {
                             drop(state);
-                            area_clone_ipc.queue_draw();
+                            trigger_anim_ipc();
                         } else {
                             // same_menu is true, and it's currently visible and not closing
                             tracing::info!("Hiding window via IPC OpenMenu (toggle)");
                             state.is_closing = true;
                             drop(state);
-                            area_clone_ipc.queue_draw();
+                            trigger_anim_ipc();
                         }
                     }
                     IpcMessage::Open => {
                         let is_visible = window_clone_ipc.is_visible();
-                        if !is_visible || ipc_state.borrow().is_closing {
+                        let is_closing = ipc_state.try_borrow().map(|s| s.is_closing).unwrap_or(false);
+                        if !is_visible || is_closing {
                             tracing::info!("Showing window via IPC Open");
-                            let mut state = ipc_state.borrow_mut();
-                            state.reset_to_root();
-                            if let Some(display) = gdk::Display::default() {
-                                state.preload_icons(&display);
+                            if let Ok(mut state) = ipc_state.try_borrow_mut() {
+                                state.reset_to_root();
+                                if let Some(display) = gdk::Display::default() {
+                                    state.preload_icons(&display);
+                                }
+                                state.is_closing = false;
+                                *state.theme_colors.borrow_mut() = None;
                             }
-                            state.is_closing = false;
-                            *state.theme_colors.borrow_mut() = None;
-                            drop(state);
 
                             load_and_apply_theme(
                                 &config_path_clone,
@@ -2332,7 +2398,7 @@ impl LauncherApp {
                                 &user_provider_clone,
                             );
                             window_clone_ipc.present();
-                            area_clone_ipc.queue_draw();
+                            trigger_anim_ipc();
                         }
                     }
                     IpcMessage::ReloadConfig => {
@@ -2345,7 +2411,10 @@ impl LauncherApp {
                         );
 
                         // 2. Reload the menu TOML config from file
-                        let mut state = ipc_state.borrow_mut();
+                        let mut state = match ipc_state.try_borrow_mut() {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
                         state.codepoints =
                             launcher_core::load_material_codepoints(&config_path_clone);
                         let mut blur_needs_update = false;
@@ -2405,7 +2474,8 @@ impl LauncherApp {
                                 error!("Failed to reload menu config: {}", e);
                             }
                         }
-                        area_clone_ipc.queue_draw();
+                        drop(state);
+                        trigger_anim_ipc();
                     }
                 }
             }
@@ -2431,6 +2501,7 @@ impl LauncherApp {
                 state_mut.is_closing = false;
             }
             window.present();
+            trigger_anim();
         } else {
             if let Ok(mut state_mut) = state.try_borrow_mut() {
                 state_mut.is_closing = false;

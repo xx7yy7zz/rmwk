@@ -36,6 +36,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libc = "0.2"
 
 # Internal workspace crates
 launcher-core = { path = "crates/launcher-core" }
