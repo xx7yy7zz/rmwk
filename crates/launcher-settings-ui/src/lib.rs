@@ -568,8 +568,8 @@ impl SettingsApp {
         let lbl_menu_style = gtk::Label::new(Some("Menu Style:"));
         lbl_menu_style.set_halign(gtk::Align::Start);
         let combo_menu_style = gtk::ComboBoxText::new();
-        combo_menu_style.append(Some("pie"), "Pie (Continuous Ring)");
-        combo_menu_style.append(Some("floating"), "Floating Pills");
+        combo_menu_style.append(Some("pie"), "Pie");
+        combo_menu_style.append(Some("floating"), "Floating Entries");
         combo_menu_style.set_active_id(Some(&ui_config.ui.menu_style));
 
         let menu_style_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
