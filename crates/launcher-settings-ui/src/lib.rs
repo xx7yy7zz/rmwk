@@ -417,7 +417,6 @@ impl SettingsApp {
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
         if ui_config.ui.menu_style == "floating" {
             chk_enable_blur.set_sensitive(false);
-            chk_enable_blur.set_active(false);
         }
 
         let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
@@ -455,7 +454,6 @@ impl SettingsApp {
             if let Some(id) = combo.active_id() {
                 if id == "floating" {
                     chk_enable_blur_style.set_sensitive(false);
-                    chk_enable_blur_style.set_active(false);
                 } else {
                     chk_enable_blur_style.set_sensitive(true);
                 }

@@ -156,6 +156,13 @@ impl WaylandBlur {
     }
 
     pub fn update_circular_region(&self, radius: f64, center_x: f64, center_y: f64) {
+        if radius <= 0.0 {
+            self.effect_surface.set_blur_region(None);
+            let _ = self.conn.flush();
+            tracing::debug!("Wayland: Cleared blur region");
+            return;
+        }
+
         let region = self.compositor.create_region(&self.qh, ());
 
         // Shrink the blur region by 1 pixel so the jagged aliased edges
@@ -166,6 +173,9 @@ impl WaylandBlur {
 
         let top_stretch = 1;
         let r_top = r + top_stretch;
+
+        // Run-length merge contiguous scanlines with identical horizontal extents
+        let mut current_rect: Option<(i32, i32, i32, i32)> = None; // (x, y, w, h)
 
         for y in -r_top..=r {
             let x = if y < 0 {
@@ -183,14 +193,27 @@ impl WaylandBlur {
                 let rect_x = cx - x;
                 let rect_y = cy + y;
                 let width = x * 2;
-                let height = 1;
-                region.add(rect_x, rect_y, width, height);
+
+                if let Some((px, py, pw, ph)) = current_rect {
+                    if px == rect_x && pw == width && py + ph == rect_y {
+                        current_rect = Some((px, py, pw, ph + 1));
+                    } else {
+                        region.add(px, py, pw, ph);
+                        current_rect = Some((rect_x, rect_y, width, 1));
+                    }
+                } else {
+                    current_rect = Some((rect_x, rect_y, width, 1));
+                }
             }
+        }
+
+        if let Some((px, py, pw, ph)) = current_rect {
+            region.add(px, py, pw, ph);
         }
 
         self.effect_surface.set_blur_region(Some(&region));
         region.destroy();
-        // Since we are using a foreign display, we should flush the connection
+        // Since we are using a foreign display, flush the connection
         let _ = self.conn.flush();
         tracing::debug!("Wayland: Updated circular blur region to radius {}", radius);
     }

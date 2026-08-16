@@ -147,7 +147,7 @@ impl MenuState {
                     if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height()) {
                         if let Ok(cr) = cairo::Context::new(&surf) {
                             cr.set_source_pixbuf(&p, 0.0, 0.0);
-                            cr.paint().unwrap();
+                            let _ = cr.paint();
                             return Some(surf);
                         }
                     }
@@ -155,6 +155,52 @@ impl MenuState {
                 });
                 self.icon_cache.insert(raw_icon_name.clone(), surface);
             }
+        }
+    }
+
+    fn hit_test(&self, x: f64, y: f64, cx: f64, cy: f64) -> Option<usize> {
+        let display_items = self.get_display_items();
+        let n = display_items.len();
+        if n == 0 {
+            return None;
+        }
+
+        let mx = x - cx;
+        let my = y - cy;
+        let dist = (mx * mx + my * my).sqrt();
+
+        if dist < BASE_R {
+            return None;
+        }
+
+        let max_interactive_dist = if self.menu_style == "floating" {
+            let required_r = n as f64 * 82.0 / (2.0 * PI);
+            let base_dist = BASE_R + 60.0;
+            let pill_dist = base_dist.max(required_r);
+            pill_dist + SLICE_WIDTH + HOVER_GROW + self.extra_radius + 40.0
+        } else {
+            BASE_R + SLICE_WIDTH + HOVER_GROW + self.extra_radius
+        };
+
+        if dist <= max_interactive_dist {
+            let angle_per_slice = 2.0 * PI / n as f64;
+            let mut angle = my.atan2(mx) + PI / 2.0;
+            if self.center_layout {
+                angle += angle_per_slice / 2.0;
+            }
+            if angle < 0.0 {
+                angle += 2.0 * PI;
+            } else if angle >= 2.0 * PI {
+                angle -= 2.0 * PI;
+            }
+            let index = (angle / angle_per_slice) as usize;
+            if index < n {
+                Some(index)
+            } else {
+                None
+            }
+        } else {
+            None
         }
     }
 }
@@ -829,9 +875,7 @@ impl LauncherApp {
                             font_desc.set_family("Sans");
                             font_desc.set_absolute_size(icon_size * gtk::pango::SCALE as f64);
                             l.set_font_description(Some(&font_desc));
-                            state_ref
-                                .text_layout_cache
-                                .insert(key, l.clone());
+                            state_ref.text_layout_cache.insert(key, l.clone());
                             l
                         };
                         let (iw, ih) = l.pixel_size();
@@ -839,18 +883,20 @@ impl LauncherApp {
                         icon_h = ih as f64 * ease_progress;
                         icon_layout = Some(l);
                     } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                        cr.save().unwrap();
+                        let _ = cr.save();
                         cr.select_font_face(
                             "Material Symbols Rounded",
                             cairo::FontSlant::Normal,
                             cairo::FontWeight::Normal,
                         );
                         cr.set_font_size(icon_size);
-                        if let Ok(ext) = cr.text_extents(&codepoint.to_string()) {
+                        let mut glyph_buf = [0u8; 4];
+                        let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
+                        if let Ok(ext) = cr.text_extents(glyph_str) {
                             icon_w = ext.width();
                             icon_h = ext.height();
                         }
-                        cr.restore().unwrap();
+                        let _ = cr.restore();
                     } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
                         let cw = surf.width() as f64;
                         let ch = surf.height() as f64;
@@ -861,16 +907,16 @@ impl LauncherApp {
                     }
 
                     if let Some(l) = icon_layout {
-                        cr.save().unwrap();
+                        let _ = cr.save();
                         cr.translate(cx, cy);
                         if ease_progress > 0.001 {
                             cr.scale(ease_progress, ease_progress);
                         }
                         cr.move_to(-(icon_w / 2.0), -(icon_h / 2.0));
                         pangocairo::functions::show_layout(&cr, &l);
-                        cr.restore().unwrap();
+                        let _ = cr.restore();
                     } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                        cr.save().unwrap();
+                        let _ = cr.save();
                         cr.translate(cx, cy);
                         if ease_progress > 0.001 {
                             cr.scale(ease_progress, ease_progress);
@@ -881,23 +927,25 @@ impl LauncherApp {
                             cairo::FontWeight::Normal,
                         );
                         cr.set_font_size(icon_size);
-                        if let Ok(extents) = cr.text_extents(&codepoint.to_string()) {
+                        let mut glyph_buf = [0u8; 4];
+                        let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
+                        if let Ok(extents) = cr.text_extents(glyph_str) {
                             cr.move_to(
                                 -extents.width() / 2.0 - extents.x_bearing(),
                                 -extents.height() / 2.0 - extents.y_bearing(),
                             );
                         }
-                        cr.show_text(&codepoint.to_string()).unwrap();
-                        cr.restore().unwrap();
+                        let _ = cr.show_text(glyph_str);
+                        let _ = cr.restore();
                     } else if let Some((surf, scale)) = surf_to_draw {
-                        cr.save().unwrap();
+                        let _ = cr.save();
                         cr.translate(cx - icon_w / 2.0, cy - icon_h / 2.0);
                         if scale * ease_progress > 0.001 {
                             cr.scale(scale * ease_progress, scale * ease_progress);
                         }
-                        cr.set_source_surface(&surf, 0.0, 0.0).unwrap();
-                        cr.paint().unwrap();
-                        cr.restore().unwrap();
+                        let _ = cr.set_source_surface(&surf, 0.0, 0.0);
+                        let _ = cr.paint();
+                        let _ = cr.restore();
                     }
                 } else if let Some(text) = &center_text {
                     let center_layout = if let Some(l) = state_ref.label_layout_cache.get(text) {
@@ -988,8 +1036,7 @@ impl LauncherApp {
                             if icon_name.chars().count() == 1 {
                                 let font_size = 48u32;
                                 let key = (icon_name.clone(), font_size);
-                                let l = if let Some(l) = state_ref.text_layout_cache.get(&key)
-                                {
+                                let l = if let Some(l) = state_ref.text_layout_cache.get(&key) {
                                     l.clone()
                                 } else {
                                     let l = area.create_pango_layout(Some(icon_name));
@@ -1003,9 +1050,7 @@ impl LauncherApp {
                                     font_desc.set_weight(weight);
                                     font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
                                     l.set_font_description(Some(&font_desc));
-                                    state_ref
-                                        .text_layout_cache
-                                        .insert(key, l.clone());
+                                    state_ref.text_layout_cache.insert(key, l.clone());
                                     l
                                 };
                                 let (_iw, _ih) = l.pixel_size();
@@ -1013,18 +1058,20 @@ impl LauncherApp {
                                 icon_w = icon_size * 0.75;
                                 icon_h = icon_size * 0.75;
                             } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                                cr.save().unwrap();
+                                let _ = cr.save();
                                 cr.select_font_face(
                                     "Material Symbols Rounded",
                                     cairo::FontSlant::Normal,
                                     cairo::FontWeight::Normal,
                                 );
                                 cr.set_font_size(32.0);
-                                if let Ok(ext) = cr.text_extents(&codepoint.to_string()) {
+                                let mut glyph_buf = [0u8; 4];
+                                let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
+                                if let Ok(ext) = cr.text_extents(glyph_str) {
                                     icon_w = ext.width() * ease_progress;
                                     icon_h = ext.height() * ease_progress;
                                 }
-                                cr.restore().unwrap();
+                                let _ = cr.restore();
                             } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
                                 let cw = surf.width() as f64;
                                 let ch = surf.height() as f64;
@@ -1068,6 +1115,24 @@ impl LauncherApp {
                         let vertical_gap = -8.0 * ease_progress; // Vertical gap for Top/Bottom entries
                         let text_pill_h = r * 2.0; // Enforce strict height for all labels
 
+                        // Minimum pill width for Top/Bottom entries based on a 4-character label
+                        let min_4ch_w = if let Some(l) = state_ref.label_layout_cache.get("MMM") {
+                            let (w, _) = l.pixel_size();
+                            w as f64 * ease_progress
+                        } else {
+                            let l = area.create_pango_layout(Some("MMM"));
+                            let mut font_desc = gtk::pango::FontDescription::new();
+                            font_desc.set_family("Sans");
+                            font_desc.set_size(gtk::pango::units_from_double(14.0));
+                            l.set_font_description(Some(&font_desc));
+                            state_ref
+                                .label_layout_cache
+                                .insert("MMM".to_string(), l.clone());
+                            let (w, _) = l.pixel_size();
+                            w as f64 * ease_progress
+                        };
+                        let min_top_bottom_pill_w = min_4ch_w + padding_x * 2.0;
+
                         let icon_x = icon_center_x - icon_w / 2.0;
                         let icon_y = icon_center_y - icon_h / 2.0;
 
@@ -1090,7 +1155,7 @@ impl LauncherApp {
                             }
                             PillMode::Top => {
                                 let tx = icon_center_x - tw_f / 2.0;
-                                let tpw = (tw_f + padding_x * 2.0).max(r * 2.0);
+                                let tpw = (tw_f + padding_x * 2.0).max(min_top_bottom_pill_w);
                                 let tpx = icon_center_x - tpw / 2.0;
                                 let tpy = icon_center_y - r - vertical_gap - text_pill_h;
                                 let ty = tpy + r - th_f / 2.0;
@@ -1098,7 +1163,7 @@ impl LauncherApp {
                             }
                             PillMode::Bottom => {
                                 let tx = icon_center_x - tw_f / 2.0;
-                                let tpw = (tw_f + padding_x * 2.0).max(r * 2.0);
+                                let tpw = (tw_f + padding_x * 2.0).max(min_top_bottom_pill_w);
                                 let tpx = icon_center_x - tpw / 2.0;
                                 let tpy = icon_center_y + r + vertical_gap;
                                 let ty = tpy + r - th_f / 2.0;
@@ -1122,16 +1187,19 @@ impl LauncherApp {
 
                             match mode {
                                 PillMode::Right | PillMode::Left => {
+                                    let x0 = text_pill_x + r;
+                                    let x1 = (text_pill_x + text_pill_w - r).max(x0);
+                                    let y_c = text_pill_y + r;
                                     cr.arc(
-                                        text_pill_x + text_pill_w - r,
-                                        text_pill_y + r,
+                                        x1,
+                                        y_c,
                                         r,
                                         -std::f64::consts::PI / 2.0,
                                         std::f64::consts::PI / 2.0,
                                     );
                                     cr.arc(
-                                        text_pill_x + r,
-                                        text_pill_y + r,
+                                        x0,
+                                        y_c,
                                         r,
                                         std::f64::consts::PI / 2.0,
                                         3.0 * std::f64::consts::PI / 2.0,
@@ -1139,8 +1207,17 @@ impl LauncherApp {
                                     cr.close_path();
                                 }
                                 PillMode::Top => {
-                                    let dy = text_pill_y + 2.0 * r - icon_center_y;
-                                    let theta = (dy / r).clamp(-1.0, 1.0).asin();
+                                    let w = text_pill_w;
+                                    let x_c_left = icon_center_x - w / 2.0 + r;
+                                    let x_c_right = icon_center_x + w / 2.0 - r;
+                                    let y_c_top = text_pill_y + r;
+                                    let y_bot = text_pill_y + 2.0 * r;
+
+                                    let dy = (y_bot - icon_center_y).clamp(-r, r);
+                                    let x_int = (r * r - dy * dy).max(0.0).sqrt();
+                                    let theta = dy.atan2(x_int);
+
+                                    // 1. Bottom arc of icon circle
                                     cr.arc(
                                         icon_center_x,
                                         icon_center_y,
@@ -1148,25 +1225,49 @@ impl LauncherApp {
                                         theta,
                                         std::f64::consts::PI - theta,
                                     );
+
+                                    // 2. Left side
+                                    if x_c_left < icon_center_x - x_int {
+                                        cr.line_to(x_c_left, y_bot);
+                                    }
                                     cr.arc(
-                                        text_pill_x + r,
-                                        text_pill_y + r,
+                                        x_c_left,
+                                        y_c_top,
                                         r,
                                         std::f64::consts::PI / 2.0,
                                         3.0 * std::f64::consts::PI / 2.0,
                                     );
+
+                                    // 3. Top horizontal edge
+                                    cr.line_to(x_c_right, text_pill_y);
+
+                                    // 4. Right side
                                     cr.arc(
-                                        text_pill_x + text_pill_w - r,
-                                        text_pill_y + r,
+                                        x_c_right,
+                                        y_c_top,
                                         r,
                                         -std::f64::consts::PI / 2.0,
                                         std::f64::consts::PI / 2.0,
                                     );
+                                    if x_c_right > icon_center_x + x_int {
+                                        cr.line_to(icon_center_x + x_int, y_bot);
+                                    }
+
                                     cr.close_path();
                                 }
                                 PillMode::Bottom => {
-                                    let dy = text_pill_y - icon_center_y;
-                                    let theta = (dy / r).clamp(-1.0, 1.0).asin();
+                                    let w = text_pill_w;
+                                    let x_c_left = icon_center_x - w / 2.0 + r;
+                                    let x_c_right = icon_center_x + w / 2.0 - r;
+                                    let y_top = text_pill_y;
+                                    let y_c_bot = text_pill_y + r;
+                                    let y_bot = text_pill_y + 2.0 * r;
+
+                                    let dy = (y_top - icon_center_y).clamp(-r, r);
+                                    let x_int = (r * r - dy * dy).max(0.0).sqrt();
+                                    let theta = dy.atan2(x_int);
+
+                                    // 1. Top arc of icon circle
                                     cr.arc(
                                         icon_center_x,
                                         icon_center_y,
@@ -1174,20 +1275,34 @@ impl LauncherApp {
                                         std::f64::consts::PI - theta,
                                         2.0 * std::f64::consts::PI + theta,
                                     );
+
+                                    // 2. Right side
+                                    if x_c_right > icon_center_x + x_int {
+                                        cr.line_to(x_c_right, y_top);
+                                    }
                                     cr.arc(
-                                        text_pill_x + text_pill_w - r,
-                                        text_pill_y + r,
+                                        x_c_right,
+                                        y_c_bot,
                                         r,
                                         -std::f64::consts::PI / 2.0,
                                         std::f64::consts::PI / 2.0,
                                     );
+
+                                    // 3. Bottom horizontal edge
+                                    cr.line_to(x_c_left, y_bot);
+
+                                    // 4. Left side
                                     cr.arc(
-                                        text_pill_x + r,
-                                        text_pill_y + r,
+                                        x_c_left,
+                                        y_c_bot,
                                         r,
                                         std::f64::consts::PI / 2.0,
                                         3.0 * std::f64::consts::PI / 2.0,
                                     );
+                                    if x_c_left < icon_center_x - x_int {
+                                        cr.line_to(icon_center_x - x_int, y_top);
+                                    }
+
                                     cr.close_path();
                                 }
                             }
@@ -1210,7 +1325,7 @@ impl LauncherApp {
                                 fill_color.alpha() as f64 * ease_progress,
                             );
                         }
-                        cr.fill().unwrap();
+                        let _ = cr.fill();
 
                         // 2. Draw Opaque Icon Circle on top
                         cr.new_path();
@@ -1236,7 +1351,7 @@ impl LauncherApp {
                                 1.0 * ease_progress,
                             );
                         }
-                        cr.fill().unwrap();
+                        let _ = cr.fill();
 
                         // 3. Stroke the Combined Outline (single unified path)
                         draw_base_paths(&cr);
@@ -1257,7 +1372,7 @@ impl LauncherApp {
                             );
                             cr.set_line_width(2.0 * ease_progress);
                         }
-                        cr.stroke().unwrap();
+                        let _ = cr.stroke();
 
                         // 4. Render Text
                         if has_text {
@@ -1276,14 +1391,14 @@ impl LauncherApp {
                                     label_color.alpha() as f64 * ease_progress,
                                 );
                             }
-                            cr.save().unwrap();
+                            let _ = cr.save();
                             cr.translate(text_x, text_y);
                             if ease_progress > 0.001 {
                                 cr.scale(ease_progress, ease_progress);
                             }
                             cr.move_to(0.0, 0.0);
                             pangocairo::functions::show_layout(&cr, &text_layout);
-                            cr.restore().unwrap();
+                            let _ = cr.restore();
                         }
 
                         // 5. Render Icon
@@ -1309,7 +1424,7 @@ impl LauncherApp {
                                     if let Some(l) = icon_layout {
                                         let (pango_w, pango_h) = l.pixel_size();
                                         let scale = (icon_size * 0.75) / (pango_w as f64).max(1.0);
-                                        cr.save().unwrap();
+                                        let _ = cr.save();
                                         cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                         cr.scale(scale, scale);
                                         cr.move_to(
@@ -1317,11 +1432,11 @@ impl LauncherApp {
                                             -(pango_h as f64 / 2.0),
                                         );
                                         pangocairo::functions::show_layout(&cr, &l);
-                                        cr.restore().unwrap();
+                                        let _ = cr.restore();
                                     }
                                 } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name)
                                 {
-                                    cr.save().unwrap();
+                                    let _ = cr.save();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                     if ease_progress > 0.001 {
                                         cr.scale(ease_progress, ease_progress);
@@ -1332,28 +1447,29 @@ impl LauncherApp {
                                         cairo::FontWeight::Normal,
                                     );
                                     cr.set_font_size(32.0);
-                                    if let Ok(extents) = cr.text_extents(&codepoint.to_string()) {
+                                    let mut glyph_buf = [0u8; 4];
+                                    let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
+                                    if let Ok(extents) = cr.text_extents(glyph_str) {
                                         cr.move_to(
                                             -extents.width() / 2.0 - extents.x_bearing(),
                                             -extents.height() / 2.0 - extents.y_bearing(),
                                         );
-                                        cr.show_text(&codepoint.to_string()).unwrap();
+                                        let _ = cr.show_text(glyph_str);
                                     }
-                                    cr.restore().unwrap();
+                                    let _ = cr.restore();
                                 } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name)
                                 {
-                                    cr.save().unwrap();
+                                    let _ = cr.save();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                     let scale = icon_size / surf.width().max(surf.height()) as f64;
                                     cr.scale(scale, scale);
-                                    cr.set_source_surface(
+                                    let _ = cr.set_source_surface(
                                         surf,
                                         -(surf.width() as f64) / 2.0,
                                         -(surf.height() as f64) / 2.0,
-                                    )
-                                    .unwrap();
+                                    );
                                     let _ = cr.paint_with_alpha(ease_progress);
-                                    cr.restore().unwrap();
+                                    let _ = cr.restore();
                                 }
                             }
                         }
@@ -1591,8 +1707,7 @@ impl LauncherApp {
 
                                 let font_size = 48u32;
                                 let key = (icon_name.clone(), font_size);
-                                let layout = if let Some(l) =
-                                    state_ref.text_layout_cache.get(&key)
+                                let layout = if let Some(l) = state_ref.text_layout_cache.get(&key)
                                 {
                                     l.clone()
                                 } else {
@@ -1607,9 +1722,7 @@ impl LauncherApp {
                                     font_desc.set_weight(weight);
                                     font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
                                     l.set_font_description(Some(&font_desc));
-                                    state_ref
-                                        .text_layout_cache
-                                        .insert(key, l.clone());
+                                    state_ref.text_layout_cache.insert(key, l.clone());
                                     l
                                 };
 
@@ -1638,8 +1751,9 @@ impl LauncherApp {
                                     cairo::FontWeight::Normal,
                                 );
                                 cr.set_font_size(icon_size);
-                                let glyph_str = codepoint.to_string();
-                                if let Ok(extents) = cr.text_extents(&glyph_str) {
+                                let mut glyph_buf = [0u8; 4];
+                                let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
+                                if let Ok(extents) = cr.text_extents(glyph_str) {
                                     let rx = -extents.width() / 2.0 - extents.x_bearing();
                                     let ry = -extents.height() / 2.0 - extents.y_bearing();
                                     cr.move_to(rx, ry);
@@ -1658,7 +1772,7 @@ impl LauncherApp {
                                             label_color.alpha() as f64 * ease_progress,
                                         );
                                     }
-                                    let _ = cr.show_text(&glyph_str);
+                                    let _ = cr.show_text(glyph_str);
                                 }
                                 let _ = cr.restore();
                             } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
@@ -1673,8 +1787,11 @@ impl LauncherApp {
                                         cy + r_center * mid_angle.sin(),
                                     );
                                     cr.scale(scale, scale);
-                                    cr.set_source_surface(surf, -current_w / 2.0, -current_h / 2.0)
-                                        .unwrap();
+                                    let _ = cr.set_source_surface(
+                                        surf,
+                                        -current_w / 2.0,
+                                        -current_h / 2.0,
+                                    );
                                     let _ = cr.paint_with_alpha(ease_progress);
                                     let _ = cr.restore();
                                 }
@@ -1926,39 +2043,11 @@ impl LauncherApp {
             let cx = width / 2.0;
             let cy = height / 2.0;
 
-            let mx = x - cx;
-            let my = y - cy;
-            let dist = (mx * mx + my * my).sqrt();
-
-            let display_items_count = state.get_display_items_count();
-            let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
+            let hovered = state.hit_test(x, y, cx, cy);
             let mut hovered_changed = false;
 
-            if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist {
-                let angle_per_slice = 2.0 * PI / display_items_count as f64;
-                let mut angle = my.atan2(mx) + PI / 2.0;
-                if state.center_layout {
-                    angle += angle_per_slice / 2.0;
-                }
-                if angle < 0.0 {
-                    angle += 2.0 * PI;
-                } else if angle >= 2.0 * PI {
-                    angle -= 2.0 * PI;
-                }
-
-                let index = (angle / angle_per_slice) as usize;
-
-                if index < display_items_count {
-                    if state.hovered_index != Some(index) {
-                        state.hovered_index = Some(index);
-                        hovered_changed = true;
-                    }
-                } else if state.hovered_index.is_some() {
-                    state.hovered_index = None;
-                    hovered_changed = true;
-                }
-            } else if state.hovered_index.is_some() {
-                state.hovered_index = None;
+            if state.hovered_index != hovered {
+                state.hovered_index = hovered;
                 hovered_changed = true;
             }
 
@@ -2022,9 +2111,6 @@ impl LauncherApp {
                 let my = y - cy;
                 let dist = (mx * mx + my * my).sqrt();
 
-                let display_items = state.get_display_items();
-                let display_items_count = display_items.len();
-                let max_interactive_dist = BASE_R + SLICE_WIDTH + HOVER_GROW + state.extra_radius;
                 let mut activated = false;
 
                 // Center hub click - goes back in history if not at root
@@ -2039,25 +2125,9 @@ impl LauncherApp {
                             activated = true;
                         }
                     }
-                } else if display_items_count > 0 && dist >= BASE_R && dist <= max_interactive_dist
-                {
-                    let angle_per_slice = 2.0 * PI / display_items_count as f64;
-                    let mut angle = my.atan2(mx) + PI / 2.0;
-                    if state.center_layout {
-                        angle += angle_per_slice / 2.0;
-                    }
-                    if angle < 0.0 {
-                        angle += 2.0 * PI;
-                    } else if angle >= 2.0 * PI {
-                        angle -= 2.0 * PI;
-                    }
-
-                    let index = (angle / angle_per_slice) as usize;
-
-                    if index < display_items_count {
-                        activate_index(&mut state, index, &area_clone_click);
-                        activated = true;
-                    }
+                } else if let Some(index) = state.hit_test(x, y, cx, cy) {
+                    activate_index(&mut state, index, &area_clone_click);
+                    activated = true;
                 }
 
                 if !activated {
@@ -2380,7 +2450,10 @@ impl LauncherApp {
                     }
                     IpcMessage::Open => {
                         let is_visible = window_clone_ipc.is_visible();
-                        let is_closing = ipc_state.try_borrow().map(|s| s.is_closing).unwrap_or(false);
+                        let is_closing = ipc_state
+                            .try_borrow()
+                            .map(|s| s.is_closing)
+                            .unwrap_or(false);
                         if !is_visible || is_closing {
                             tracing::info!("Showing window via IPC Open");
                             if let Ok(mut state) = ipc_state.try_borrow_mut() {
