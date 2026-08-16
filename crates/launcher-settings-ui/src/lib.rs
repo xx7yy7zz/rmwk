@@ -3,12 +3,13 @@ mod theme_editor;
 use gtk::gdk;
 use gtk::prelude::*;
 use gtk4 as gtk;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use tracing::{error, info};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct CopiedNode {
     label: String,
     icon: String,
@@ -137,6 +138,17 @@ impl SettingsApp {
             combo_menu_files.set_active_id(Some(&available_menus[0]));
         }
 
+        // GTK4's GtkComboBox scrolls through its items on mouse wheel
+        // (gtk_combo_box_init adds an internal scroll controller). That
+        // would silently switch the menu being edited, so swallow scroll
+        // events first: gtk_widget_add_controller() prepends, so this
+        // controller is dispatched before the combo's internal one.
+        let combo_scroll_block = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::BOTH_AXES,
+        );
+        combo_scroll_block.connect_scroll(|_c, _dx, _dy| gtk::glib::Propagation::Stop);
+        combo_menu_files.add_controller(combo_scroll_block);
+
         menu_selector_hbox.append(&lbl_menu);
         menu_selector_hbox.append(&combo_menu_files);
         menu_selector_hbox.append(&btn_new_menu);
@@ -214,7 +226,104 @@ impl SettingsApp {
         tree_view.append_column(&type_column);
 
         scroll_win.set_child(Some(&tree_view));
-        left_vbox.append(&scroll_win);
+
+        // Custom, depth-proportional drop indicator. The TreeView's built-in
+        // indicator is always a full-width line; to make its length reflect
+        // how deep the target is, we draw our own line on a transparent
+        // DrawingArea layered over the tree.
+        let armed_dest: std::rc::Rc<std::cell::RefCell<Option<(String, u8)>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+
+        let tree_overlay = gtk::Overlay::new();
+        tree_overlay.set_child(Some(&scroll_win));
+        let drop_indicator = gtk::DrawingArea::new();
+        drop_indicator.set_can_target(false);
+        drop_indicator.set_halign(gtk::Align::Fill);
+        drop_indicator.set_valign(gtk::Align::Fill);
+        tree_overlay.add_overlay(&drop_indicator);
+        left_vbox.append(&tree_overlay);
+
+        // Per-level length to shrink the indicator line.
+        const DROP_INDENT_STEP: f64 = 28.0;
+
+        let armed_draw = armed_dest.clone();
+        let tree_draw = tree_view.clone();
+        drop_indicator.set_draw_func(move |area, cr, _w, _h| {
+            let Some((path_str, pos_code)) = armed_draw.borrow().as_ref().map(|s| s.clone()) else {
+                return;
+            };
+            let Some(path) = gtk::TreePath::from_string(&path_str) else {
+                return;
+            };
+            // Guard against a stale target row (deleted while dragging).
+            let Some(model) = tree_draw.model() else {
+                return;
+            };
+            if !model.iter(&path).is_some() {
+                return;
+            }
+            let rect = tree_draw.background_area(Some(&path), None);
+            let (_, wy) = tree_draw.convert_bin_window_to_widget_coords(rect.x(), rect.y());
+            let row_h = rect.height();
+            // Effective insertion depth: a row's own depth for Before/After
+            // (0/1), one more when inserting *into* a folder (2/3).
+            let depth = path.depth();
+            let eff = match pos_code {
+                2 | 3 => depth + 1,
+                _ => depth,
+            };
+            // Full length at the top level (depth 2, direct children of the
+            // root row), the start receding one step from the left per
+            // additional nesting level.
+            let avail = area.width().max(1) as f64;
+            let start = ((eff as f64 - 2.0).max(0.0) * DROP_INDENT_STEP).min(avail - 32.0);
+            let color = tree_draw
+                .style_context()
+                .lookup_color("accent_color")
+                .unwrap_or(gdk::RGBA::new(0.4, 0.62, 0.92, 1.0));
+            let y = match pos_code {
+                1 => wy as f64 + row_h as f64 - 0.5,
+                _ => wy as f64 + 0.5,
+            };
+            cr.rectangle(0.0, 0.0, avail, area.height() as f64);
+            cr.clip();
+            let (r, g, b) = (
+                f64::from(color.red()),
+                f64::from(color.green()),
+                f64::from(color.blue()),
+            );
+            let into = matches!(pos_code, 2 | 3);
+            if into {
+                // Dropping *into* a folder: highlight the whole row so the
+                // item reads as going inside, with a depth-recessed tick.
+                cr.set_source_rgba(r, g, b, 0.14);
+                cr.rectangle(0.0, wy as f64, avail, row_h as f64);
+                let _ = cr.fill();
+                cr.set_source_rgba(r, g, b, 1.0);
+                cr.set_line_width(2.0);
+                cr.set_line_cap(gtk::cairo::LineCap::Round);
+                cr.move_to(start, wy as f64 - 4.0);
+                cr.line_to(start, wy as f64 + row_h as f64 + 4.0);
+                let _ = cr.stroke();
+            } else {
+                cr.set_source_rgba(r, g, b, 1.0);
+                cr.set_line_width(2.0);
+                cr.set_line_cap(gtk::cairo::LineCap::Round);
+                cr.move_to(start, y);
+                cr.line_to(avail, y);
+                let _ = cr.stroke();
+                // A small vertical tick marks the exact insertion point.
+                cr.move_to(start, y - 5.0);
+                cr.line_to(start, y + 5.0);
+                let _ = cr.stroke();
+            }
+        });
+
+        let indicator_scroll = drop_indicator.clone();
+        let scroll_win_adj = scroll_win.vadjustment();
+        scroll_win_adj.connect_value_changed(move |_| {
+            indicator_scroll.queue_draw();
+        });
 
         // Dynamically resize the tree panel to exactly 50% of the window's height and width
         let scroll_win_clone = scroll_win.clone();
@@ -823,6 +932,394 @@ impl SettingsApp {
                 tree_view_paste.expand_row(&path, true);
             }
         });
+
+        // --- Drag and Drop: Add Buttons (DragSource) ---
+        let display = gdk::Display::default().unwrap_or_else(|| WidgetExt::display(&tree_view));
+        let icon_theme = gtk::IconTheme::for_display(&display);
+
+        let drag_src_cmd = gtk::DragSource::new();
+        drag_src_cmd.set_actions(gdk::DragAction::COPY);
+        let icon_cmd = icon_theme.lookup_icon("utilities-terminal", &["terminal", "system-run"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        drag_src_cmd.set_icon(Some(&icon_cmd), 12, 12);
+        let log_prelude = |_src: &gtk::DragSource, _x: f64, _y: f64| {
+            Some(Self::create_drag_content("new:command"))
+        };
+        drag_src_cmd.connect_prepare(log_prelude);
+        btn_add_item.add_controller(drag_src_cmd);
+
+        let drag_src_sub = gtk::DragSource::new();
+        drag_src_sub.set_actions(gdk::DragAction::COPY);
+        let icon_sub = icon_theme.lookup_icon("folder", &["directory"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        drag_src_sub.set_icon(Some(&icon_sub), 12, 12);
+        let log_prelude_sub = |_src: &gtk::DragSource, _x: f64, _y: f64| {
+            Some(Self::create_drag_content("new:submenu"))
+        };
+        drag_src_sub.connect_prepare(log_prelude_sub);
+        btn_add_sub.add_controller(drag_src_sub);
+
+        let drag_src_hot = gtk::DragSource::new();
+        drag_src_hot.set_actions(gdk::DragAction::COPY);
+        let icon_hot = icon_theme.lookup_icon("input-keyboard", &["keyboard"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        drag_src_hot.set_icon(Some(&icon_hot), 12, 12);
+        drag_src_hot.connect_prepare(|_src, _x, _y| {
+            Some(Self::create_drag_content("new:hotkey"))
+        });
+        btn_add_hotkey.add_controller(drag_src_hot);
+
+        // --- Drag and Drop: TreeView Reordering (DragSource) ---
+        let tree_drag_source = gtk::DragSource::new();
+        tree_drag_source.set_actions(gdk::DragAction::MOVE);
+        let icon_tree_default = icon_theme.lookup_icon("system-run", &["application-x-executable"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        tree_drag_source.set_icon(Some(&icon_tree_default), 12, 12);
+
+        let store_drag = store.clone();
+        let tree_drag = tree_view.clone();
+        let icon_theme_drag = icon_theme.clone();
+        let tree_drag_source_icon = tree_drag_source.clone();
+        tree_drag_source.connect_prepare(move |_src, x, y| {
+            // get_path_at_pos() expects BIN-window coordinates. The prepare
+            // x,y are widget coordinates, which sit below the column header
+            // when one is shown; resampling them raw would resolve the row a
+            // header-height (~one row) below the actual press.
+            let (bin_x, bin_y) = tree_drag.convert_widget_to_bin_window_coords(x as i32, y as i32);
+            if let Some((Some(path), _col, _cell_x, _cell_y)) = tree_drag.path_at_pos(bin_x, bin_y) {
+                if let Some(iter) = store_drag.iter(&path) {
+                    let act_type: String = store_drag.get(&iter, 2);
+                    if act_type == "root" {
+                        return None; // Cannot drag root
+                    }
+                    let node = Self::copy_node_recursive(&store_drag, &iter);
+                    let path_str = path.to_str().map(|s| s.to_string()).unwrap_or_default();
+
+                    let clean_icon = if let Some(stripped) = node.icon.strip_prefix("sys:") {
+                        stripped
+                    } else if !node.icon.is_empty() {
+                        &node.icon
+                    } else {
+                        "system-run"
+                    };
+                    let icon_to_lookup = if icon_theme_drag.has_icon(clean_icon) {
+                        clean_icon
+                    } else {
+                        "system-run"
+                    };
+                    let paintable = icon_theme_drag.lookup_icon(icon_to_lookup, &["application-x-executable"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+                    tree_drag_source_icon.set_icon(Some(&paintable), 12, 12);
+
+                    if let Ok(json) = serde_json::to_string(&node) {
+                        let payload = format!("move:{}:{}", path_str, json);
+                        return Some(Self::create_drag_content(&payload));
+                    }
+                }
+            }
+            None
+        });
+        tree_view.add_controller(tree_drag_source);
+
+        // --- Drag and Drop: TreeView Insertion & Reordering (DropTarget) ---
+        let drop_target = gtk::DropTarget::new(gtk::glib::Type::STRING, gdk::DragAction::COPY | gdk::DragAction::MOVE);
+
+        // Only re-arm the custom drop indicator when the target row/position
+        // actually changes, so we don't churn redraws on every motion event.
+        fn dest_key(path: &gtk::TreePath, pos: gtk::TreeViewDropPosition) -> (String, u8) {
+            use gtk::TreeViewDropPosition::*;
+            let p = match pos {
+                Before => 0u8,
+                After => 1,
+                IntoOrBefore => 2,
+                IntoOrAfter => 3,
+                _ => 4,
+            };
+            (path.to_str().map(|s| s.to_string()).unwrap_or_default(), p)
+        }
+
+        // Keep the drop indicator consistent with what we do on drop: compute
+        // the drop zone ourselves instead of trusting GTK's dest_row_at_pos()
+        // defaults. GTK treats the top/bottom 25% as Before/After and the
+        // middle 50% as Into, which makes it easy to accidentally nest something
+        // when aiming just above a submenu. We use a narrower Into zone (middle
+        // 40%) so a submenu has to be hovered roughly on its center to drop
+        // into it. Plain rows still can't be dropped into at all: Into* on a
+        // non-folder folds back to Before/After.
+        fn clamp_drop_pos(
+            store: &gtk::TreeStore,
+            tree_view: &gtk::TreeView,
+            x: i32,
+            y: i32,
+        ) -> Option<(gtk::TreePath, gtk::TreeViewDropPosition)> {
+            // path_at_pos() expects BIN-window coordinates, but the DropTarget
+            // gives us widget coordinates (below the column header).
+            let (bin_x, bin_y) = tree_view.convert_widget_to_bin_window_coords(x, y);
+            let (path, _col, _cell_x, cell_y) = tree_view.path_at_pos(bin_x, bin_y)?;
+            let path = path?;
+            let row_h = tree_view.background_area(Some(&path), None).height().max(1) as f64;
+            let frac = cell_y as f64 / row_h;
+            let raw = if frac < 0.30 {
+                gtk::TreeViewDropPosition::Before
+            } else if frac > 0.70 {
+                gtk::TreeViewDropPosition::After
+            } else if frac < 0.50 {
+                gtk::TreeViewDropPosition::IntoOrBefore
+            } else {
+                gtk::TreeViewDropPosition::IntoOrAfter
+            };
+            let is_folder = store
+                .iter(&path)
+                .map(|i| {
+                    let t: String = store.get(&i, 2);
+                    t == "submenu" || t == "root"
+                })
+                .unwrap_or(false);
+            let pos = match raw {
+                gtk::TreeViewDropPosition::IntoOrBefore if !is_folder => {
+                    gtk::TreeViewDropPosition::Before
+                }
+                gtk::TreeViewDropPosition::IntoOrAfter if !is_folder => {
+                    gtk::TreeViewDropPosition::After
+                }
+                other => other,
+            };
+            Some((path, pos))
+        }
+
+        fn arm_dest(
+            armed: &std::rc::Rc<std::cell::RefCell<Option<(String, u8)>>>,
+            indicator: &gtk::DrawingArea,
+            tree_view: &gtk::TreeView,
+            store: &gtk::TreeStore,
+            x: i32,
+            y: i32,
+        ) {
+            let mut state = armed.borrow_mut();
+            if let Some((path, pos)) = clamp_drop_pos(store, tree_view, x, y) {
+                let key = dest_key(&path, pos);
+                let changed = state.as_ref().map(|s| *s != key).unwrap_or(true);
+                if changed {
+                    *state = Some(key);
+                    drop(state);
+                    indicator.queue_draw();
+                }
+            } else if state.is_some() {
+                *state = None;
+                drop(state);
+                indicator.queue_draw();
+            }
+        }
+
+        let indicator_enter = drop_indicator.clone();
+        let tree_view_enter = tree_view.clone();
+        let armed_enter = armed_dest.clone();
+        let store_enter = store.clone();
+        drop_target.connect_enter(move |_target, x, y| {
+            arm_dest(&armed_enter, &indicator_enter, &tree_view_enter, &store_enter, x as i32, y as i32);
+            if clamp_drop_pos(&store_enter, &tree_view_enter, x as i32, y as i32).is_some() {
+                gdk::DragAction::MOVE
+            } else {
+                gdk::DragAction::empty()
+            }
+        });
+
+        let indicator_motion = drop_indicator.clone();
+        let tree_view_motion = tree_view.clone();
+        let armed_motion = armed_dest.clone();
+        let store_motion = store.clone();
+        drop_target.connect_motion(move |_target, x, y| {
+            arm_dest(&armed_motion, &indicator_motion, &tree_view_motion, &store_motion, x as i32, y as i32);
+            if clamp_drop_pos(&store_motion, &tree_view_motion, x as i32, y as i32).is_some() {
+                gdk::DragAction::MOVE
+            } else {
+                gdk::DragAction::empty()
+            }
+        });
+
+        let indicator_leave = drop_indicator.clone();
+        let armed_leave = armed_dest.clone();
+        drop_target.connect_leave(move |_target| {
+            let mut state = armed_leave.borrow_mut();
+            if state.is_some() {
+                *state = None;
+                drop(state);
+                indicator_leave.queue_draw();
+            }
+        });
+
+        let tree_view_d = tree_view.clone();
+        let store_d = store.clone();
+        let entry_qs_d = entry_quick_select.clone();
+        let armed_drop = armed_dest.clone();
+        let indicator_drop = drop_indicator.clone();
+        drop_target.connect_drop(move |_target, value, x, y| {
+            let mut state = armed_drop.borrow_mut();
+            if state.is_some() {
+                *state = None;
+                drop(state);
+                indicator_drop.queue_draw();
+            }
+            let payload: String = match value.get() {
+                Ok(s) => s,
+                Err(_) => return false,
+            };
+
+            let (dest_path, drop_pos) =
+                match clamp_drop_pos(&store_d, &tree_view_d, x as i32, y as i32) {
+                    Some(r) => r,
+                    None => match store_d.iter_children(None) {
+                        Some(root_iter) => (
+                            store_d.path(&root_iter),
+                            gtk::TreeViewDropPosition::IntoOrAfter,
+                        ),
+                        None => return false,
+                    },
+                };
+
+            if payload.starts_with("new:") {
+                // Match the templates used by the "Add ..." buttons so that
+                // dragging an item from a button behaves like clicking it.
+                let node = match payload.as_str() {
+                    "new:command" => CopiedNode {
+                        label: "New Command".to_string(),
+                        icon: "application-x-executable".to_string(),
+                        action_type: "shell command".to_string(),
+                        action_cmd: "".to_string(),
+                        keep_open: false,
+                        quick_select: "".to_string(),
+                        children: vec![],
+                    },
+                    "new:submenu" => CopiedNode {
+                        label: "New Submenu".to_string(),
+                        icon: "folder".to_string(),
+                        action_type: "submenu".to_string(),
+                        action_cmd: "".to_string(),
+                        keep_open: false,
+                        quick_select: "".to_string(),
+                        children: vec![CopiedNode {
+                            label: "New Command".to_string(),
+                            icon: "application-x-executable".to_string(),
+                            action_type: "shell command".to_string(),
+                            action_cmd: "".to_string(),
+                            keep_open: false,
+                            quick_select: "".to_string(),
+                            children: vec![],
+                        }],
+                    },
+                    "new:hotkey" => CopiedNode {
+                        label: "New Hotkey".to_string(),
+                        icon: "keyboard".to_string(),
+                        action_type: "hotkey".to_string(),
+                        action_cmd: "".to_string(),
+                        keep_open: false,
+                        quick_select: "".to_string(),
+                        children: vec![],
+                    },
+                    _ => return false,
+                };
+
+                let inserted_iter = Self::insert_node_at_drop_pos(&store_d, &dest_path, drop_pos, &node);
+                let path = store_d.path(&inserted_iter);
+                // Expand first: selecting a row inside a still-folded folder
+                // would be discarded when the expansion realizes the rows.
+                tree_view_d.expand_to_path(&path);
+                tree_view_d.selection().select_iter(&inserted_iter);
+                Self::update_quick_select_placeholder(&store_d, &inserted_iter, &entry_qs_d);
+                return true;
+            } else if let Some(rest) = payload.strip_prefix("move:") {
+                // A TreePath from nested rows contains ':' itself (e.g. "0:1"),
+                // so split at the start of the JSON object instead: serde
+                // always emits a compact object that starts with '{'.
+                if let Some(brace_idx) = rest.find('{') {
+                    let src_path_str = rest[..brace_idx].trim_end_matches(':');
+                    let json_str = &rest[brace_idx..];
+
+                    let node: CopiedNode = match serde_json::from_str(json_str) {
+                        Ok(n) => n,
+                        Err(_) => return false,
+                    };
+
+                    let dest_str = dest_path.to_str().map(|s| s.to_string()).unwrap_or_default();
+                    if dest_str == src_path_str || dest_str.starts_with(&format!("{}:", src_path_str)) {
+                        return false; // Cannot drop into itself or its own descendants
+                    }
+
+                    let src_iter =
+                        match gtk::TreePath::from_string(src_path_str).and_then(|p| store_d.iter(&p)) {
+                            Some(i) => i,
+                            None => return false,
+                        };
+
+                    let dest_iter = match store_d.iter(&dest_path) {
+                        Some(i) => i,
+                        None => return false,
+                    };
+
+                    // drop_pos was already folded by clamp_drop_pos(), so the Into*
+                    // positions only reach actual folders:
+                    //   IntoOrBefore -> first child of the folder
+                    //   IntoOrAfter  -> last child  of the folder
+                    //   Before/After -> sibling of dest (unless dest is
+                    //                   the root row: nothing may live beside
+                    //                   the root, so those fold into the root)
+                    let dest_act: String = store_d.get(&dest_iter, 2);
+                    let dest_is_folder = dest_act == "submenu" || dest_act == "root";
+                    let dest_is_root = dest_act == "root";
+
+                    // Remove the original first (the node was already serialized
+                    // above). dest_iter is a stable NODE reference and could never
+                    // be the source row (dest != src was rejected above), so it
+                    // stays valid across the removal. The folder "first child"
+                    // insertion uses a POSITION-based insert instead, because that
+                    // node is exactly the source row when moving a folder's own
+                    // first child and would have been freed by the removal.
+                    store_d.remove(&src_iter);
+
+                    let inserted_iter = match drop_pos {
+                        gtk::TreeViewDropPosition::IntoOrBefore if dest_is_folder => {
+                            store_d.insert(Some(&dest_iter), 0)
+                        }
+                        gtk::TreeViewDropPosition::IntoOrAfter if dest_is_folder => {
+                            store_d.append(Some(&dest_iter))
+                        }
+                        gtk::TreeViewDropPosition::Before if dest_is_root => {
+                            store_d.append(Some(&dest_iter))
+                        }
+                        gtk::TreeViewDropPosition::After if dest_is_root => {
+                            store_d.append(Some(&dest_iter))
+                        }
+                        gtk::TreeViewDropPosition::Before
+                        | gtk::TreeViewDropPosition::IntoOrBefore => store_d.insert_before(
+                            store_d.iter_parent(&dest_iter).as_ref(),
+                            Some(&dest_iter),
+                        ),
+                        _ => store_d.insert_after(
+                            store_d.iter_parent(&dest_iter).as_ref(),
+                            Some(&dest_iter),
+                        ),
+                    };
+                    Self::populate_node_fields(&store_d, &inserted_iter, &node);
+
+                    let path = store_d.path(&inserted_iter);
+                    // Expand first: selecting a row inside a still-folded folder
+                    // would be discarded when the expansion realizes the rows.
+                    tree_view_d.expand_to_path(&path);
+                    tree_view_d.selection().select_iter(&inserted_iter);
+                    Self::update_quick_select_placeholder(&store_d, &inserted_iter, &entry_qs_d);
+                    return true;
+                }
+            }
+
+            false
+        });
+
+        // The drop indicator drawn by GtkTreeView on redraw dereferences the
+        // We draw our own drop indicator on an overlay (see "Custom,
+        // depth-proportional drop indicator" above), so GTK's built-in
+        // full-width dndtarget line is never armed. Keep the tree's internal
+        // model dest enabled with EMPTY formats anyway: it creates the
+        // "dndtarget" cssnode (needed if set_drag_dest_row() is ever used
+        // again, which crashed without it) while its async drop target never
+        // matches and stays inert, leaving our custom DropTarget as the sole
+        // active target.
+        tree_view.enable_model_drag_dest(&gdk::ContentFormats::new(&[]), gdk::DragAction::MOVE);
+        tree_view.add_controller(drop_target);
 
         // Save Button Handler
         let store_save = store.clone();
@@ -2000,28 +2497,120 @@ icon = "application-x-executable"
         }
     }
 
+    fn populate_node_fields(store: &gtk::TreeStore, iter: &gtk::TreeIter, node: &CopiedNode) {
+        store.set_value(iter, 0, &node.icon.to_value());
+        store.set_value(iter, 1, &node.label.to_value());
+        store.set_value(iter, 2, &node.action_type.to_value());
+        store.set_value(iter, 3, &node.action_cmd.to_value());
+        store.set_value(iter, 4, &node.keep_open.to_value());
+        store.set_value(iter, 5, &node.quick_select.to_value());
+
+        let mut prev_child = None;
+        for child in &node.children {
+            let inserted_child =
+                Self::paste_node_recursive(store, Some(iter), prev_child.as_ref(), child);
+            prev_child = Some(inserted_child);
+        }
+    }
+
     fn paste_node_recursive(
         store: &gtk::TreeStore,
         parent: Option<&gtk::TreeIter>,
         sibling: Option<&gtk::TreeIter>,
         node: &CopiedNode,
     ) -> gtk::TreeIter {
-        let new_iter = store.insert_after(parent, sibling);
-        store.set_value(&new_iter, 0, &node.icon.to_value());
-        store.set_value(&new_iter, 1, &node.label.to_value());
-        store.set_value(&new_iter, 2, &node.action_type.to_value());
-        store.set_value(&new_iter, 3, &node.action_cmd.to_value());
-        store.set_value(&new_iter, 4, &node.keep_open.to_value());
-        store.set_value(&new_iter, 5, &node.quick_select.to_value());
-
-        let mut prev_child = None;
-        for child in &node.children {
-            let inserted_child =
-                Self::paste_node_recursive(store, Some(&new_iter), prev_child.as_ref(), child);
-            prev_child = Some(inserted_child);
-        }
-
+        let new_iter = if let Some(sib) = sibling {
+            store.insert_after(parent, Some(sib))
+        } else {
+            store.append(parent)
+        };
+        Self::populate_node_fields(store, &new_iter, node);
         new_iter
+    }
+
+    fn insert_node_before_sibling(
+        store: &gtk::TreeStore,
+        parent: Option<&gtk::TreeIter>,
+        sibling: &gtk::TreeIter,
+        node: &CopiedNode,
+    ) -> gtk::TreeIter {
+        let new_iter = store.insert_before(parent, Some(sibling));
+        Self::populate_node_fields(store, &new_iter, node);
+        new_iter
+    }
+
+    fn insert_node_at_drop_pos(
+        store: &gtk::TreeStore,
+        dest_path: &gtk::TreePath,
+        pos: gtk::TreeViewDropPosition,
+        node: &CopiedNode,
+    ) -> gtk::TreeIter {
+        if let Some(dest_iter) = store.iter(dest_path) {
+            let act_type: String = store.get(&dest_iter, 2);
+            let is_folder = act_type == "submenu" || act_type == "root";
+
+            match pos {
+                // clamp_drop_pos() normally folds the Into* variants away for
+                // non-folders, but handle both defensively.
+                gtk::TreeViewDropPosition::IntoOrBefore => {
+                    if is_folder {
+                        match store.iter_children(Some(&dest_iter)) {
+                            Some(fc) => {
+                                Self::insert_node_before_sibling(store, Some(&dest_iter), &fc, node)
+                            }
+                            None => Self::paste_node_recursive(store, Some(&dest_iter), None, node),
+                        }
+                    } else {
+                        let parent = store.iter_parent(&dest_iter);
+                        Self::insert_node_before_sibling(
+                            store,
+                            parent.as_ref(),
+                            &dest_iter,
+                            node,
+                        )
+                    }
+                }
+                gtk::TreeViewDropPosition::IntoOrAfter => {
+                    if is_folder {
+                        Self::paste_node_recursive(store, Some(&dest_iter), None, node)
+                    } else {
+                        let parent = store.iter_parent(&dest_iter);
+                        Self::paste_node_recursive(store, parent.as_ref(), Some(&dest_iter), node)
+                    }
+                }
+                gtk::TreeViewDropPosition::Before => {
+                    if act_type == "root" {
+                        Self::paste_node_recursive(store, Some(&dest_iter), None, node)
+                    } else {
+                        let parent = store.iter_parent(&dest_iter);
+                        Self::insert_node_before_sibling(
+                            store,
+                            parent.as_ref(),
+                            &dest_iter,
+                            node,
+                        )
+                    }
+                }
+                gtk::TreeViewDropPosition::After => {
+                    if act_type == "root" {
+                        Self::paste_node_recursive(store, Some(&dest_iter), None, node)
+                    } else {
+                        let parent = store.iter_parent(&dest_iter);
+                        Self::paste_node_recursive(store, parent.as_ref(), Some(&dest_iter), node)
+                    }
+                }
+                _ => {
+                    let parent = store.iter_parent(&dest_iter);
+                    Self::paste_node_recursive(store, parent.as_ref(), Some(&dest_iter), node)
+                }
+            }
+        } else if let Some(root) = store.iter_children(None) {
+            Self::paste_node_recursive(store, Some(&root), None, node)
+        } else {
+            let new_iter = store.append(None);
+            Self::populate_node_fields(store, &new_iter, node);
+            new_iter
+        }
     }
 
     fn update_quick_select_placeholder(
@@ -2043,5 +2632,12 @@ icon = "application-x-executable"
         } else {
             entry.set_placeholder_text(None);
         }
+    }
+
+    fn create_drag_content(payload: &str) -> gdk::ContentProvider {
+        let bytes = gtk::glib::Bytes::from(payload.as_bytes());
+        let provider_bytes = gdk::ContentProvider::for_bytes("text/plain;charset=utf-8", &bytes);
+        let provider_val = gdk::ContentProvider::for_value(&payload.to_value());
+        gdk::ContentProvider::new_union(&[provider_bytes, provider_val])
     }
 }
