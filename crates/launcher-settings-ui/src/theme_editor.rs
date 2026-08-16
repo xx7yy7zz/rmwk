@@ -66,6 +66,7 @@ impl ThemeEditor {
 
         let sys_overrides = Rc::new(RefCell::new(initial_sys.unwrap_or_default()));
         let std_overrides = Rc::new(RefCell::new(load_standard_theme(initial_theme)));
+        let is_saving = Rc::new(std::cell::Cell::new(false));
 
         let tweaks_box_c = tweaks_box.clone();
         let sys_overrides_c = sys_overrides.clone();
@@ -74,6 +75,7 @@ impl ThemeEditor {
         let btn_reset_c = btn_reset.clone();
         let active_monitor = Rc::new(RefCell::new(None::<gio::FileMonitor>));
         let active_monitor_c = active_monitor.clone();
+        let is_saving_mon = is_saving.clone();
 
         combo_theme.connect_changed(move |combo| {
             if let Some(m) = active_monitor_c.borrow_mut().take() {
@@ -107,15 +109,34 @@ impl ThemeEditor {
                         let std_overrides_mc = std_overrides_c.clone();
                         let tweaks_box_mc = tweaks_box_c.clone();
                         let id_mc = id.to_string();
+                        let is_saving_m = is_saving_mon.clone();
+                        let pending_theme_update = Rc::new(std::cell::Cell::new(false));
                         monitor.connect_changed(move |_, _, _, event| {
-                            if event == gio::FileMonitorEvent::ChangesDoneHint
-                                || event == gio::FileMonitorEvent::Created
+                            if is_saving_m.get() {
+                                return;
+                            }
+                            if (event == gio::FileMonitorEvent::ChangesDoneHint
+                                || event == gio::FileMonitorEvent::Created)
+                                && !pending_theme_update.get()
                             {
-                                *std_overrides_mc.borrow_mut() = load_standard_theme(&id_mc);
-                                Self::populate_standard_tweaks(
-                                    &tweaks_box_mc,
-                                    std_overrides_mc.clone(),
-                                );
+                                pending_theme_update.set(true);
+                                let std_ov = std_overrides_mc.clone();
+                                let twk_box = tweaks_box_mc.clone();
+                                let theme_id = id_mc.clone();
+                                let pending = pending_theme_update.clone();
+                                let is_sav = is_saving_m.clone();
+                                gtk4::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+                                    pending.set(false);
+                                    if is_sav.get() {
+                                        return gtk4::glib::ControlFlow::Break;
+                                    }
+                                    *std_ov.borrow_mut() = load_standard_theme(&theme_id);
+                                    Self::populate_standard_tweaks(
+                                        &twk_box,
+                                        std_ov.clone(),
+                                    );
+                                    gtk4::glib::ControlFlow::Break
+                                });
                             }
                         });
                         *active_monitor_c.borrow_mut() = Some(monitor);
@@ -138,8 +159,10 @@ impl ThemeEditor {
         let btn_save_combo = combo_theme.clone();
         let btn_save_sys = sys_overrides.clone();
         let btn_save_std = std_overrides.clone();
+        let is_saving_btn = is_saving.clone();
         btn_save.connect_clicked(move |_| {
             if let Some(theme_id) = btn_save_combo.active_id() {
+                is_saving_btn.set(true);
                 if let Ok(mut cfg) = launcher_core::load_config(&btn_save_config_path) {
                     if theme_id == "system" {
                         cfg.ui.system_theme_overrides = Some(btn_save_sys.borrow().clone());
@@ -149,23 +172,20 @@ impl ThemeEditor {
                     } else {
                         save_standard_theme(&theme_id, &btn_save_std.borrow());
                     }
-                    // Trigger hot-reload
+                    // Trigger hot-reload over sync IPC
                     let socket_path = launcher_ipc::get_socket_path();
                     if socket_path.exists() {
-                        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                        {
-                            let _ = rt.block_on(async {
-                                let _ = launcher_ipc::send_message(
-                                    &socket_path,
-                                    &launcher_ipc::IpcMessage::ReloadConfig,
-                                )
-                                .await;
-                            });
-                        }
+                        let _ = launcher_ipc::send_message_sync(
+                            &socket_path,
+                            &launcher_ipc::IpcMessage::ReloadConfig,
+                        );
                     }
                 }
+                let is_sav_timer = is_saving_btn.clone();
+                gtk4::glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
+                    is_sav_timer.set(false);
+                    gtk4::glib::ControlFlow::Break
+                });
             }
         });
 

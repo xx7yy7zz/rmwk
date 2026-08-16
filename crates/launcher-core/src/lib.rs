@@ -41,6 +41,10 @@ pub mod paths {
         get_config_dir().join("MaterialSymbolsRounded.codepoints")
     }
 
+    pub fn get_tags_file() -> PathBuf {
+        get_config_dir().join("MaterialSymbolsRounded.tags")
+    }
+
     pub fn get_gtk_css_path() -> Option<PathBuf> {
         dirs::config_dir().map(|p| p.join("gtk-4.0").join("gtk.css"))
     }
@@ -398,6 +402,43 @@ pub fn load_material_codepoints<P: AsRef<Path>>(
                         map.insert(name, c);
                     }
                 }
+            }
+        }
+    }
+    map
+}
+
+pub fn load_material_tags<P: AsRef<Path>>(
+    config_path: P,
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
+    let path = config_path
+        .as_ref()
+        .parent()
+        .map(|p| p.join("MaterialSymbolsRounded.tags"))
+        .unwrap_or_else(paths::get_tags_file);
+
+    let resolved_path = if path.exists() {
+        path
+    } else {
+        paths::get_tags_file()
+    };
+
+    if let Ok(content) = fs::read_to_string(&resolved_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some(colon_idx) = line.find(':') {
+                let name = line[..colon_idx].trim().to_string();
+                let tags_str = &line[colon_idx + 1..];
+                let tags: Vec<String> = tags_str
+                    .split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                map.entry(name).or_insert_with(Vec::new).extend(tags);
             }
         }
     }

@@ -38,16 +38,19 @@ pub fn extract_css_color(css: &str, exact_selector: &str) -> Option<gdk::RGBA> {
         if let Some(brace_idx) = block.find('{') {
             let selectors = &block[..brace_idx];
             let rules = &block[brace_idx + 1..];
-            
+
             // Check if exact_selector is one of the selectors (comma separated)
             if selectors.split(',').any(|s| s.trim() == exact_selector) {
-                // Find color:
-                if let Some(color_idx) = rules.find("color:") {
-                    let c_rest = &rules[color_idx + 6..];
-                    if let Some(semi) = c_rest.find(';') {
-                        let color_str = c_rest[..semi].trim();
-                        if let Ok(c) = gdk::RGBA::from_str(color_str) {
-                            return Some(c);
+                // Parse declarations split by ';' to strictly match property 'color'
+                for decl in rules.split(';') {
+                    let decl = decl.trim();
+                    if let Some(colon_idx) = decl.find(':') {
+                        let prop = decl[..colon_idx].trim();
+                        let val = decl[colon_idx + 1..].trim();
+                        if prop == "color" {
+                            if let Ok(c) = gdk::RGBA::from_str(val) {
+                                return Some(c);
+                            }
                         }
                     }
                 }

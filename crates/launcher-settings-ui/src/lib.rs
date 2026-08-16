@@ -19,6 +19,19 @@ struct CopiedNode {
     children: Vec<CopiedNode>,
 }
 
+#[derive(Clone, Debug)]
+struct MaterialIconItem {
+    name: String,
+    glyph: char,
+    search_key: String,
+}
+
+#[derive(Clone, Debug)]
+struct SystemIconItem {
+    name: String,
+    search_key: String,
+}
+
 pub struct SettingsApp {
     app: gtk::Application,
     menu_path: PathBuf,
@@ -100,6 +113,7 @@ impl SettingsApp {
         left_vbox.set_vexpand(true);
 
         let active_menu_path = Rc::new(RefCell::new(menu_path.clone()));
+        let is_saving = Rc::new(std::cell::Cell::new(false));
 
         // Menu Selector
         let menu_selector_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
@@ -729,6 +743,10 @@ impl SettingsApp {
         let selection_del = tree_view.selection();
         btn_delete.connect_clicked(move |_| {
             if let Some((_, iter)) = selection_del.selected() {
+                let act_type: String = store_del.get(&iter, 2);
+                if act_type == "root" {
+                    return; // Cannot delete root
+                }
                 store_del.remove(&iter);
             }
         });
@@ -743,6 +761,7 @@ impl SettingsApp {
                 // To move up, we swap with the previous sibling in the TreeStore
                 if store_up.iter_previous(&mut prev) {
                     store_up.swap(&iter, &prev);
+                    selection_up.select_iter(&iter);
                     Self::update_quick_select_placeholder(&store_up, &iter, &entry_qs_up);
                 }
             }
@@ -758,6 +777,7 @@ impl SettingsApp {
                 // In TreeStore, moving down swaps with the next sibling
                 if store_down.iter_next(&mut next) {
                     store_down.swap(&iter, &next);
+                    selection_down.select_iter(&iter);
                     Self::update_quick_select_placeholder(&store_down, &iter, &entry_qs_down);
                 }
             }
@@ -818,7 +838,10 @@ impl SettingsApp {
         let chk_enable_blur_save = chk_enable_blur.clone();
         let combo_menu_style_save = combo_menu_style.clone();
         let active_menu_path_save = active_menu_path.clone();
+        let is_saving_save = is_saving.clone();
         btn_save.connect_clicked(move |_| {
+            is_saving_save.set(true);
+
             // 1. Serialize and save the menu (serialize only the children of the permanent "Menu (Root)" node)
             let mut items = vec![];
             let mut root_icon = None;
@@ -874,22 +897,20 @@ impl SettingsApp {
                 }
             }
 
-            // 3. Trigger Hot-Reload over IPC socket
+            // 3. Trigger Hot-Reload over IPC socket synchronously
             let socket_path = launcher_ipc::get_socket_path();
             if socket_path.exists() {
-                // Spawn a quick tokio block to send the reload message
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let _ = rt.block_on(async {
-                    let _ = launcher_ipc::send_message(
-                        &socket_path,
-                        &launcher_ipc::IpcMessage::ReloadConfig,
-                    )
-                    .await;
-                });
+                let _ = launcher_ipc::send_message_sync(
+                    &socket_path,
+                    &launcher_ipc::IpcMessage::ReloadConfig,
+                );
             }
+
+            let is_sav_timer = is_saving_save.clone();
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
+                is_sav_timer.set(false);
+                gtk::glib::ControlFlow::Break
+            });
         });
 
         // 4. Hotkey Recorder Logic
@@ -972,30 +993,72 @@ impl SettingsApp {
         let combo_visual_cue_watch = combo_visual_cue.clone();
         let combo_menu_style_watch = combo_menu_style.clone();
         let chk_enable_blur_watch = chk_enable_blur.clone();
+        let is_saving_cfg_watch = is_saving.clone();
+        let pending_cfg_update = Rc::new(std::cell::Cell::new(false));
 
         if let Ok(monitor) = config_file.monitor_file(
             gtk::gio::FileMonitorFlags::NONE,
             gtk::gio::Cancellable::NONE,
         ) {
+            let is_saving_m = is_saving_cfg_watch.clone();
+            let pending_m = pending_cfg_update.clone();
+            let cp_w = config_path_watch.clone();
+            let combo_th = combo_theme_watch.clone();
+            let spin_r = spin_extra_radius_watch.clone();
+            let chk_sym = chk_symbolic_icons_watch.clone();
+            let chk_bold = chk_bold_chars_watch.clone();
+            let chk_cnt = chk_center_layout_watch.clone();
+            let chk_dis = chk_disable_hover_anim_watch.clone();
+            let chk_blr = chk_enable_blur_watch.clone();
+            let combo_vis = combo_visual_cue_watch.clone();
+            let combo_sty = combo_menu_style_watch.clone();
+            let sys_ov = sys_overrides_watch.clone();
+
             monitor.connect_changed(move |_, _, _, event| {
-                if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
-                    || event == gtk::gio::FileMonitorEvent::Created
+                if is_saving_m.get() {
+                    return;
+                }
+                if (event == gtk::gio::FileMonitorEvent::ChangesDoneHint
+                    || event == gtk::gio::FileMonitorEvent::Created)
+                    && !pending_m.get()
                 {
-                    if let Ok(cfg) = launcher_core::load_config(&config_path_watch) {
-                        combo_theme_watch.set_active_id(Some(&cfg.ui.theme));
-                        spin_extra_radius_watch.set_value(cfg.ui.extra_radius);
-                        chk_symbolic_icons_watch.set_active(cfg.ui.use_symbolic_icons);
-                        chk_bold_chars_watch.set_active(cfg.ui.bold_single_chars);
-                        chk_center_layout_watch.set_active(cfg.ui.center_layout);
-                        chk_disable_hover_anim_watch.set_active(cfg.ui.disable_hover_animation);
-                        chk_enable_blur_watch.set_active(cfg.ui.enable_blur);
-                        combo_visual_cue_watch.set_active_id(Some(&cfg.ui.hover_visual_cue));
-                        combo_menu_style_watch.set_active_id(Some(&cfg.ui.menu_style));
-                        if let Some(sys) = cfg.ui.system_theme_overrides {
-                            *sys_overrides_watch.borrow_mut() = sys;
+                    pending_m.set(true);
+                    let pending_cb = pending_m.clone();
+                    let is_sav_cb = is_saving_m.clone();
+                    let cp_cb = cp_w.clone();
+                    let combo_th_cb = combo_th.clone();
+                    let spin_r_cb = spin_r.clone();
+                    let chk_sym_cb = chk_sym.clone();
+                    let chk_bold_cb = chk_bold.clone();
+                    let chk_cnt_cb = chk_cnt.clone();
+                    let chk_dis_cb = chk_dis.clone();
+                    let chk_blr_cb = chk_blr.clone();
+                    let combo_vis_cb = combo_vis.clone();
+                    let combo_sty_cb = combo_sty.clone();
+                    let sys_ov_cb = sys_ov.clone();
+
+                    gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+                        pending_cb.set(false);
+                        if is_sav_cb.get() {
+                            return gtk::glib::ControlFlow::Break;
                         }
-                        combo_theme_watch.emit_by_name::<()>("changed", &[]);
-                    }
+                        if let Ok(cfg) = launcher_core::load_config(&cp_cb) {
+                            combo_th_cb.set_active_id(Some(&cfg.ui.theme));
+                            spin_r_cb.set_value(cfg.ui.extra_radius);
+                            chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
+                            chk_bold_cb.set_active(cfg.ui.bold_single_chars);
+                            chk_cnt_cb.set_active(cfg.ui.center_layout);
+                            chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
+                            chk_blr_cb.set_active(cfg.ui.enable_blur);
+                            combo_vis_cb.set_active_id(Some(&cfg.ui.hover_visual_cue));
+                            combo_sty_cb.set_active_id(Some(&cfg.ui.menu_style));
+                            if let Some(sys) = cfg.ui.system_theme_overrides {
+                                *sys_ov_cb.borrow_mut() = sys;
+                            }
+                            combo_th_cb.emit_by_name::<()>("changed", &[]);
+                        }
+                        gtk::glib::ControlFlow::Break
+                    });
                 }
             });
             file_monitors.borrow_mut().push(monitor);
@@ -1013,13 +1076,18 @@ impl SettingsApp {
         let config_path_dir_watch = config_path.clone();
         let is_rebuilding_dir = is_rebuilding_combo.clone();
         let active_menu_path_dir_watch = active_menu_path.clone();
+        let is_saving_dir_watch = is_saving.clone();
         let pending_dir_update = Rc::new(std::cell::Cell::new(false));
         
         if let Ok(monitor) = menus_dir_file.monitor_directory(
             gtk::gio::FileMonitorFlags::NONE,
             gtk::gio::Cancellable::NONE,
         ) {
+            let is_sav_d = is_saving_dir_watch.clone();
             monitor.connect_changed(move |_, _, _, event| {
+                if is_sav_d.get() {
+                    return;
+                }
                 if event == gtk::gio::FileMonitorEvent::Created
                     || event == gtk::gio::FileMonitorEvent::Deleted
                     || event == gtk::gio::FileMonitorEvent::Renamed
@@ -1032,9 +1100,13 @@ impl SettingsApp {
                         let is_reb = is_rebuilding_dir.clone();
                         let pending = pending_dir_update.clone();
                         let active_path_ref = active_menu_path_dir_watch.clone();
+                        let is_sav_cb = is_sav_d.clone();
                         
                         gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
                             pending.set(false);
+                            if is_sav_cb.get() {
+                                return gtk::glib::ControlFlow::Break;
+                            }
                             is_reb.set(true);
                             
                             let intended_active = active_path_ref.borrow().file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
@@ -1074,6 +1146,7 @@ impl SettingsApp {
         let config_path_clone = config_path.clone();
         let store_clone = store.clone();
         let tree_view_clone = tree_view.clone();
+        let is_saving_menu_watch = is_saving.clone();
 
         let active_menu_monitor_clone = active_menu_monitor.clone();
         let is_rebuilding_changed = is_rebuilding_combo.clone();
@@ -1123,6 +1196,7 @@ impl SettingsApp {
                 let store_watch = store_clone.clone();
                 let tree_view_watch = tree_view_clone.clone();
                 let menu_path_watch = new_path.clone();
+                let is_sav_menu = is_saving_menu_watch.clone();
 
                 let pending_file_update = Rc::new(std::cell::Cell::new(false));
                 if let Ok(monitor) = menu_file.monitor_file(
@@ -1130,6 +1204,9 @@ impl SettingsApp {
                     gtk::gio::Cancellable::NONE,
                 ) {
                     monitor.connect_changed(move |_, _, _, event| {
+                        if is_sav_menu.get() {
+                            return;
+                        }
                         if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
                             || event == gtk::gio::FileMonitorEvent::Created
                         {
@@ -1140,9 +1217,13 @@ impl SettingsApp {
                                 let path_w = menu_path_watch.clone();
                                 let pending = pending_file_update.clone();
                                 let name_w = name.clone();
+                                let is_sav_cb = is_sav_menu.clone();
                                 
                                 gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
                                     pending.set(false);
+                                    if is_sav_cb.get() {
+                                        return gtk::glib::ControlFlow::Break;
+                                    }
                                     if let Ok(m) = launcher_core::load_menu(&path_w) {
                                         let mut expanded = Vec::new();
                                         tree_w.map_expanded_rows(|_, path| {
@@ -1615,7 +1696,7 @@ icon = "application-x-executable"
     fn refresh_material_grid(
         flow_box: &gtk::FlowBox,
         search_text: &str,
-        codepoints: &[(String, char)],
+        items: &[MaterialIconItem],
         entry_icon: &gtk::Entry,
         dialog: &gtk::Window,
     ) {
@@ -1624,18 +1705,20 @@ icon = "application-x-executable"
             flow_box.remove(&child);
         }
 
-        let search_lower = search_text.to_lowercase();
+        let search_lower = search_text.trim().to_lowercase();
         let mut count = 0;
 
-        for (name, glyph) in codepoints {
-            if search_lower.is_empty() || name.to_lowercase().contains(&search_lower) {
+        for item in items {
+            if search_lower.is_empty() || item.search_key.contains(&search_lower) {
                 let btn = gtk::Button::builder().has_frame(false).build();
                 let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
 
-                let lbl_glyph = gtk::Label::new(Some(&glyph.to_string()));
+                let mut glyph_buf = [0u8; 4];
+                let glyph_str = item.glyph.encode_utf8(&mut glyph_buf);
+                let lbl_glyph = gtk::Label::new(Some(glyph_str));
                 lbl_glyph.add_css_class("material-icon-glyph");
 
-                let lbl_name = gtk::Label::new(Some(name));
+                let lbl_name = gtk::Label::new(Some(&item.name));
                 lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 lbl_name.set_max_width_chars(10);
 
@@ -1645,7 +1728,7 @@ icon = "application-x-executable"
 
                 flow_box.insert(&btn, -1);
 
-                let name_clone = name.clone();
+                let name_clone = item.name.clone();
                 let entry_clone = entry_icon.clone();
                 let dialog_clone = dialog.clone();
                 btn.connect_clicked(move |_| {
@@ -1664,7 +1747,7 @@ icon = "application-x-executable"
     fn refresh_system_grid(
         flow_box: &gtk::FlowBox,
         search_text: &str,
-        icons: &[String],
+        icons: &[SystemIconItem],
         entry_icon: &gtk::Entry,
         dialog: &gtk::Window,
     ) {
@@ -1673,18 +1756,18 @@ icon = "application-x-executable"
             flow_box.remove(&child);
         }
 
-        let search_lower = search_text.to_lowercase();
+        let search_lower = search_text.trim().to_lowercase();
         let mut count = 0;
 
-        for name in icons {
-            if search_lower.is_empty() || name.to_lowercase().contains(&search_lower) {
+        for item in icons {
+            if search_lower.is_empty() || item.search_key.contains(&search_lower) {
                 let btn = gtk::Button::builder().has_frame(false).build();
                 let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
 
-                let img = gtk::Image::from_icon_name(name);
+                let img = gtk::Image::from_icon_name(&item.name);
                 img.set_icon_size(gtk::IconSize::Large);
 
-                let lbl_name = gtk::Label::new(Some(name));
+                let lbl_name = gtk::Label::new(Some(&item.name));
                 lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
                 lbl_name.set_max_width_chars(10);
 
@@ -1694,7 +1777,7 @@ icon = "application-x-executable"
 
                 flow_box.insert(&btn, -1);
 
-                let name_clone = name.clone();
+                let name_clone = item.name.clone();
                 let entry_clone = entry_icon.clone();
                 let dialog_clone = dialog.clone();
                 btn.connect_clicked(move |_| {
@@ -1781,49 +1864,86 @@ icon = "application-x-executable"
         main_box.append(&notebook);
         dialog.set_child(Some(&main_box));
 
-        // Load Material codepoints
+        // Load Material codepoints and tags metadata
         let codepoints = launcher_core::load_material_codepoints(&config_path);
-        let mut codepoints_vec: Vec<(String, char)> = codepoints.into_iter().collect();
-        codepoints_vec.sort_by(|a, b| a.0.cmp(&b.0));
+        let tags_map = launcher_core::load_material_tags(&config_path);
+        let mut material_items: Vec<MaterialIconItem> = codepoints
+            .into_iter()
+            .map(|(name, glyph)| {
+                let search_key = if let Some(tags) = tags_map.get(&name) {
+                    format!("{} {}", name.to_lowercase(), tags.join(" "))
+                } else {
+                    name.to_lowercase()
+                };
+                MaterialIconItem {
+                    name,
+                    glyph,
+                    search_key,
+                }
+            })
+            .collect();
+        material_items.sort_by(|a, b| a.name.cmp(&b.name));
 
         // Load System icons using gtk::IconTheme
         let display = WidgetExt::display(parent_window);
         let icon_theme = gtk::IconTheme::for_display(&display);
-        let mut system_icons_vec: Vec<String> = icon_theme
+        let mut system_icons_vec: Vec<SystemIconItem> = icon_theme
             .icon_names()
             .into_iter()
-            .map(|s| s.to_string())
+            .map(|s| {
+                let name = s.to_string();
+                let search_key = name.to_lowercase();
+                SystemIconItem { name, search_key }
+            })
             .collect();
-        system_icons_vec.sort();
+        system_icons_vec.sort_by(|a, b| a.name.cmp(&b.name));
 
         // Initial populate (first 100 items)
-        Self::refresh_material_grid(&material_flow, "", &codepoints_vec, entry_icon, &dialog);
+        Self::refresh_material_grid(&material_flow, "", &material_items, entry_icon, &dialog);
         Self::refresh_system_grid(&system_flow, "", &system_icons_vec, entry_icon, &dialog);
 
-        // Connect Search
+        // Connect Search with 150ms debounce
         let material_flow_clone = material_flow.clone();
         let system_flow_clone = system_flow.clone();
-        let codepoints_clone = codepoints_vec.clone();
+        let material_items_clone = material_items.clone();
         let system_icons_clone = system_icons_vec.clone();
         let entry_icon_clone = entry_icon.clone();
         let dialog_clone = dialog.clone();
+        let debounce_source = Rc::new(RefCell::new(None::<gtk::glib::SourceId>));
+        let debounce_source_clone = debounce_source.clone();
 
         search_entry.connect_search_changed(move |entry| {
-            let text = entry.text().to_lowercase();
-            Self::refresh_material_grid(
-                &material_flow_clone,
-                &text,
-                &codepoints_clone,
-                &entry_icon_clone,
-                &dialog_clone,
-            );
-            Self::refresh_system_grid(
-                &system_flow_clone,
-                &text,
-                &system_icons_clone,
-                &entry_icon_clone,
-                &dialog_clone,
-            );
+            if let Some(src) = debounce_source_clone.borrow_mut().take() {
+                src.remove();
+            }
+            let text = entry.text().to_string();
+            let mat_flow = material_flow_clone.clone();
+            let sys_flow = system_flow_clone.clone();
+            let mat_items = material_items_clone.clone();
+            let sys_items = system_icons_clone.clone();
+            let ent_icon = entry_icon_clone.clone();
+            let dlg = dialog_clone.clone();
+            let src_holder = debounce_source_clone.clone();
+
+            let source_id = gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+                *src_holder.borrow_mut() = None;
+                Self::refresh_material_grid(
+                    &mat_flow,
+                    &text,
+                    &mat_items,
+                    &ent_icon,
+                    &dlg,
+                );
+                Self::refresh_system_grid(
+                    &sys_flow,
+                    &text,
+                    &sys_items,
+                    &ent_icon,
+                    &dlg,
+                );
+                gtk::glib::ControlFlow::Break
+            });
+            *debounce_source_clone.borrow_mut() = Some(source_id);
         });
 
         dialog.present();
