@@ -74,7 +74,6 @@ impl SettingsApp {
         window.set_title(Some("rmwk Settings"));
         window.set_default_size(800, 500);
 
-
         let font_provider = gtk::CssProvider::new();
         let font_css = "
             .material-icon-glyph {
@@ -95,7 +94,10 @@ impl SettingsApp {
         // Load current config and menu
         let menu_config = match launcher_core::load_menu(&menu_path) {
             Ok(m) => m,
-            Err(_) => launcher_core::MenuConfig { icon: None, menu: vec![] },
+            Err(_) => launcher_core::MenuConfig {
+                icon: None,
+                menu: vec![],
+            },
         };
         let ui_config = match launcher_core::load_config(&config_path) {
             Ok(cfg) => cfg,
@@ -143,9 +145,8 @@ impl SettingsApp {
         // would silently switch the menu being edited, so swallow scroll
         // events first: gtk_widget_add_controller() prepends, so this
         // controller is dispatched before the combo's internal one.
-        let combo_scroll_block = gtk::EventControllerScroll::new(
-            gtk::EventControllerScrollFlags::BOTH_AXES,
-        );
+        let combo_scroll_block =
+            gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         combo_scroll_block.connect_scroll(|_c, _dx, _dy| gtk::glib::Propagation::Stop);
         combo_menu_files.add_controller(combo_scroll_block);
 
@@ -185,7 +186,10 @@ impl SettingsApp {
             .and_then(|s| s.to_str())
             .unwrap_or("menu")
             .to_string();
-        let root_icon = menu_config.icon.clone().unwrap_or_else(|| "menu".to_string());
+        let root_icon = menu_config
+            .icon
+            .clone()
+            .unwrap_or_else(|| "menu".to_string());
         let root_iter = store.insert_with_values(
             None,
             None,
@@ -795,7 +799,7 @@ impl SettingsApp {
         btn_add_item.connect_clicked(move |_| {
             let (parent, sibling) = Self::resolve_insertion_coords(&store_add, &selection_add);
             let new_iter = store_add.insert_after(parent.as_ref(), sibling.as_ref());
-            store_add.set_value(&new_iter, 0, &"application-x-executable".to_value());
+            store_add.set_value(&new_iter, 0, &"terminal".to_value());
             store_add.set_value(&new_iter, 1, &"New Command".to_value());
             store_add.set_value(&new_iter, 2, &"shell command".to_value());
             store_add.set_value(&new_iter, 3, &"".to_value());
@@ -821,7 +825,7 @@ impl SettingsApp {
                 Some(&new_iter),
                 None,
                 &[
-                    (0, &"application-x-executable".to_value()),
+                    (0, &"terminal".to_value()),
                     (1, &"New Command".to_value()),
                     (2, &"shell command".to_value()),
                     (3, &"".to_value()),
@@ -939,7 +943,14 @@ impl SettingsApp {
 
         let drag_src_cmd = gtk::DragSource::new();
         drag_src_cmd.set_actions(gdk::DragAction::COPY);
-        let icon_cmd = icon_theme.lookup_icon("utilities-terminal", &["terminal", "system-run"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        let icon_cmd = icon_theme.lookup_icon(
+            "utilities-terminal",
+            &["terminal", "system-run"],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
         drag_src_cmd.set_icon(Some(&icon_cmd), 12, 12);
         let log_prelude = |_src: &gtk::DragSource, _x: f64, _y: f64| {
             Some(Self::create_drag_content("new:command"))
@@ -949,7 +960,14 @@ impl SettingsApp {
 
         let drag_src_sub = gtk::DragSource::new();
         drag_src_sub.set_actions(gdk::DragAction::COPY);
-        let icon_sub = icon_theme.lookup_icon("folder", &["directory"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        let icon_sub = icon_theme.lookup_icon(
+            "folder",
+            &["directory"],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
         drag_src_sub.set_icon(Some(&icon_sub), 12, 12);
         let log_prelude_sub = |_src: &gtk::DragSource, _x: f64, _y: f64| {
             Some(Self::create_drag_content("new:submenu"))
@@ -959,17 +977,29 @@ impl SettingsApp {
 
         let drag_src_hot = gtk::DragSource::new();
         drag_src_hot.set_actions(gdk::DragAction::COPY);
-        let icon_hot = icon_theme.lookup_icon("input-keyboard", &["keyboard"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        let icon_hot = icon_theme.lookup_icon(
+            "input-keyboard",
+            &["keyboard"],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
         drag_src_hot.set_icon(Some(&icon_hot), 12, 12);
-        drag_src_hot.connect_prepare(|_src, _x, _y| {
-            Some(Self::create_drag_content("new:hotkey"))
-        });
+        drag_src_hot.connect_prepare(|_src, _x, _y| Some(Self::create_drag_content("new:hotkey")));
         btn_add_hotkey.add_controller(drag_src_hot);
 
         // --- Drag and Drop: TreeView Reordering (DragSource) ---
         let tree_drag_source = gtk::DragSource::new();
         tree_drag_source.set_actions(gdk::DragAction::MOVE);
-        let icon_tree_default = icon_theme.lookup_icon("system-run", &["application-x-executable"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+        let icon_tree_default = icon_theme.lookup_icon(
+            "system-run",
+            &["terminal"],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
         tree_drag_source.set_icon(Some(&icon_tree_default), 12, 12);
 
         let store_drag = store.clone();
@@ -982,7 +1012,8 @@ impl SettingsApp {
             // when one is shown; resampling them raw would resolve the row a
             // header-height (~one row) below the actual press.
             let (bin_x, bin_y) = tree_drag.convert_widget_to_bin_window_coords(x as i32, y as i32);
-            if let Some((Some(path), _col, _cell_x, _cell_y)) = tree_drag.path_at_pos(bin_x, bin_y) {
+            if let Some((Some(path), _col, _cell_x, _cell_y)) = tree_drag.path_at_pos(bin_x, bin_y)
+            {
                 if let Some(iter) = store_drag.iter(&path) {
                     let act_type: String = store_drag.get(&iter, 2);
                     if act_type == "root" {
@@ -1003,7 +1034,14 @@ impl SettingsApp {
                     } else {
                         "system-run"
                     };
-                    let paintable = icon_theme_drag.lookup_icon(icon_to_lookup, &["application-x-executable"], 24, 1, gtk::TextDirection::None, gtk::IconLookupFlags::empty());
+                    let paintable = icon_theme_drag.lookup_icon(
+                        icon_to_lookup,
+                        &["terminal"],
+                        24,
+                        1,
+                        gtk::TextDirection::None,
+                        gtk::IconLookupFlags::empty(),
+                    );
                     tree_drag_source_icon.set_icon(Some(&paintable), 12, 12);
 
                     if let Ok(json) = serde_json::to_string(&node) {
@@ -1017,7 +1055,10 @@ impl SettingsApp {
         tree_view.add_controller(tree_drag_source);
 
         // --- Drag and Drop: TreeView Insertion & Reordering (DropTarget) ---
-        let drop_target = gtk::DropTarget::new(gtk::glib::Type::STRING, gdk::DragAction::COPY | gdk::DragAction::MOVE);
+        let drop_target = gtk::DropTarget::new(
+            gtk::glib::Type::STRING,
+            gdk::DragAction::COPY | gdk::DragAction::MOVE,
+        );
 
         // Only re-arm the custom drop indicator when the target row/position
         // actually changes, so we don't churn redraws on every motion event.
@@ -1111,7 +1152,14 @@ impl SettingsApp {
         let armed_enter = armed_dest.clone();
         let store_enter = store.clone();
         drop_target.connect_enter(move |_target, x, y| {
-            arm_dest(&armed_enter, &indicator_enter, &tree_view_enter, &store_enter, x as i32, y as i32);
+            arm_dest(
+                &armed_enter,
+                &indicator_enter,
+                &tree_view_enter,
+                &store_enter,
+                x as i32,
+                y as i32,
+            );
             if clamp_drop_pos(&store_enter, &tree_view_enter, x as i32, y as i32).is_some() {
                 gdk::DragAction::MOVE
             } else {
@@ -1124,7 +1172,14 @@ impl SettingsApp {
         let armed_motion = armed_dest.clone();
         let store_motion = store.clone();
         drop_target.connect_motion(move |_target, x, y| {
-            arm_dest(&armed_motion, &indicator_motion, &tree_view_motion, &store_motion, x as i32, y as i32);
+            arm_dest(
+                &armed_motion,
+                &indicator_motion,
+                &tree_view_motion,
+                &store_motion,
+                x as i32,
+                y as i32,
+            );
             if clamp_drop_pos(&store_motion, &tree_view_motion, x as i32, y as i32).is_some() {
                 gdk::DragAction::MOVE
             } else {
@@ -1178,7 +1233,7 @@ impl SettingsApp {
                 let node = match payload.as_str() {
                     "new:command" => CopiedNode {
                         label: "New Command".to_string(),
-                        icon: "application-x-executable".to_string(),
+                        icon: "terminal".to_string(),
                         action_type: "shell command".to_string(),
                         action_cmd: "".to_string(),
                         keep_open: false,
@@ -1194,7 +1249,7 @@ impl SettingsApp {
                         quick_select: "".to_string(),
                         children: vec![CopiedNode {
                             label: "New Command".to_string(),
-                            icon: "application-x-executable".to_string(),
+                            icon: "terminal".to_string(),
                             action_type: "shell command".to_string(),
                             action_cmd: "".to_string(),
                             keep_open: false,
@@ -1214,7 +1269,8 @@ impl SettingsApp {
                     _ => return false,
                 };
 
-                let inserted_iter = Self::insert_node_at_drop_pos(&store_d, &dest_path, drop_pos, &node);
+                let inserted_iter =
+                    Self::insert_node_at_drop_pos(&store_d, &dest_path, drop_pos, &node);
                 let path = store_d.path(&inserted_iter);
                 // Expand first: selecting a row inside a still-folded folder
                 // would be discarded when the expansion realizes the rows.
@@ -1235,16 +1291,22 @@ impl SettingsApp {
                         Err(_) => return false,
                     };
 
-                    let dest_str = dest_path.to_str().map(|s| s.to_string()).unwrap_or_default();
-                    if dest_str == src_path_str || dest_str.starts_with(&format!("{}:", src_path_str)) {
+                    let dest_str = dest_path
+                        .to_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    if dest_str == src_path_str
+                        || dest_str.starts_with(&format!("{}:", src_path_str))
+                    {
                         return false; // Cannot drop into itself or its own descendants
                     }
 
-                    let src_iter =
-                        match gtk::TreePath::from_string(src_path_str).and_then(|p| store_d.iter(&p)) {
-                            Some(i) => i,
-                            None => return false,
-                        };
+                    let src_iter = match gtk::TreePath::from_string(src_path_str)
+                        .and_then(|p| store_d.iter(&p))
+                    {
+                        Some(i) => i,
+                        None => return false,
+                    };
 
                     let dest_iter = match store_d.iter(&dest_path) {
                         Some(i) => i,
@@ -1349,7 +1411,10 @@ impl SettingsApp {
                 }
                 items = Self::serialize_store(&store_save, Some(&root_iter));
             }
-            let menu_config = launcher_core::MenuConfig { icon: root_icon, menu: items };
+            let menu_config = launcher_core::MenuConfig {
+                icon: root_icon,
+                menu: items,
+            };
             let current_menu_path = active_menu_path_save.borrow().clone();
 
             // Only save if there's a valid menu selected
@@ -1383,7 +1448,10 @@ impl SettingsApp {
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "pie".to_string());
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
-                cfg.last_edited_menu = current_menu_path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+                cfg.last_edited_menu = current_menu_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string());
 
                 // Write back config.toml
                 let content = toml::to_string_pretty(&cfg).unwrap();
@@ -1534,28 +1602,31 @@ impl SettingsApp {
                     let combo_sty_cb = combo_sty.clone();
                     let sys_ov_cb = sys_ov.clone();
 
-                    gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-                        pending_cb.set(false);
-                        if is_sav_cb.get() {
-                            return gtk::glib::ControlFlow::Break;
-                        }
-                        if let Ok(cfg) = launcher_core::load_config(&cp_cb) {
-                            combo_th_cb.set_active_id(Some(&cfg.ui.theme));
-                            spin_r_cb.set_value(cfg.ui.extra_radius);
-                            chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
-                            chk_bold_cb.set_active(cfg.ui.bold_single_chars);
-                            chk_cnt_cb.set_active(cfg.ui.center_layout);
-                            chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
-                            chk_blr_cb.set_active(cfg.ui.enable_blur);
-                            combo_vis_cb.set_active_id(Some(&cfg.ui.hover_visual_cue));
-                            combo_sty_cb.set_active_id(Some(&cfg.ui.menu_style));
-                            if let Some(sys) = cfg.ui.system_theme_overrides {
-                                *sys_ov_cb.borrow_mut() = sys;
+                    gtk::glib::timeout_add_local(
+                        std::time::Duration::from_millis(150),
+                        move || {
+                            pending_cb.set(false);
+                            if is_sav_cb.get() {
+                                return gtk::glib::ControlFlow::Break;
                             }
-                            combo_th_cb.emit_by_name::<()>("changed", &[]);
-                        }
-                        gtk::glib::ControlFlow::Break
-                    });
+                            if let Ok(cfg) = launcher_core::load_config(&cp_cb) {
+                                combo_th_cb.set_active_id(Some(&cfg.ui.theme));
+                                spin_r_cb.set_value(cfg.ui.extra_radius);
+                                chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
+                                chk_bold_cb.set_active(cfg.ui.bold_single_chars);
+                                chk_cnt_cb.set_active(cfg.ui.center_layout);
+                                chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
+                                chk_blr_cb.set_active(cfg.ui.enable_blur);
+                                combo_vis_cb.set_active_id(Some(&cfg.ui.hover_visual_cue));
+                                combo_sty_cb.set_active_id(Some(&cfg.ui.menu_style));
+                                if let Some(sys) = cfg.ui.system_theme_overrides {
+                                    *sys_ov_cb.borrow_mut() = sys;
+                                }
+                                combo_th_cb.emit_by_name::<()>("changed", &[]);
+                            }
+                            gtk::glib::ControlFlow::Break
+                        },
+                    );
                 }
             });
             file_monitors.borrow_mut().push(monitor);
@@ -1575,7 +1646,7 @@ impl SettingsApp {
         let active_menu_path_dir_watch = active_menu_path.clone();
         let is_saving_dir_watch = is_saving.clone();
         let pending_dir_update = Rc::new(std::cell::Cell::new(false));
-        
+
         if let Ok(monitor) = menus_dir_file.monitor_directory(
             gtk::gio::FileMonitorFlags::NONE,
             gtk::gio::Cancellable::NONE,
@@ -1598,34 +1669,41 @@ impl SettingsApp {
                         let pending = pending_dir_update.clone();
                         let active_path_ref = active_menu_path_dir_watch.clone();
                         let is_sav_cb = is_sav_d.clone();
-                        
-                        gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-                            pending.set(false);
-                            if is_sav_cb.get() {
-                                return gtk::glib::ControlFlow::Break;
-                            }
-                            is_reb.set(true);
-                            
-                            let intended_active = active_path_ref.borrow().file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
-                            
-                            combo.remove_all();
-                            let available = Self::get_available_menus(&cp);
-                            for m in &available {
-                                combo.append(Some(m), m);
-                            }
-                            if let Some(act) = intended_active {
-                                if available.contains(&act) {
-                                    combo.set_active_id(Some(&act));
-                                } else {
-                                    combo.set_active_id(None::<&str>);
-                                    is_reb.set(false);
-                                    combo.emit_by_name::<()>("changed", &[]);
+
+                        gtk::glib::timeout_add_local(
+                            std::time::Duration::from_millis(150),
+                            move || {
+                                pending.set(false);
+                                if is_sav_cb.get() {
                                     return gtk::glib::ControlFlow::Break;
                                 }
-                            }
-                            is_reb.set(false);
-                            gtk::glib::ControlFlow::Break
-                        });
+                                is_reb.set(true);
+
+                                let intended_active = active_path_ref
+                                    .borrow()
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .map(|s| s.to_string());
+
+                                combo.remove_all();
+                                let available = Self::get_available_menus(&cp);
+                                for m in &available {
+                                    combo.append(Some(m), m);
+                                }
+                                if let Some(act) = intended_active {
+                                    if available.contains(&act) {
+                                        combo.set_active_id(Some(&act));
+                                    } else {
+                                        combo.set_active_id(None::<&str>);
+                                        is_reb.set(false);
+                                        combo.emit_by_name::<()>("changed", &[]);
+                                        return gtk::glib::ControlFlow::Break;
+                                    }
+                                }
+                                is_reb.set(false);
+                                gtk::glib::ControlFlow::Break
+                            },
+                        );
                     }
                 }
             });
@@ -1659,7 +1737,7 @@ impl SettingsApp {
                     .unwrap_or_else(launcher_core::paths::get_config_dir);
                 let new_path = parent.join("menus").join(format!("{}.toml", name));
                 *active_menu_path_clone.borrow_mut() = new_path.clone();
-                
+
                 // Save last_edited_menu
                 if let Ok(mut cfg) = launcher_core::load_config(&config_path_clone) {
                     cfg.last_edited_menu = Some(name.clone());
@@ -1715,49 +1793,59 @@ impl SettingsApp {
                                 let pending = pending_file_update.clone();
                                 let name_w = name.clone();
                                 let is_sav_cb = is_sav_menu.clone();
-                                
-                                gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-                                    pending.set(false);
-                                    if is_sav_cb.get() {
-                                        return gtk::glib::ControlFlow::Break;
-                                    }
-                                    if let Ok(m) = launcher_core::load_menu(&path_w) {
-                                        let mut expanded = Vec::new();
-                                        tree_w.map_expanded_rows(|_, path| {
-                                            expanded.push(path.clone());
-                                        });
-                                        
-                                        let mut selected_path = None;
-                                        if let Some((_, iter)) = tree_w.selection().selected() {
-                                            selected_path = Some(store_w.path(&iter));
-                                        }
 
-                                        store_w.clear();
-                                        let root_icon = m.icon.clone().unwrap_or_else(|| "menu".to_string());
-                                        let root_iter = store_w.insert_with_values(
-                                            None,
-                                            None,
-                                            &[
-                                                (0, &root_icon.to_value()),
-                                                (1, &format!("{} (Root)", name_w).to_value()),
-                                                (2, &"root".to_value()),
-                                                (3, &"".to_value()),
-                                                (4, &false.to_value()),
-                                                (5, &"".to_value()),
-                                            ],
-                                        );
-                                        Self::populate_store(&store_w, Some(&root_iter), &m.menu);
+                                gtk::glib::timeout_add_local(
+                                    std::time::Duration::from_millis(150),
+                                    move || {
+                                        pending.set(false);
+                                        if is_sav_cb.get() {
+                                            return gtk::glib::ControlFlow::Break;
+                                        }
+                                        if let Ok(m) = launcher_core::load_menu(&path_w) {
+                                            let mut expanded = Vec::new();
+                                            tree_w.map_expanded_rows(|_, path| {
+                                                expanded.push(path.clone());
+                                            });
 
-                                        for path in expanded {
-                                            tree_w.expand_row(&path, false);
+                                            let mut selected_path = None;
+                                            if let Some((_, iter)) = tree_w.selection().selected() {
+                                                selected_path = Some(store_w.path(&iter));
+                                            }
+
+                                            store_w.clear();
+                                            let root_icon = m
+                                                .icon
+                                                .clone()
+                                                .unwrap_or_else(|| "menu".to_string());
+                                            let root_iter = store_w.insert_with_values(
+                                                None,
+                                                None,
+                                                &[
+                                                    (0, &root_icon.to_value()),
+                                                    (1, &format!("{} (Root)", name_w).to_value()),
+                                                    (2, &"root".to_value()),
+                                                    (3, &"".to_value()),
+                                                    (4, &false.to_value()),
+                                                    (5, &"".to_value()),
+                                                ],
+                                            );
+                                            Self::populate_store(
+                                                &store_w,
+                                                Some(&root_iter),
+                                                &m.menu,
+                                            );
+
+                                            for path in expanded {
+                                                tree_w.expand_row(&path, false);
+                                            }
+
+                                            if let Some(path) = selected_path {
+                                                tree_w.selection().select_path(&path);
+                                            }
                                         }
-                                        
-                                        if let Some(path) = selected_path {
-                                            tree_w.selection().select_path(&path);
-                                        }
-                                    }
-                                    gtk::glib::ControlFlow::Break
-                                });
+                                        gtk::glib::ControlFlow::Break
+                                    },
+                                );
                             }
                         }
                     });
@@ -1821,7 +1909,7 @@ impl SettingsApp {
                                 r#"# {} menu configuration
 [[menu]]
 label = "Example"
-icon = "application-x-executable"
+icon = "terminal"
 "#,
                                 t
                             );
@@ -1932,7 +2020,7 @@ icon = "application-x-executable"
                                     combo.remove(idx);
                                 }
                                 combo.append(Some(&n_txt), &n_txt);
-                                
+
                                 // Update active path pointer
                                 *active_p.borrow_mut() = new_p.clone();
                                 combo.set_active_id(Some(&n_txt));
@@ -2422,24 +2510,13 @@ icon = "application-x-executable"
             let dlg = dialog_clone.clone();
             let src_holder = debounce_source_clone.clone();
 
-            let source_id = gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
-                *src_holder.borrow_mut() = None;
-                Self::refresh_material_grid(
-                    &mat_flow,
-                    &text,
-                    &mat_items,
-                    &ent_icon,
-                    &dlg,
-                );
-                Self::refresh_system_grid(
-                    &sys_flow,
-                    &text,
-                    &sys_items,
-                    &ent_icon,
-                    &dlg,
-                );
-                gtk::glib::ControlFlow::Break
-            });
+            let source_id =
+                gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
+                    *src_holder.borrow_mut() = None;
+                    Self::refresh_material_grid(&mat_flow, &text, &mat_items, &ent_icon, &dlg);
+                    Self::refresh_system_grid(&sys_flow, &text, &sys_items, &ent_icon, &dlg);
+                    gtk::glib::ControlFlow::Break
+                });
             *debounce_source_clone.borrow_mut() = Some(source_id);
         });
 
@@ -2562,12 +2639,7 @@ icon = "application-x-executable"
                         }
                     } else {
                         let parent = store.iter_parent(&dest_iter);
-                        Self::insert_node_before_sibling(
-                            store,
-                            parent.as_ref(),
-                            &dest_iter,
-                            node,
-                        )
+                        Self::insert_node_before_sibling(store, parent.as_ref(), &dest_iter, node)
                     }
                 }
                 gtk::TreeViewDropPosition::IntoOrAfter => {
@@ -2583,12 +2655,7 @@ icon = "application-x-executable"
                         Self::paste_node_recursive(store, Some(&dest_iter), None, node)
                     } else {
                         let parent = store.iter_parent(&dest_iter);
-                        Self::insert_node_before_sibling(
-                            store,
-                            parent.as_ref(),
-                            &dest_iter,
-                            node,
-                        )
+                        Self::insert_node_before_sibling(store, parent.as_ref(), &dest_iter, node)
                     }
                 }
                 gtk::TreeViewDropPosition::After => {
