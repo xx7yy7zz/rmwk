@@ -123,6 +123,8 @@ pub struct UiConfig {
     pub menu_style: String,
     #[serde(default = "default_extra_radius")]
     pub extra_radius: f64,
+    #[serde(default = "default_pill_roundness")]
+    pub pill_roundness: f64,
     #[serde(default = "default_use_symbolic_icons")]
     pub use_symbolic_icons: bool,
     #[serde(default = "default_bold_single_chars")]
@@ -151,6 +153,7 @@ impl Default for UiConfig {
             font: default_font(),
             menu_style: default_menu_style(),
             extra_radius: default_extra_radius(),
+            pill_roundness: default_pill_roundness(),
             use_symbolic_icons: default_use_symbolic_icons(),
             bold_single_chars: default_bold_single_chars(),
             center_layout: default_center_layout(),
@@ -177,6 +180,12 @@ fn default_menu_style() -> String {
 
 fn default_extra_radius() -> f64 {
     50.0
+}
+
+/// Roundness factor for the floating mode pills: 1.0 = full capsule,
+/// 0.0 = sharp rectangle. Applies to the pill corners and the icon tile.
+fn default_pill_roundness() -> f64 {
+    1.0
 }
 
 fn default_use_symbolic_icons() -> bool {

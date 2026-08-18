@@ -19,6 +19,36 @@ const BASE_R: f64 = 80.0;
 const SLICE_WIDTH: f64 = 110.0;
 const HOVER_GROW: f64 = 15.0;
 
+// Trace a rounded rectangle from (rx0, ry0) with the given size and corner radius.
+fn rounded_rect_path(cr: &cairo::Context, rx0: f64, ry0: f64, rw: f64, rh: f64, rad: f64) {
+    cr.new_path();
+    if rad < 0.5 {
+        cr.rectangle(rx0, ry0, rw, rh);
+        cr.close_path();
+        return;
+    }
+    let cx1 = rx0 + rw;
+    let cy1 = ry0 + rh;
+    cr.move_to(rx0 + rad, ry0);
+    cr.arc(cx1 - rad, ry0 + rad, rad, -std::f64::consts::PI / 2.0, 0.0);
+    cr.arc(cx1 - rad, cy1 - rad, rad, 0.0, std::f64::consts::PI / 2.0);
+    cr.arc(
+        rx0 + rad,
+        cy1 - rad,
+        rad,
+        std::f64::consts::PI / 2.0,
+        std::f64::consts::PI,
+    );
+    cr.arc(
+        rx0 + rad,
+        ry0 + rad,
+        rad,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::PI / 2.0,
+    );
+    cr.close_path();
+}
+
 #[derive(Clone)]
 struct ThemeColors {
     fill_color: gtk::gdk::RGBA,
@@ -58,6 +88,7 @@ struct MenuState {
 
     // Extra interactivity margin beyond slices
     extra_radius: f64,
+    pill_roundness: f64,
     use_symbolic_icons: bool,
     bold_single_chars: bool,
     center_layout: bool,
@@ -608,6 +639,7 @@ impl LauncherApp {
             text_layout_cache: HashMap::new(),
             label_layout_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
+            pill_roundness: ui_config.pill_roundness,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
             menu_style: ui_config.menu_style.clone(),
@@ -809,34 +841,46 @@ impl LauncherApp {
             }
 
             let draw_hub = |state_ref: &mut std::cell::RefMut<MenuState>| {
-                // Draw center circular hub if visible
+                // Draw center hub if visible (circle in pie mode, roundness-aware in floating mode)
+                let hub_rad = if state_ref.menu_style == "floating" {
+                    60.0 * ease_progress
+                } else {
+                    BASE_R * ease_progress
+                };
+                let hub_round = if state_ref.menu_style == "floating" {
+                    hub_rad * state_ref.pill_roundness.clamp(0.0, 1.0)
+                } else {
+                    hub_rad
+                };
+                let hub_path = |cr: &cairo::Context| {
+                    if hub_round >= hub_rad - 0.001 {
+                        cr.new_path();
+                        cr.arc(cx, cy, hub_rad, 0.0, 2.0 * std::f64::consts::PI);
+                    } else {
+                        rounded_rect_path(
+                            cr,
+                            cx - hub_rad,
+                            cy - hub_rad,
+                            2.0 * hub_rad,
+                            2.0 * hub_rad,
+                            hub_round,
+                        );
+                    }
+                };
+
                 if hub_fill.alpha() > 0.001 {
-                    cr.new_path();
                     cr.set_source_rgba(
                         hub_fill.red() as f64,
                         hub_fill.green() as f64,
                         hub_fill.blue() as f64,
                         hub_fill.alpha() as f64 * ease_progress,
                     );
-                    cr.arc(
-                        cx,
-                        cy,
-                        BASE_R * ease_progress,
-                        0.0,
-                        2.0 * std::f64::consts::PI,
-                    );
+                    hub_path(cr);
                     cr.fill().unwrap();
                 }
 
                 if hub_border.alpha() > 0.001 {
-                    cr.new_path();
-                    cr.arc(
-                        cx,
-                        cy,
-                        BASE_R * ease_progress,
-                        0.0,
-                        2.0 * std::f64::consts::PI,
-                    );
+                    hub_path(cr);
                     cr.set_source_rgba(
                         hub_border.red() as f64,
                         hub_border.green() as f64,
@@ -858,7 +902,11 @@ impl LauncherApp {
                     let mut icon_w = 0.0;
                     let mut icon_h = 0.0;
                     let mut icon_layout = None;
-                    let icon_size = 72.0 * ease_progress; // slightly larger for center
+                    let icon_size = if state_ref.menu_style == "floating" {
+                        80.0 * ease_progress
+                    } else {
+                        72.0 * ease_progress
+                    }; // slightly larger for center
                     let mut surf_to_draw = None;
 
                     if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
@@ -1003,7 +1051,7 @@ impl LauncherApp {
 
                         // Dynamic radius scaling
                         let required_r = n as f64 * 82.0 / (2.0 * std::f64::consts::PI);
-                        let base_dist = BASE_R + 60.0;
+                        let base_dist = BASE_R + 52.5;
                         let pill_dist =
                             base_dist.max(required_r) + (hp * HOVER_GROW) * ease_progress;
 
@@ -1171,10 +1219,107 @@ impl LauncherApp {
                             }
                         };
 
-                        // Helper closure to draw the raw paths of BOTH shapes as a single unified perimeter
-                        let draw_base_paths = |cr: &cairo::Context| {
+                        // Bar bounding box = union of the icon tile (square of side 2r) and the label pill
+                        let (bx0, by0, bw, bh) = if !has_text || r < 0.1 {
+                            (icon_center_x - r, icon_center_y - r, 2.0 * r, 2.0 * r)
+                        } else {
+                            let x0 = (icon_center_x - r).min(text_pill_x);
+                            let y0 = (icon_center_y - r).min(text_pill_y);
+                            (
+                                x0,
+                                y0,
+                                (icon_center_x + r).max(text_pill_x + text_pill_w) - x0,
+                                (icon_center_y + r).max(text_pill_y + text_pill_h) - y0,
+                            )
+                        };
+                        // Corner radius scales with the roundness setting (1.0 = full capsule / circular tile)
+                        let round = (r * state_ref.pill_roundness.clamp(0.0, 1.0))
+                            .min(bw / 2.0)
+                            .min(bh / 2.0);
+
+                        // Top/Bottom entries keep separate shapes (a rounded-rect label pill unioned with a
+                        // roundness-scaled icon tile), traced as a single silhouette so the outline strokes once.
+                        // The union contour is built by sampling the max-envelope of the two right-side boundary
+                        // functions (x-symmetric about the icon center) and mirroring the result on the left.
+                        let pill_capsule_union = |cr: &cairo::Context| {
                             cr.new_path();
+                            let tile_x1 = icon_center_x + r;
+                            let tile_y0 = icon_center_y - r;
+                            let tile_y1 = icon_center_y + r;
+                            let pill_x1 = text_pill_x + text_pill_w;
+                            let pill_y0 = text_pill_y;
+                            let pill_y1 = text_pill_y + text_pill_h;
+                            let rad = round;
+                            let tile_right = |y: f64, rad: f64| -> f64 {
+                                if y < tile_y0 + rad {
+                                    tile_x1 - rad
+                                        + (rad * rad - (y - (tile_y0 + rad)).powi(2))
+                                            .max(0.0)
+                                            .sqrt()
+                                } else if y > tile_y1 - rad {
+                                    tile_x1 - rad
+                                        + (rad * rad - (y - (tile_y1 - rad)).powi(2))
+                                            .max(0.0)
+                                            .sqrt()
+                                } else {
+                                    tile_x1
+                                }
+                            };
+                            let pill_right = |y: f64, rad: f64| -> f64 {
+                                if y < pill_y0 + rad {
+                                    pill_x1 - rad
+                                        + (rad * rad - (y - (pill_y0 + rad)).powi(2))
+                                            .max(0.0)
+                                            .sqrt()
+                                } else if y > pill_y1 - rad {
+                                    pill_x1 - rad
+                                        + (rad * rad - (y - (pill_y1 - rad)).powi(2))
+                                            .max(0.0)
+                                            .sqrt()
+                                } else {
+                                    pill_x1
+                                }
+                            };
+                            let right = |y: f64| -> f64 {
+                                let t = y >= tile_y0 && y <= tile_y1;
+                                let p = y >= pill_y0 && y <= pill_y1;
+                                if p && t {
+                                    tile_right(y, rad).max(pill_right(y, rad))
+                                } else if p {
+                                    pill_right(y, rad)
+                                } else {
+                                    tile_right(y, rad)
+                                }
+                            };
+                            let y_top = pill_y0.min(tile_y0);
+                            let y_bot = pill_y1.max(tile_y1);
+                            let n = 64.0;
+                            let height = (y_bot - y_top).max(1.0);
+                            let mut pts: Vec<(f64, f64)> = Vec::with_capacity(2 * (n as usize + 1));
+                            for i in 0..=n as i32 {
+                                let f = i as f64 / n;
+                                let y = y_top + height * f;
+                                pts.push((2.0 * icon_center_x - right(y), y));
+                            }
+                            for i in (0..=n as i32).rev() {
+                                let f = i as f64 / n;
+                                let y = y_top + height * f;
+                                pts.push((right(y), y));
+                            }
+                            if let Some(&(x0, y0)) = pts.first() {
+                                cr.move_to(x0, y0);
+                                for &(x, y) in pts.iter().skip(1) {
+                                    cr.line_to(x, y);
+                                }
+                            }
+                            cr.close_path();
+                        };
+
+                        // Outline of the whole entry: unified rounded-rect bar for horizontal entries,
+                        // separate keyhole-shaped union for top/bottom entries
+                        let entry_outline = |cr: &cairo::Context| {
                             if !has_text || r < 0.1 {
+                                cr.new_path();
                                 cr.arc(
                                     icon_center_x,
                                     icon_center_y,
@@ -1184,132 +1329,16 @@ impl LauncherApp {
                                 );
                                 return;
                             }
-
                             match mode {
                                 PillMode::Right | PillMode::Left => {
-                                    let x0 = text_pill_x + r;
-                                    let x1 = (text_pill_x + text_pill_w - r).max(x0);
-                                    let y_c = text_pill_y + r;
-                                    cr.arc(
-                                        x1,
-                                        y_c,
-                                        r,
-                                        -std::f64::consts::PI / 2.0,
-                                        std::f64::consts::PI / 2.0,
-                                    );
-                                    cr.arc(
-                                        x0,
-                                        y_c,
-                                        r,
-                                        std::f64::consts::PI / 2.0,
-                                        3.0 * std::f64::consts::PI / 2.0,
-                                    );
-                                    cr.close_path();
+                                    rounded_rect_path(cr, bx0, by0, bw, bh, round)
                                 }
-                                PillMode::Top => {
-                                    let w = text_pill_w;
-                                    let x_c_left = icon_center_x - w / 2.0 + r;
-                                    let x_c_right = icon_center_x + w / 2.0 - r;
-                                    let y_c_top = text_pill_y + r;
-                                    let y_bot = text_pill_y + 2.0 * r;
-
-                                    let dy = (y_bot - icon_center_y).clamp(-r, r);
-                                    let x_int = (r * r - dy * dy).max(0.0).sqrt();
-                                    let theta = dy.atan2(x_int);
-
-                                    // 1. Bottom arc of icon circle
-                                    cr.arc(
-                                        icon_center_x,
-                                        icon_center_y,
-                                        r,
-                                        theta,
-                                        std::f64::consts::PI - theta,
-                                    );
-
-                                    // 2. Left side
-                                    if x_c_left < icon_center_x - x_int {
-                                        cr.line_to(x_c_left, y_bot);
-                                    }
-                                    cr.arc(
-                                        x_c_left,
-                                        y_c_top,
-                                        r,
-                                        std::f64::consts::PI / 2.0,
-                                        3.0 * std::f64::consts::PI / 2.0,
-                                    );
-
-                                    // 3. Top horizontal edge
-                                    cr.line_to(x_c_right, text_pill_y);
-
-                                    // 4. Right side
-                                    cr.arc(
-                                        x_c_right,
-                                        y_c_top,
-                                        r,
-                                        -std::f64::consts::PI / 2.0,
-                                        std::f64::consts::PI / 2.0,
-                                    );
-                                    if x_c_right > icon_center_x + x_int {
-                                        cr.line_to(icon_center_x + x_int, y_bot);
-                                    }
-
-                                    cr.close_path();
-                                }
-                                PillMode::Bottom => {
-                                    let w = text_pill_w;
-                                    let x_c_left = icon_center_x - w / 2.0 + r;
-                                    let x_c_right = icon_center_x + w / 2.0 - r;
-                                    let y_top = text_pill_y;
-                                    let y_c_bot = text_pill_y + r;
-                                    let y_bot = text_pill_y + 2.0 * r;
-
-                                    let dy = (y_top - icon_center_y).clamp(-r, r);
-                                    let x_int = (r * r - dy * dy).max(0.0).sqrt();
-                                    let theta = dy.atan2(x_int);
-
-                                    // 1. Top arc of icon circle
-                                    cr.arc(
-                                        icon_center_x,
-                                        icon_center_y,
-                                        r,
-                                        std::f64::consts::PI - theta,
-                                        2.0 * std::f64::consts::PI + theta,
-                                    );
-
-                                    // 2. Right side
-                                    if x_c_right > icon_center_x + x_int {
-                                        cr.line_to(x_c_right, y_top);
-                                    }
-                                    cr.arc(
-                                        x_c_right,
-                                        y_c_bot,
-                                        r,
-                                        -std::f64::consts::PI / 2.0,
-                                        std::f64::consts::PI / 2.0,
-                                    );
-
-                                    // 3. Bottom horizontal edge
-                                    cr.line_to(x_c_left, y_bot);
-
-                                    // 4. Left side
-                                    cr.arc(
-                                        x_c_left,
-                                        y_c_bot,
-                                        r,
-                                        std::f64::consts::PI / 2.0,
-                                        3.0 * std::f64::consts::PI / 2.0,
-                                    );
-                                    if x_c_left < icon_center_x - x_int {
-                                        cr.line_to(icon_center_x - x_int, y_top);
-                                    }
-
-                                    cr.close_path();
-                                }
+                                PillMode::Top | PillMode::Bottom => pill_capsule_union(cr),
                             }
                         };
 
-                        // 1. Fill translucent background for the union
-                        draw_base_paths(&cr);
+                        // 1. Fill translucent background for the whole entry
+                        entry_outline(cr);
                         if is_hovered {
                             cr.set_source_rgba(
                                 hover_fill_color.red() as f64,
@@ -1327,14 +1356,14 @@ impl LauncherApp {
                         }
                         let _ = cr.fill();
 
-                        // 2. Draw Opaque Icon Circle on top
-                        cr.new_path();
-                        cr.arc(
-                            icon_center_x,
-                            icon_center_y,
-                            r,
-                            0.0,
-                            2.0 * std::f64::consts::PI,
+                        // 2. Draw Opaque Icon Tile on top (rounded square matching the corner radius)
+                        rounded_rect_path(
+                            cr,
+                            icon_center_x - r,
+                            icon_center_y - r,
+                            2.0 * r,
+                            2.0 * r,
+                            round,
                         );
                         if is_hovered {
                             cr.set_source_rgba(
@@ -1353,8 +1382,8 @@ impl LauncherApp {
                         }
                         let _ = cr.fill();
 
-                        // 3. Stroke the Combined Outline (single unified path)
-                        draw_base_paths(&cr);
+                        // 3. Stroke the Outline (single unified path)
+                        entry_outline(cr);
                         if is_hovered {
                             cr.set_source_rgba(
                                 hover_border_color.red() as f64,
@@ -2493,6 +2522,7 @@ impl LauncherApp {
                         let mut blur_needs_update = false;
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.extra_radius = cfg.ui.extra_radius;
+                            state.pill_roundness = cfg.ui.pill_roundness;
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
                             state.center_layout = cfg.ui.center_layout;

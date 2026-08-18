@@ -528,6 +528,14 @@ impl SettingsApp {
         let spin_extra_radius = gtk::SpinButton::with_range(0.0, 1000.0, 5.0);
         spin_extra_radius.set_value(ui_config.ui.extra_radius);
 
+        let lbl_pill_roundness = gtk::Label::new(Some("Pill Roundness (%):"));
+        let spin_pill_roundness = gtk::SpinButton::with_range(0.0, 100.0, 5.0);
+        spin_pill_roundness.set_value(ui_config.ui.pill_roundness * 100.0);
+        if ui_config.ui.menu_style != "floating" {
+            spin_pill_roundness.set_sensitive(false);
+            lbl_pill_roundness.set_sensitive(false);
+        }
+
         let chk_symbolic_icons = gtk::CheckButton::with_label("Symbolic Icons");
         chk_symbolic_icons.set_active(ui_config.ui.use_symbolic_icons);
 
@@ -577,18 +585,26 @@ impl SettingsApp {
         menu_style_hbox.append(&combo_menu_style);
 
         let chk_enable_blur_style = chk_enable_blur.clone();
+        let spin_pill_roundness_style = spin_pill_roundness.clone();
+        let lbl_pill_roundness_style = lbl_pill_roundness.clone();
         combo_menu_style.connect_changed(move |combo| {
             if let Some(id) = combo.active_id() {
                 if id == "floating" {
                     chk_enable_blur_style.set_sensitive(false);
+                    spin_pill_roundness_style.set_sensitive(true);
+                    lbl_pill_roundness_style.set_sensitive(true);
                 } else {
                     chk_enable_blur_style.set_sensitive(true);
+                    spin_pill_roundness_style.set_sensitive(false);
+                    lbl_pill_roundness_style.set_sensitive(false);
                 }
             }
         });
 
         settings_hbox.append(&lbl_extra_radius);
         settings_hbox.append(&spin_extra_radius);
+        settings_hbox.append(&lbl_pill_roundness);
+        settings_hbox.append(&spin_pill_roundness);
         right_vbox.append(&settings_hbox);
 
         let checkboxes_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -1389,6 +1405,7 @@ impl SettingsApp {
         let combo_theme_save = combo_theme.clone();
         let sys_overrides_save = sys_overrides.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
+        let spin_pill_roundness_save = spin_pill_roundness.clone();
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
@@ -1435,6 +1452,7 @@ impl SettingsApp {
                 cfg.ui.theme = theme_id.to_string();
                 cfg.ui.system_theme_overrides = Some(sys_overrides_save.borrow().clone());
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
+                cfg.ui.pill_roundness = spin_pill_roundness_save.value() / 100.0;
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
@@ -1551,6 +1569,7 @@ impl SettingsApp {
         let combo_theme_watch = combo_theme.clone();
         let sys_overrides_watch = sys_overrides.clone();
         let spin_extra_radius_watch = spin_extra_radius.clone();
+        let spin_pill_roundness_watch = spin_pill_roundness.clone();
         let chk_symbolic_icons_watch = chk_symbolic_icons.clone();
         let chk_bold_chars_watch = chk_bold_chars.clone();
         let chk_center_layout_watch = chk_center_layout.clone();
@@ -1570,6 +1589,7 @@ impl SettingsApp {
             let cp_w = config_path_watch.clone();
             let combo_th = combo_theme_watch.clone();
             let spin_r = spin_extra_radius_watch.clone();
+            let spin_pill = spin_pill_roundness_watch.clone();
             let chk_sym = chk_symbolic_icons_watch.clone();
             let chk_bold = chk_bold_chars_watch.clone();
             let chk_cnt = chk_center_layout_watch.clone();
@@ -1593,6 +1613,7 @@ impl SettingsApp {
                     let cp_cb = cp_w.clone();
                     let combo_th_cb = combo_th.clone();
                     let spin_r_cb = spin_r.clone();
+                    let spin_pill_cb = spin_pill.clone();
                     let chk_sym_cb = chk_sym.clone();
                     let chk_bold_cb = chk_bold.clone();
                     let chk_cnt_cb = chk_cnt.clone();
@@ -1612,6 +1633,7 @@ impl SettingsApp {
                             if let Ok(cfg) = launcher_core::load_config(&cp_cb) {
                                 combo_th_cb.set_active_id(Some(&cfg.ui.theme));
                                 spin_r_cb.set_value(cfg.ui.extra_radius);
+                                spin_pill_cb.set_value(cfg.ui.pill_roundness * 100.0);
                                 chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
                                 chk_bold_cb.set_active(cfg.ui.bold_single_chars);
                                 chk_cnt_cb.set_active(cfg.ui.center_layout);
@@ -1764,6 +1786,7 @@ impl SettingsApp {
                     Self::populate_store(&store_clone, Some(&root_iter), &m.menu);
                     let path = store_clone.path(&root_iter);
                     tree_view_clone.expand_row(&path, false);
+                    tree_view_clone.selection().select_iter(&root_iter);
                 }
 
                 // Set up file monitor for this newly active menu file
@@ -1841,6 +1864,8 @@ impl SettingsApp {
 
                                             if let Some(path) = selected_path {
                                                 tree_w.selection().select_path(&path);
+                                            } else if let Some(root) = store_w.iter_nth_child(None, 0) {
+                                                tree_w.selection().select_iter(&root);
                                             }
                                         }
                                         gtk::glib::ControlFlow::Break
@@ -2102,6 +2127,11 @@ icon = "terminal"
                 dialog.present();
             }
         });
+
+        // Select the root entry by default so the properties panel is populated
+        if let Some(root_iter) = store.iter_nth_child(None, 0) {
+            tree_view.selection().select_iter(&root_iter);
+        }
 
         window.present();
         Ok(())
