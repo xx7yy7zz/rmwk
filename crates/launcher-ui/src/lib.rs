@@ -692,16 +692,19 @@ impl LauncherApp {
         let state_realize = state.clone();
 
         window.connect_realize(move |w| {
+            // Only take over blur via ext-background-effect-v1 when the app is
+            // actually managing it. Binding the effect surface and clearing the
+            // region otherwise would disable compositor-side blur (e.g. Hyprland
+            // layer rules) for this surface.
+            if !state_realize.borrow().enable_blur {
+                return;
+            }
             if let Some(blur) = wayland::WaylandBlur::new(w) {
                 let width = w.width() as f64;
                 let height = w.height() as f64;
                 let cx = width / 2.0;
                 let cy = height / 2.0;
-                let radius = if state_realize.borrow().enable_blur {
-                    BASE_R + SLICE_WIDTH + HOVER_GROW
-                } else {
-                    0.0
-                };
+                let radius = BASE_R + SLICE_WIDTH + HOVER_GROW;
                 blur.update_circular_region(radius, cx, cy);
                 *blur_realize.borrow_mut() = Some(blur);
             }
