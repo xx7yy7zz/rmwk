@@ -84,31 +84,52 @@ pub struct SystemThemeColor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemThemeOverrides {
-    pub slice_normal: SystemThemeColor,
-    pub slice_hover: SystemThemeColor,
-    pub slice_active: SystemThemeColor,
-    pub slice_selected: SystemThemeColor,
-    pub label_normal: SystemThemeColor,
+    #[serde(alias = "slice_normal")]
+    pub entry_surface: SystemThemeColor,
+    #[serde(alias = "slice_hover")]
+    pub entry_surface_hover: SystemThemeColor,
+    #[serde(alias = "slice_active")]
+    pub entry_border: SystemThemeColor,
+    #[serde(alias = "slice_selected")]
+    pub entry_border_hover: SystemThemeColor,
+    #[serde(alias = "label_normal")]
+    pub label: SystemThemeColor,
     pub label_hover: SystemThemeColor,
-    pub hub_normal: SystemThemeColor,
-    pub hub_active: SystemThemeColor,
-    pub hub_hover: SystemThemeColor,
-    pub outer_border: SystemThemeColor,
+    pub entry_icon: SystemThemeColor,
+    pub entry_icon_hover: SystemThemeColor,
+    #[serde(default = "default_floating_icon_surface")]
+    pub floating_icon_surface: SystemThemeColor,
+    #[serde(default = "default_floating_icon_surface_hover")]
+    pub floating_icon_surface_hover: SystemThemeColor,
+    #[serde(alias = "hub_normal")]
+    pub hub_surface: SystemThemeColor,
+    #[serde(alias = "hub_active")]
+    pub hub_border: SystemThemeColor,
+    #[serde(alias = "hub_hover")]
+    pub hub_label: SystemThemeColor,
+    pub hub_icon: SystemThemeColor,
+    #[serde(alias = "outer_border")]
+    pub pie_outer_border: SystemThemeColor,
 }
 
 impl Default for SystemThemeOverrides {
     fn default() -> Self {
         Self {
-            slice_normal: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 0.85 },
-            slice_hover: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 0.70 },
-            slice_active: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 0.15 },
-            slice_selected: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
-            label_normal: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            entry_surface: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 0.85 },
+            entry_surface_hover: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 0.70 },
+            entry_border: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 0.15 },
+            entry_border_hover: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+            label: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
             label_hover: SystemThemeColor { variable: "@theme_base_color".to_string(), opacity: 0.80 },
-            hub_normal: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 0.85 },
-            hub_active: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
-            hub_hover: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
-            outer_border: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+            entry_icon: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            entry_icon_hover: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            floating_icon_surface: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 1.0 },
+            floating_icon_surface_hover: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+            hub_surface: SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 0.85 },
+            hub_border: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
+            hub_label: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            hub_icon: SystemThemeColor { variable: "@theme_text_color".to_string(), opacity: 1.0 },
+            pie_outer_border: SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 },
         }
     }
 }
@@ -144,6 +165,14 @@ pub struct UiConfig {
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
     None
+}
+
+fn default_floating_icon_surface() -> SystemThemeColor {
+    SystemThemeColor { variable: "@theme_bg_color".to_string(), opacity: 1.0 }
+}
+
+fn default_floating_icon_surface_hover() -> SystemThemeColor {
+    SystemThemeColor { variable: "@theme_selected_bg_color".to_string(), opacity: 1.0 }
 }
 
 impl Default for UiConfig {

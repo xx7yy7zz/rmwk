@@ -26,6 +26,7 @@ impl ThemeEditor {
         initial_theme: &str,
         initial_sys: Option<SystemThemeOverrides>,
         available_themes: &[String],
+        is_saving: Rc<std::cell::Cell<bool>>,
     ) -> Self {
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
 
@@ -66,7 +67,6 @@ impl ThemeEditor {
 
         let sys_overrides = Rc::new(RefCell::new(initial_sys.unwrap_or_default()));
         let std_overrides = Rc::new(RefCell::new(load_standard_theme(initial_theme)));
-        let is_saving = Rc::new(std::cell::Cell::new(false));
 
         let tweaks_box_c = tweaks_box.clone();
         let sys_overrides_c = sys_overrides.clone();
@@ -287,16 +287,21 @@ impl ThemeEditor {
         grid.attach(&gtk4::Label::new(Some("Opacity")), 2, 0, 1, 1);
 
         let items = vec![
-            ("Slice Normal", overrides.borrow().slice_normal.clone()),
-            ("Slice Hover", overrides.borrow().slice_hover.clone()),
-            ("Slice Active", overrides.borrow().slice_active.clone()),
-            ("Slice Selected", overrides.borrow().slice_selected.clone()),
-            ("Label Normal", overrides.borrow().label_normal.clone()),
+            ("Entry Surface", overrides.borrow().entry_surface.clone()),
+            ("Entry Surface Hover", overrides.borrow().entry_surface_hover.clone()),
+            ("Entry Border", overrides.borrow().entry_border.clone()),
+            ("Entry Border Hover", overrides.borrow().entry_border_hover.clone()),
+            ("Label", overrides.borrow().label.clone()),
             ("Label Hover", overrides.borrow().label_hover.clone()),
-            ("Hub Normal", overrides.borrow().hub_normal.clone()),
-            ("Hub Active", overrides.borrow().hub_active.clone()),
-            ("Hub Hover", overrides.borrow().hub_hover.clone()),
-            ("Outer Border", overrides.borrow().outer_border.clone()),
+            ("Entry Icon", overrides.borrow().entry_icon.clone()),
+            ("Entry Icon Hover", overrides.borrow().entry_icon_hover.clone()),
+            ("Floating Icon Surface", overrides.borrow().floating_icon_surface.clone()),
+            ("Floating Icon Surface Hover", overrides.borrow().floating_icon_surface_hover.clone()),
+            ("Hub Surface", overrides.borrow().hub_surface.clone()),
+            ("Hub Border", overrides.borrow().hub_border.clone()),
+            ("Hub Label", overrides.borrow().hub_label.clone()),
+            ("Hub Icon", overrides.borrow().hub_icon.clone()),
+            ("Pie Outer Border", overrides.borrow().pie_outer_border.clone()),
         ];
 
         for (i, (label, initial_color)) in items.into_iter().enumerate() {
@@ -351,16 +356,21 @@ impl ThemeEditor {
             let update_fn = move |new_col: gdk::RGBA, new_op: f64| {
                 let mut o = overrides_c.borrow_mut();
                 let target = match label_name.as_str() {
-                    "Slice Normal" => &mut o.slice_normal,
-                    "Slice Hover" => &mut o.slice_hover,
-                    "Slice Active" => &mut o.slice_active,
-                    "Slice Selected" => &mut o.slice_selected,
-                    "Label Normal" => &mut o.label_normal,
+                    "Entry Surface" => &mut o.entry_surface,
+                    "Entry Surface Hover" => &mut o.entry_surface_hover,
+                    "Entry Border" => &mut o.entry_border,
+                    "Entry Border Hover" => &mut o.entry_border_hover,
+                    "Label" => &mut o.label,
                     "Label Hover" => &mut o.label_hover,
-                    "Hub Normal" => &mut o.hub_normal,
-                    "Hub Active" => &mut o.hub_active,
-                    "Hub Hover" => &mut o.hub_hover,
-                    "Outer Border" => &mut o.outer_border,
+                    "Entry Icon" => &mut o.entry_icon,
+                    "Entry Icon Hover" => &mut o.entry_icon_hover,
+                    "Floating Icon Surface" => &mut o.floating_icon_surface,
+                    "Floating Icon Surface Hover" => &mut o.floating_icon_surface_hover,
+                    "Hub Surface" => &mut o.hub_surface,
+                    "Hub Border" => &mut o.hub_border,
+                    "Hub Label" => &mut o.hub_label,
+                    "Hub Icon" => &mut o.hub_icon,
+                    "Pie Outer Border" => &mut o.pie_outer_border,
                     _ => unreachable!(),
                 };
                 let mut final_col = new_col;
@@ -423,16 +433,21 @@ impl ThemeEditor {
         grid.attach(&gtk4::Label::new(Some("Opacity")), 2, 0, 1, 1);
 
         let items = vec![
-            ("Slice Normal", overrides.borrow().slice_normal.clone()),
-            ("Slice Hover", overrides.borrow().slice_hover.clone()),
-            ("Slice Active", overrides.borrow().slice_active.clone()),
-            ("Slice Selected", overrides.borrow().slice_selected.clone()),
-            ("Label Normal", overrides.borrow().label_normal.clone()),
+            ("Entry Surface", overrides.borrow().entry_surface.clone()),
+            ("Entry Surface Hover", overrides.borrow().entry_surface_hover.clone()),
+            ("Entry Border", overrides.borrow().entry_border.clone()),
+            ("Entry Border Hover", overrides.borrow().entry_border_hover.clone()),
+            ("Label", overrides.borrow().label.clone()),
             ("Label Hover", overrides.borrow().label_hover.clone()),
-            ("Hub Normal", overrides.borrow().hub_normal.clone()),
-            ("Hub Active", overrides.borrow().hub_active.clone()),
-            ("Hub Hover", overrides.borrow().hub_hover.clone()),
-            ("Outer Border", overrides.borrow().outer_border.clone()),
+            ("Entry Icon", overrides.borrow().entry_icon.clone()),
+            ("Entry Icon Hover", overrides.borrow().entry_icon_hover.clone()),
+            ("Floating Icon Surface", overrides.borrow().floating_icon_surface.clone()),
+            ("Floating Icon Surface Hover", overrides.borrow().floating_icon_surface_hover.clone()),
+            ("Hub Surface", overrides.borrow().hub_surface.clone()),
+            ("Hub Border", overrides.borrow().hub_border.clone()),
+            ("Hub Label", overrides.borrow().hub_label.clone()),
+            ("Hub Icon", overrides.borrow().hub_icon.clone()),
+            ("Pie Outer Border", overrides.borrow().pie_outer_border.clone()),
         ];
 
         let gtk_vars = [
@@ -491,16 +506,21 @@ impl ThemeEditor {
             let update_fn = move |new_var: String, new_op: f64| {
                 let mut o = overrides_c.borrow_mut();
                 let target = match label_name.as_str() {
-                    "Slice Normal" => &mut o.slice_normal,
-                    "Slice Hover" => &mut o.slice_hover,
-                    "Slice Active" => &mut o.slice_active,
-                    "Slice Selected" => &mut o.slice_selected,
-                    "Label Normal" => &mut o.label_normal,
+                    "Entry Surface" => &mut o.entry_surface,
+                    "Entry Surface Hover" => &mut o.entry_surface_hover,
+                    "Entry Border" => &mut o.entry_border,
+                    "Entry Border Hover" => &mut o.entry_border_hover,
+                    "Label" => &mut o.label,
                     "Label Hover" => &mut o.label_hover,
-                    "Hub Normal" => &mut o.hub_normal,
-                    "Hub Active" => &mut o.hub_active,
-                    "Hub Hover" => &mut o.hub_hover,
-                    "Outer Border" => &mut o.outer_border,
+                    "Entry Icon" => &mut o.entry_icon,
+                    "Entry Icon Hover" => &mut o.entry_icon_hover,
+                    "Floating Icon Surface" => &mut o.floating_icon_surface,
+                    "Floating Icon Surface Hover" => &mut o.floating_icon_surface_hover,
+                    "Hub Surface" => &mut o.hub_surface,
+                    "Hub Border" => &mut o.hub_border,
+                    "Hub Label" => &mut o.hub_label,
+                    "Hub Icon" => &mut o.hub_icon,
+                    "Pie Outer Border" => &mut o.pie_outer_border,
                     _ => unreachable!(),
                 };
                 target.variable = new_var;

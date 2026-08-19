@@ -403,6 +403,7 @@ impl SettingsApp {
             &ui_config.ui.theme,
             ui_config.ui.system_theme_overrides.clone(),
             &themes,
+            is_saving.clone(),
         );
         left_vbox.append(&theme_editor.container);
         let combo_theme = theme_editor.combo_theme.clone();
@@ -876,7 +877,16 @@ impl SettingsApp {
                 if act_type == "root" {
                     return; // Cannot delete root
                 }
+                // Focus the entry above the deleted one (previous sibling, or its parent)
+                let mut prev = iter.clone();
+                let has_prev = store_del.iter_previous(&mut prev);
+                let parent = store_del.iter_parent(&iter);
                 store_del.remove(&iter);
+                if has_prev {
+                    selection_del.select_iter(&prev);
+                } else if let Some(p) = parent {
+                    selection_del.select_iter(&p);
+                }
             }
         });
 

@@ -3,31 +3,41 @@ use std::str::FromStr;
 
 #[derive(Clone, Debug)]
 pub struct StandardThemeOverrides {
-    pub slice_normal: gdk::RGBA,
-    pub slice_hover: gdk::RGBA,
-    pub slice_active: gdk::RGBA,
-    pub slice_selected: gdk::RGBA,
-    pub label_normal: gdk::RGBA,
+    pub entry_surface: gdk::RGBA,
+    pub entry_surface_hover: gdk::RGBA,
+    pub entry_border: gdk::RGBA,
+    pub entry_border_hover: gdk::RGBA,
+    pub label: gdk::RGBA,
     pub label_hover: gdk::RGBA,
-    pub hub_normal: gdk::RGBA,
-    pub hub_active: gdk::RGBA,
-    pub hub_hover: gdk::RGBA,
-    pub outer_border: gdk::RGBA,
+    pub entry_icon: gdk::RGBA,
+    pub entry_icon_hover: gdk::RGBA,
+    pub floating_icon_surface: gdk::RGBA,
+    pub floating_icon_surface_hover: gdk::RGBA,
+    pub hub_surface: gdk::RGBA,
+    pub hub_border: gdk::RGBA,
+    pub hub_label: gdk::RGBA,
+    pub hub_icon: gdk::RGBA,
+    pub pie_outer_border: gdk::RGBA,
 }
 
 impl Default for StandardThemeOverrides {
     fn default() -> Self {
         Self {
-            slice_normal: gdk::RGBA::new(0.0, 0.0, 0.0, 0.85),
-            slice_hover: gdk::RGBA::new(0.3, 0.3, 0.3, 0.70),
-            slice_active: gdk::RGBA::new(0.5, 0.5, 0.5, 0.15),
-            slice_selected: gdk::RGBA::new(0.2, 0.5, 0.8, 1.0),
-            label_normal: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
+            entry_surface: gdk::RGBA::new(0.0, 0.0, 0.0, 0.85),
+            entry_surface_hover: gdk::RGBA::new(0.3, 0.3, 0.3, 0.70),
+            entry_border: gdk::RGBA::new(0.5, 0.5, 0.5, 0.15),
+            entry_border_hover: gdk::RGBA::new(0.2, 0.5, 0.8, 1.0),
+            label: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
             label_hover: gdk::RGBA::new(0.8, 0.8, 0.8, 0.80),
-            hub_normal: gdk::RGBA::new(0.1, 0.1, 0.1, 0.85),
-            hub_active: gdk::RGBA::new(0.2, 0.5, 0.8, 1.0),
-            hub_hover: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
-            outer_border: gdk::RGBA::new(0.64, 0.64, 1.0, 1.0),
+            entry_icon: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
+            entry_icon_hover: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
+            floating_icon_surface: gdk::RGBA::new(0.0, 0.0, 0.0, 1.0),
+            floating_icon_surface_hover: gdk::RGBA::new(0.2, 0.5, 0.8, 1.0),
+            hub_surface: gdk::RGBA::new(0.1, 0.1, 0.1, 0.85),
+            hub_border: gdk::RGBA::new(0.2, 0.5, 0.8, 1.0),
+            hub_label: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
+            hub_icon: gdk::RGBA::new(1.0, 1.0, 1.0, 1.0),
+            pie_outer_border: gdk::RGBA::new(0.64, 0.64, 1.0, 1.0),
         }
     }
 }
@@ -69,16 +79,21 @@ pub fn load_standard_theme(theme_name: &str) -> StandardThemeOverrides {
         theme_path.push(file_name);
         
         if let Ok(css) = std::fs::read_to_string(&theme_path) {
-            if let Some(c) = extract_css_color(&css, ".radial-slice") { overrides.slice_normal = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-slice:hover") { overrides.slice_hover = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-slice:active") { overrides.slice_active = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-slice:selected") { overrides.slice_selected = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-label") { overrides.label_normal = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-label:hover") { overrides.label_hover = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-hub") { overrides.hub_normal = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-hub:active") { overrides.hub_active = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-hub:hover") { overrides.hub_hover = c; }
-            if let Some(c) = extract_css_color(&css, ".radial-outer") { overrides.outer_border = c; }
+            if let Some(c) = extract_css_color(&css, ".entry-surface") { overrides.entry_surface = c; }
+            if let Some(c) = extract_css_color(&css, ".entry-surface:hover") { overrides.entry_surface_hover = c; }
+            if let Some(c) = extract_css_color(&css, ".entry-border") { overrides.entry_border = c; }
+            if let Some(c) = extract_css_color(&css, ".entry-border:hover") { overrides.entry_border_hover = c; }
+            if let Some(c) = extract_css_color(&css, ".label") { overrides.label = c; }
+            if let Some(c) = extract_css_color(&css, ".label:hover") { overrides.label_hover = c; }
+            if let Some(c) = extract_css_color(&css, ".entry-icon") { overrides.entry_icon = c; }
+            if let Some(c) = extract_css_color(&css, ".entry-icon:hover") { overrides.entry_icon_hover = c; }
+            if let Some(c) = extract_css_color(&css, ".floating-icon-surface") { overrides.floating_icon_surface = c; }
+            if let Some(c) = extract_css_color(&css, ".floating-icon-surface:hover") { overrides.floating_icon_surface_hover = c; }
+            if let Some(c) = extract_css_color(&css, ".hub-surface") { overrides.hub_surface = c; }
+            if let Some(c) = extract_css_color(&css, ".hub-border") { overrides.hub_border = c; }
+            if let Some(c) = extract_css_color(&css, ".hub-label") { overrides.hub_label = c; }
+            if let Some(c) = extract_css_color(&css, ".hub-icon") { overrides.hub_icon = c; }
+            if let Some(c) = extract_css_color(&css, ".pie-outer-border") { overrides.pie_outer_border = c; }
         }
     }
     overrides
@@ -93,27 +108,37 @@ pub fn save_standard_theme(theme_name: &str, overrides: &StandardThemeOverrides)
         theme_path.push(file_name);
         
         let css = format!("
-.radial-slice {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-slice:hover {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-slice:active {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-slice:selected {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-label {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-label:hover {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-hub {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-hub:active {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-hub:hover {{ color: rgba({}, {}, {}, {:.3}); }}
-.radial-outer {{ color: rgba({}, {}, {}, {:.3}); }}
+.entry-surface {{ color: rgba({}, {}, {}, {:.3}); }}
+.entry-surface:hover {{ color: rgba({}, {}, {}, {:.3}); }}
+.entry-border {{ color: rgba({}, {}, {}, {:.3}); }}
+.entry-border:hover {{ color: rgba({}, {}, {}, {:.3}); }}
+.label {{ color: rgba({}, {}, {}, {:.3}); }}
+.label:hover {{ color: rgba({}, {}, {}, {:.3}); }}
+.entry-icon {{ color: rgba({}, {}, {}, {:.3}); }}
+.entry-icon:hover {{ color: rgba({}, {}, {}, {:.3}); }}
+.floating-icon-surface {{ color: rgba({}, {}, {}, {:.3}); }}
+.floating-icon-surface:hover {{ color: rgba({}, {}, {}, {:.3}); }}
+.hub-surface {{ color: rgba({}, {}, {}, {:.3}); }}
+.hub-border {{ color: rgba({}, {}, {}, {:.3}); }}
+.hub-label {{ color: rgba({}, {}, {}, {:.3}); }}
+.hub-icon {{ color: rgba({}, {}, {}, {:.3}); }}
+.pie-outer-border {{ color: rgba({}, {}, {}, {:.3}); }}
 ",
-            (overrides.slice_normal.red() * 255.0) as u8, (overrides.slice_normal.green() * 255.0) as u8, (overrides.slice_normal.blue() * 255.0) as u8, overrides.slice_normal.alpha(),
-            (overrides.slice_hover.red() * 255.0) as u8, (overrides.slice_hover.green() * 255.0) as u8, (overrides.slice_hover.blue() * 255.0) as u8, overrides.slice_hover.alpha(),
-            (overrides.slice_active.red() * 255.0) as u8, (overrides.slice_active.green() * 255.0) as u8, (overrides.slice_active.blue() * 255.0) as u8, overrides.slice_active.alpha(),
-            (overrides.slice_selected.red() * 255.0) as u8, (overrides.slice_selected.green() * 255.0) as u8, (overrides.slice_selected.blue() * 255.0) as u8, overrides.slice_selected.alpha(),
-            (overrides.label_normal.red() * 255.0) as u8, (overrides.label_normal.green() * 255.0) as u8, (overrides.label_normal.blue() * 255.0) as u8, overrides.label_normal.alpha(),
+            (overrides.entry_surface.red() * 255.0) as u8, (overrides.entry_surface.green() * 255.0) as u8, (overrides.entry_surface.blue() * 255.0) as u8, overrides.entry_surface.alpha(),
+            (overrides.entry_surface_hover.red() * 255.0) as u8, (overrides.entry_surface_hover.green() * 255.0) as u8, (overrides.entry_surface_hover.blue() * 255.0) as u8, overrides.entry_surface_hover.alpha(),
+            (overrides.entry_border.red() * 255.0) as u8, (overrides.entry_border.green() * 255.0) as u8, (overrides.entry_border.blue() * 255.0) as u8, overrides.entry_border.alpha(),
+            (overrides.entry_border_hover.red() * 255.0) as u8, (overrides.entry_border_hover.green() * 255.0) as u8, (overrides.entry_border_hover.blue() * 255.0) as u8, overrides.entry_border_hover.alpha(),
+            (overrides.label.red() * 255.0) as u8, (overrides.label.green() * 255.0) as u8, (overrides.label.blue() * 255.0) as u8, overrides.label.alpha(),
             (overrides.label_hover.red() * 255.0) as u8, (overrides.label_hover.green() * 255.0) as u8, (overrides.label_hover.blue() * 255.0) as u8, overrides.label_hover.alpha(),
-            (overrides.hub_normal.red() * 255.0) as u8, (overrides.hub_normal.green() * 255.0) as u8, (overrides.hub_normal.blue() * 255.0) as u8, overrides.hub_normal.alpha(),
-            (overrides.hub_active.red() * 255.0) as u8, (overrides.hub_active.green() * 255.0) as u8, (overrides.hub_active.blue() * 255.0) as u8, overrides.hub_active.alpha(),
-            (overrides.hub_hover.red() * 255.0) as u8, (overrides.hub_hover.green() * 255.0) as u8, (overrides.hub_hover.blue() * 255.0) as u8, overrides.hub_hover.alpha(),
-            (overrides.outer_border.red() * 255.0) as u8, (overrides.outer_border.green() * 255.0) as u8, (overrides.outer_border.blue() * 255.0) as u8, overrides.outer_border.alpha(),
+            (overrides.entry_icon.red() * 255.0) as u8, (overrides.entry_icon.green() * 255.0) as u8, (overrides.entry_icon.blue() * 255.0) as u8, overrides.entry_icon.alpha(),
+            (overrides.entry_icon_hover.red() * 255.0) as u8, (overrides.entry_icon_hover.green() * 255.0) as u8, (overrides.entry_icon_hover.blue() * 255.0) as u8, overrides.entry_icon_hover.alpha(),
+            (overrides.floating_icon_surface.red() * 255.0) as u8, (overrides.floating_icon_surface.green() * 255.0) as u8, (overrides.floating_icon_surface.blue() * 255.0) as u8, overrides.floating_icon_surface.alpha(),
+            (overrides.floating_icon_surface_hover.red() * 255.0) as u8, (overrides.floating_icon_surface_hover.green() * 255.0) as u8, (overrides.floating_icon_surface_hover.blue() * 255.0) as u8, overrides.floating_icon_surface_hover.alpha(),
+            (overrides.hub_surface.red() * 255.0) as u8, (overrides.hub_surface.green() * 255.0) as u8, (overrides.hub_surface.blue() * 255.0) as u8, overrides.hub_surface.alpha(),
+            (overrides.hub_border.red() * 255.0) as u8, (overrides.hub_border.green() * 255.0) as u8, (overrides.hub_border.blue() * 255.0) as u8, overrides.hub_border.alpha(),
+            (overrides.hub_label.red() * 255.0) as u8, (overrides.hub_label.green() * 255.0) as u8, (overrides.hub_label.blue() * 255.0) as u8, overrides.hub_label.alpha(),
+            (overrides.hub_icon.red() * 255.0) as u8, (overrides.hub_icon.green() * 255.0) as u8, (overrides.hub_icon.blue() * 255.0) as u8, overrides.hub_icon.alpha(),
+            (overrides.pie_outer_border.red() * 255.0) as u8, (overrides.pie_outer_border.green() * 255.0) as u8, (overrides.pie_outer_border.blue() * 255.0) as u8, overrides.pie_outer_border.alpha(),
         );
         let _ = std::fs::write(&theme_path, css);
     }

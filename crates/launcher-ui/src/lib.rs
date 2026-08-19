@@ -57,9 +57,14 @@ struct ThemeColors {
     hover_border_color: gtk::gdk::RGBA,
     label_color: gtk::gdk::RGBA,
     hover_label_color: gtk::gdk::RGBA,
+    icon_color: gtk::gdk::RGBA,
+    hover_icon_color: gtk::gdk::RGBA,
+    icon_tile_color: gtk::gdk::RGBA,
+    hover_icon_tile_color: gtk::gdk::RGBA,
     hub_fill: gtk::gdk::RGBA,
     hub_border: gtk::gdk::RGBA,
     hub_text_color: gtk::gdk::RGBA,
+    hub_icon_color: gtk::gdk::RGBA,
     outer_border_color: gtk::gdk::RGBA,
 }
 
@@ -336,37 +341,52 @@ fn load_and_apply_theme(
         let overrides = sys_overrides.unwrap_or_default();
         let system_css = format!(
             "
-            .radial-slice {{ color: alpha({}, {:.3}); }}
-            .radial-slice:hover {{ color: alpha({}, {:.3}); }}
-            .radial-slice:active {{ color: alpha({}, {:.3}); }}
-            .radial-slice:selected {{ color: alpha({}, {:.3}); }}
-            .radial-label {{ color: alpha({}, {:.3}); }}
-            .radial-label:hover {{ color: alpha({}, {:.3}); }}
-            .radial-hub {{ color: alpha({}, {:.3}); }}
-            .radial-hub:active {{ color: alpha({}, {:.3}); }}
-            .radial-hub:hover {{ color: alpha({}, {:.3}); }}
-            .radial-outer {{ color: alpha({}, {:.3}); }}
+            .entry-surface {{ color: alpha({}, {:.3}); }}
+            .entry-surface:hover {{ color: alpha({}, {:.3}); }}
+            .entry-border {{ color: alpha({}, {:.3}); }}
+            .entry-border:hover {{ color: alpha({}, {:.3}); }}
+            .label {{ color: alpha({}, {:.3}); }}
+            .label:hover {{ color: alpha({}, {:.3}); }}
+            .entry-icon {{ color: alpha({}, {:.3}); }}
+            .entry-icon:hover {{ color: alpha({}, {:.3}); }}
+            .floating-icon-surface {{ color: alpha({}, {:.3}); }}
+            .floating-icon-surface:hover {{ color: alpha({}, {:.3}); }}
+            .hub-surface {{ color: alpha({}, {:.3}); }}
+            .hub-border {{ color: alpha({}, {:.3}); }}
+            .hub-label {{ color: alpha({}, {:.3}); }}
+            .hub-icon {{ color: alpha({}, {:.3}); }}
+            .pie-outer-border {{ color: alpha({}, {:.3}); }}
         ",
-            overrides.slice_normal.variable,
-            overrides.slice_normal.opacity,
-            overrides.slice_hover.variable,
-            overrides.slice_hover.opacity,
-            overrides.slice_active.variable,
-            overrides.slice_active.opacity,
-            overrides.slice_selected.variable,
-            overrides.slice_selected.opacity,
-            overrides.label_normal.variable,
-            overrides.label_normal.opacity,
+            overrides.entry_surface.variable,
+            overrides.entry_surface.opacity,
+            overrides.entry_surface_hover.variable,
+            overrides.entry_surface_hover.opacity,
+            overrides.entry_border.variable,
+            overrides.entry_border.opacity,
+            overrides.entry_border_hover.variable,
+            overrides.entry_border_hover.opacity,
+            overrides.label.variable,
+            overrides.label.opacity,
             overrides.label_hover.variable,
             overrides.label_hover.opacity,
-            overrides.hub_normal.variable,
-            overrides.hub_normal.opacity,
-            overrides.hub_active.variable,
-            overrides.hub_active.opacity,
-            overrides.hub_hover.variable,
-            overrides.hub_hover.opacity,
-            overrides.outer_border.variable,
-            overrides.outer_border.opacity
+            overrides.entry_icon.variable,
+            overrides.entry_icon.opacity,
+            overrides.entry_icon_hover.variable,
+            overrides.entry_icon_hover.opacity,
+            overrides.floating_icon_surface.variable,
+            overrides.floating_icon_surface.opacity,
+            overrides.floating_icon_surface_hover.variable,
+            overrides.floating_icon_surface_hover.opacity,
+            overrides.hub_surface.variable,
+            overrides.hub_surface.opacity,
+            overrides.hub_border.variable,
+            overrides.hub_border.opacity,
+            overrides.hub_label.variable,
+            overrides.hub_label.opacity,
+            overrides.hub_icon.variable,
+            overrides.hub_icon.opacity,
+            overrides.pie_outer_border.variable,
+            overrides.pie_outer_border.opacity
         );
         theme_provider.load_from_data(&system_css);
         info!("Theme 'system' applied successfully dynamically.");
@@ -390,15 +410,21 @@ fn load_and_apply_theme(
         );
         // Load default fallbacks
         let fallback = b"
-            .radial-slice { color: rgba(30, 30, 46, 0.90); }
-            .radial-slice:hover { color: rgba(49, 50, 68, 0.95); }
-            .radial-slice:active { color: rgba(137, 180, 250, 0.40); }
-            .radial-slice:selected { color: rgba(137, 180, 250, 0.95); }
-            .radial-label { color: rgba(205, 214, 244, 1.0); }
-            .radial-label:hover { color: rgba(255, 255, 255, 1.0); }
-            .radial-hub { color: rgba(17, 17, 27, 0.95); }
-            .radial-hub:active { color: rgba(137, 180, 250, 0.70); }
-            .radial-hub:hover { color: rgba(205, 214, 244, 1.0); }
+            .entry-surface { color: rgba(30, 30, 46, 0.90); }
+            .entry-surface:hover { color: rgba(49, 50, 68, 0.95); }
+            .entry-border { color: rgba(137, 180, 250, 0.40); }
+            .entry-border:hover { color: rgba(137, 180, 250, 0.95); }
+            .label { color: rgba(205, 214, 244, 1.0); }
+            .label:hover { color: rgba(255, 255, 255, 1.0); }
+            .entry-icon { color: rgba(205, 214, 244, 1.0); }
+            .entry-icon:hover { color: rgba(255, 255, 255, 1.0); }
+            .floating-icon-surface { color: rgba(30, 30, 46, 1.0); }
+            .floating-icon-surface:hover { color: rgba(137, 180, 250, 1.0); }
+            .hub-surface { color: rgba(17, 17, 27, 0.95); }
+            .hub-border { color: rgba(137, 180, 250, 0.70); }
+            .hub-label { color: rgba(205, 214, 244, 1.0); }
+            .hub-icon { color: rgba(205, 214, 244, 1.0); }
+            .pie-outer-border { color: rgba(137, 180, 250, 1.0); }
         ";
         theme_provider.load_from_data(std::str::from_utf8(fallback).unwrap());
     }
@@ -762,19 +788,23 @@ impl LauncherApp {
                 let context = area.style_context();
 
                 context.save();
-                context.add_class("radial-slice");
+                context.add_class("entry-surface");
                 context.set_state(gtk::StateFlags::NORMAL);
                 let fill_color = context.color();
                 context.set_state(gtk::StateFlags::PRELIGHT);
                 let hover_fill_color = context.color();
-                context.set_state(gtk::StateFlags::ACTIVE);
+                context.restore();
+
+                context.save();
+                context.add_class("entry-border");
+                context.set_state(gtk::StateFlags::NORMAL);
                 let border_color = context.color();
-                context.set_state(gtk::StateFlags::SELECTED);
+                context.set_state(gtk::StateFlags::PRELIGHT);
                 let hover_border_color = context.color();
                 context.restore();
 
                 context.save();
-                context.add_class("radial-label");
+                context.add_class("label");
                 context.set_state(gtk::StateFlags::NORMAL);
                 let label_color = context.color();
                 context.set_state(gtk::StateFlags::PRELIGHT);
@@ -782,16 +812,47 @@ impl LauncherApp {
                 context.restore();
 
                 context.save();
-                context.add_class("radial-hub");
+                context.add_class("entry-icon");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let icon_color = context.color();
+                context.set_state(gtk::StateFlags::PRELIGHT);
+                let hover_icon_color = context.color();
+                context.restore();
+
+                context.save();
+                context.add_class("floating-icon-surface");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let icon_tile_color = context.color();
+                context.set_state(gtk::StateFlags::PRELIGHT);
+                let hover_icon_tile_color = context.color();
+                context.restore();
+
+                context.save();
+                context.add_class("hub-surface");
                 context.set_state(gtk::StateFlags::NORMAL);
                 let hub_fill = context.color();
-                context.set_state(gtk::StateFlags::ACTIVE);
+                context.restore();
+
+                context.save();
+                context.add_class("hub-border");
+                context.set_state(gtk::StateFlags::NORMAL);
                 let hub_border = context.color();
-                context.set_state(gtk::StateFlags::PRELIGHT);
+                context.restore();
+
+                context.save();
+                context.add_class("hub-label");
+                context.set_state(gtk::StateFlags::NORMAL);
                 let hub_text_color = context.color();
                 context.restore();
+
                 context.save();
-                context.add_class("radial-outer");
+                context.add_class("hub-icon");
+                context.set_state(gtk::StateFlags::NORMAL);
+                let hub_icon_color = context.color();
+                context.restore();
+
+                context.save();
+                context.add_class("pie-outer-border");
                 context.set_state(gtk::StateFlags::NORMAL);
                 let outer_border_color = context.color();
                 context.restore();
@@ -803,9 +864,14 @@ impl LauncherApp {
                     hover_border_color,
                     label_color,
                     hover_label_color,
+                    icon_color,
+                    hover_icon_color,
+                    icon_tile_color,
+                    hover_icon_tile_color,
                     hub_fill,
                     hub_border,
                     hub_text_color,
+                    hub_icon_color,
                     outer_border_color,
                 };
 
@@ -819,9 +885,14 @@ impl LauncherApp {
             let hover_border_color = colors.hover_border_color;
             let label_color = colors.label_color;
             let hover_label_color = colors.hover_label_color;
+            let icon_color = colors.icon_color;
+            let hover_icon_color = colors.hover_icon_color;
+            let icon_tile_color = colors.icon_tile_color;
+            let hover_icon_tile_color = colors.hover_icon_tile_color;
             let hub_fill = colors.hub_fill;
             let hub_border = colors.hub_border;
             let hub_text_color = colors.hub_text_color;
+            let hub_icon_color = colors.hub_icon_color;
             let outer_border_color = colors.outer_border_color;
 
             let mut center_text = None;
@@ -891,14 +962,14 @@ impl LauncherApp {
                     cr.stroke().unwrap();
                 }
 
-                cr.set_source_rgba(
-                    hub_text_color.red() as f64,
-                    hub_text_color.green() as f64,
-                    hub_text_color.blue() as f64,
-                    hub_text_color.alpha() as f64 * ease_progress,
-                );
-
                 if let Some(ref icon_name) = center_icon {
+                    cr.set_source_rgba(
+                        hub_icon_color.red() as f64,
+                        hub_icon_color.green() as f64,
+                        hub_icon_color.blue() as f64,
+                        hub_icon_color.alpha() as f64 * ease_progress,
+                    );
+
                     let mut icon_w = 0.0;
                     let mut icon_h = 0.0;
                     let mut icon_layout = None;
@@ -996,6 +1067,13 @@ impl LauncherApp {
                         let _ = cr.restore();
                     }
                 } else if let Some(text) = &center_text {
+                    cr.set_source_rgba(
+                        hub_text_color.red() as f64,
+                        hub_text_color.green() as f64,
+                        hub_text_color.blue() as f64,
+                        hub_text_color.alpha() as f64 * ease_progress,
+                    );
+
                     let center_layout = if let Some(l) = state_ref.label_layout_cache.get(text) {
                         l.clone()
                     } else {
@@ -1367,17 +1445,17 @@ impl LauncherApp {
                         );
                         if is_hovered {
                             cr.set_source_rgba(
-                                hover_fill_color.red() as f64,
-                                hover_fill_color.green() as f64,
-                                hover_fill_color.blue() as f64,
-                                1.0 * ease_progress,
+                                hover_icon_tile_color.red() as f64,
+                                hover_icon_tile_color.green() as f64,
+                                hover_icon_tile_color.blue() as f64,
+                                hover_icon_tile_color.alpha() as f64 * ease_progress,
                             );
                         } else {
                             cr.set_source_rgba(
-                                fill_color.red() as f64,
-                                fill_color.green() as f64,
-                                fill_color.blue() as f64,
-                                1.0 * ease_progress,
+                                icon_tile_color.red() as f64,
+                                icon_tile_color.green() as f64,
+                                icon_tile_color.blue() as f64,
+                                icon_tile_color.alpha() as f64 * ease_progress,
                             );
                         }
                         let _ = cr.fill();
@@ -1434,17 +1512,17 @@ impl LauncherApp {
                         if icon_w > 0.0 {
                             if is_hovered {
                                 cr.set_source_rgba(
-                                    hover_label_color.red() as f64,
-                                    hover_label_color.green() as f64,
-                                    hover_label_color.blue() as f64,
-                                    hover_label_color.alpha() as f64 * ease_progress,
+                                    hover_icon_color.red() as f64,
+                                    hover_icon_color.green() as f64,
+                                    hover_icon_color.blue() as f64,
+                                    hover_icon_color.alpha() as f64 * ease_progress,
                                 );
                             } else {
                                 cr.set_source_rgba(
-                                    label_color.red() as f64,
-                                    label_color.green() as f64,
-                                    label_color.blue() as f64,
-                                    label_color.alpha() as f64 * ease_progress,
+                                    icon_color.red() as f64,
+                                    icon_color.green() as f64,
+                                    icon_color.blue() as f64,
+                                    icon_color.alpha() as f64 * ease_progress,
                                 );
                             }
 
@@ -1720,17 +1798,17 @@ impl LauncherApp {
 
                                 if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
                                     cr.set_source_rgba(
-                                        hover_label_color.red() as f64,
-                                        hover_label_color.green() as f64,
-                                        hover_label_color.blue() as f64,
-                                        hover_label_color.alpha() as f64 * ease_progress,
+                                        hover_icon_color.red() as f64,
+                                        hover_icon_color.green() as f64,
+                                        hover_icon_color.blue() as f64,
+                                        hover_icon_color.alpha() as f64 * ease_progress,
                                     );
                                 } else {
                                     cr.set_source_rgba(
-                                        label_color.red() as f64,
-                                        label_color.green() as f64,
-                                        label_color.blue() as f64,
-                                        label_color.alpha() as f64 * ease_progress,
+                                        icon_color.red() as f64,
+                                        icon_color.green() as f64,
+                                        icon_color.blue() as f64,
+                                        icon_color.alpha() as f64 * ease_progress,
                                     );
                                 }
 
@@ -1788,17 +1866,17 @@ impl LauncherApp {
                                     cr.move_to(rx, ry);
                                     if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
                                         cr.set_source_rgba(
-                                            hover_label_color.red() as f64,
-                                            hover_label_color.green() as f64,
-                                            hover_label_color.blue() as f64,
-                                            hover_label_color.alpha() as f64 * ease_progress,
+                                            hover_icon_color.red() as f64,
+                                            hover_icon_color.green() as f64,
+                                            hover_icon_color.blue() as f64,
+                                            hover_icon_color.alpha() as f64 * ease_progress,
                                         );
                                     } else {
                                         cr.set_source_rgba(
-                                            label_color.red() as f64,
-                                            label_color.green() as f64,
-                                            label_color.blue() as f64,
-                                            label_color.alpha() as f64 * ease_progress,
+                                            icon_color.red() as f64,
+                                            icon_color.green() as f64,
+                                            icon_color.blue() as f64,
+                                            icon_color.alpha() as f64 * ease_progress,
                                         );
                                     }
                                     let _ = cr.show_text(glyph_str);
