@@ -33,6 +33,25 @@ struct SystemIconItem {
     search_key: String,
 }
 
+struct IconGrid<T> {
+    items: Vec<T>,
+    added: usize,
+}
+
+impl<T> IconGrid<T> {
+    fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            added: 0,
+        }
+    }
+
+    fn reset_with(&mut self, items: Vec<T>) {
+        self.items = items;
+        self.added = 0;
+    }
+}
+
 pub struct SettingsApp {
     app: gtk::Application,
     menu_path: PathBuf,
@@ -79,6 +98,8 @@ impl SettingsApp {
             .material-icon-glyph {
                 font-family: 'Material Symbols Rounded';
                 font-size: 24px;
+                font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 48;
+                padding: 2px;
             }
         ";
         font_provider.load_from_data(font_css);
@@ -124,8 +145,11 @@ impl SettingsApp {
         let combo_menu_files = gtk::ComboBoxText::new();
         let is_rebuilding_combo = Rc::new(std::cell::Cell::new(false));
         let btn_new_menu = gtk::Button::from_icon_name("document-new-symbolic");
+        btn_new_menu.set_tooltip_text(Some("Create a new menu."));
         let btn_edit_menu = gtk::Button::from_icon_name("document-edit-symbolic");
+        btn_edit_menu.set_tooltip_text(Some("Rename the current menu."));
         let btn_delete_menu = gtk::Button::from_icon_name("user-trash-symbolic");
+        btn_delete_menu.set_tooltip_text(Some("Delete the current menu."));
 
         let available_menus = Self::get_available_menus(&config_path);
         for m in &available_menus {
@@ -378,14 +402,30 @@ impl SettingsApp {
         let btn_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
 
         let btn_add_item = gtk::Button::with_label("Add Command");
+        btn_add_item.set_tooltip_text(Some(
+            "Drag and drop. Add a new shell command below the selected entry.",
+        ));
         let btn_add_sub = gtk::Button::with_label("Add Submenu");
+        btn_add_sub.set_tooltip_text(Some(
+            "Drag and drop. Add a new submenu below the selected entry.",
+        ));
         let btn_add_hotkey = gtk::Button::with_label("Add Hotkey");
+        btn_add_hotkey.set_tooltip_text(Some(
+            "Drag and drop. Add a new hotkey shortcut below the selected entry.",
+        ));
         let btn_copy = gtk::Button::with_label("Copy");
+        btn_copy.set_tooltip_text(Some("Copy all properties of the selected entry."));
         let btn_paste = gtk::Button::with_label("Paste");
+        btn_paste.set_tooltip_text(Some(
+            "Drag and drop. Paste the copied entry below the selected entry.",
+        ));
         btn_paste.set_sensitive(false);
         let btn_delete = gtk::Button::with_label("Delete");
+        btn_delete.set_tooltip_text(Some("Delete the selected entry."));
         let btn_up = gtk::Button::with_label("▲");
+        btn_up.set_tooltip_text(Some("Move the selected entry upwards."));
         let btn_down = gtk::Button::with_label("▼");
+        btn_down.set_tooltip_text(Some("Move the selected entry downwards."));
 
         btn_hbox.append(&btn_add_item);
         btn_hbox.append(&btn_add_sub);
@@ -602,9 +642,15 @@ impl SettingsApp {
             }
         });
 
+        let icon_pill_roundness = gtk::Image::from_icon_name("dialog-information");
+        icon_pill_roundness.set_tooltip_text(Some(
+            "Control the roundness of pills and hub shapes for floating mode.",
+        ));
+
         let pill_roundness_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         pill_roundness_hbox.append(&lbl_pill_roundness);
         pill_roundness_hbox.append(&spin_pill_roundness);
+        pill_roundness_hbox.append(&icon_pill_roundness);
 
         let extra_radius_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         extra_radius_hbox.append(&lbl_extra_radius);
@@ -616,7 +662,12 @@ impl SettingsApp {
         right_vbox.append(&settings_vbox);
 
         let checkboxes_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        checkboxes_vbox.append(&chk_symbolic_icons);
+        let icon_symbolic_icons = gtk::Image::from_icon_name("dialog-information");
+        icon_symbolic_icons.set_tooltip_text(Some("Several system icons have symbolic, more simple versions. Turn on this setting to use those instead."));
+        let symbolic_icons_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        symbolic_icons_hbox.append(&chk_symbolic_icons);
+        symbolic_icons_hbox.append(&icon_symbolic_icons);
+        checkboxes_vbox.append(&symbolic_icons_hbox);
         checkboxes_vbox.append(&chk_bold_chars);
         checkboxes_vbox.append(&chk_center_layout);
         checkboxes_vbox.append(&chk_disable_hover_anim);
@@ -1021,6 +1072,26 @@ impl SettingsApp {
         drag_src_hot.connect_prepare(|_src, _x, _y| Some(Self::create_drag_content("new:hotkey")));
         btn_add_hotkey.add_controller(drag_src_hot);
 
+        let drag_src_paste = gtk::DragSource::new();
+        drag_src_paste.set_actions(gdk::DragAction::COPY);
+        let icon_paste = icon_theme.lookup_icon(
+            "edit-paste",
+            &["paste"],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
+        drag_src_paste.set_icon(Some(&icon_paste), 12, 12);
+        let clipboard_paste_drag = clipboard.clone();
+        drag_src_paste.connect_prepare(move |_src, _x, _y| {
+            clipboard_paste_drag.borrow().as_ref().map(|node| {
+                let payload = format!("paste:{}", serde_json::to_string(node).unwrap_or_default());
+                Self::create_drag_content(&payload)
+            })
+        });
+        btn_paste.add_controller(drag_src_paste);
+
         // --- Drag and Drop: TreeView Reordering (DragSource) ---
         let tree_drag_source = gtk::DragSource::new();
         tree_drag_source.set_actions(gdk::DragAction::MOVE);
@@ -1306,6 +1377,19 @@ impl SettingsApp {
                 let path = store_d.path(&inserted_iter);
                 // Expand first: selecting a row inside a still-folded folder
                 // would be discarded when the expansion realizes the rows.
+                tree_view_d.expand_to_path(&path);
+                tree_view_d.selection().select_iter(&inserted_iter);
+                Self::update_quick_select_placeholder(&store_d, &inserted_iter, &entry_qs_d);
+                return true;
+            } else if let Some(json_str) = payload.strip_prefix("paste:") {
+                // Dragging the Paste button drops a copy of the copied entry.
+                let node: CopiedNode = match serde_json::from_str(json_str) {
+                    Ok(n) => n,
+                    Err(_) => return false,
+                };
+                let inserted_iter =
+                    Self::insert_node_at_drop_pos(&store_d, &dest_path, drop_pos, &node);
+                let path = store_d.path(&inserted_iter);
                 tree_view_d.expand_to_path(&path);
                 tree_view_d.selection().select_iter(&inserted_iter);
                 Self::update_quick_select_placeholder(&store_d, &inserted_iter, &entry_qs_d);
@@ -2326,104 +2410,135 @@ icon = "terminal"
         themes
     }
 
-    fn refresh_material_grid(
-        flow_box: &gtk::FlowBox,
-        search_text: &str,
-        items: &[MaterialIconItem],
-        entry_icon: &gtk::Entry,
-        dialog: &gtk::Window,
-    ) {
-        // Clear existing children
+    const GRID_CHUNK: usize = 200;
+
+    fn clear_flow(flow_box: &gtk::FlowBox) {
         while let Some(child) = flow_box.first_child() {
             flow_box.remove(&child);
-        }
-
-        let search_lower = search_text.trim().to_lowercase();
-        let mut count = 0;
-
-        for item in items {
-            if search_lower.is_empty() || item.search_key.contains(&search_lower) {
-                let btn = gtk::Button::builder().has_frame(false).build();
-                let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-
-                let mut glyph_buf = [0u8; 4];
-                let glyph_str = item.glyph.encode_utf8(&mut glyph_buf);
-                let lbl_glyph = gtk::Label::new(Some(glyph_str));
-                lbl_glyph.add_css_class("material-icon-glyph");
-
-                let lbl_name = gtk::Label::new(Some(&item.name));
-                lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                lbl_name.set_max_width_chars(10);
-
-                btn_box.append(&lbl_glyph);
-                btn_box.append(&lbl_name);
-                btn.set_child(Some(&btn_box));
-
-                flow_box.insert(&btn, -1);
-
-                let name_clone = item.name.clone();
-                let entry_clone = entry_icon.clone();
-                let dialog_clone = dialog.clone();
-                btn.connect_clicked(move |_| {
-                    entry_clone.set_text(&name_clone);
-                    dialog_clone.close();
-                });
-
-                count += 1;
-                if count >= 100 {
-                    break;
-                }
-            }
         }
     }
 
-    fn refresh_system_grid(
+    fn build_material_button(
+        item: &MaterialIconItem,
+        entry_icon: &gtk::Entry,
+        dialog: &gtk::Window,
+    ) -> gtk::Button {
+        let btn = gtk::Button::builder().has_frame(false).build();
+        let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+
+        let mut glyph_buf = [0u8; 4];
+        let glyph_str = item.glyph.encode_utf8(&mut glyph_buf);
+        let lbl_glyph = gtk::Label::new(Some(glyph_str));
+        lbl_glyph.add_css_class("material-icon-glyph");
+
+        let lbl_name = gtk::Label::new(Some(&item.name));
+        lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        lbl_name.set_max_width_chars(10);
+
+        btn_box.append(&lbl_glyph);
+        btn_box.append(&lbl_name);
+        btn.set_child(Some(&btn_box));
+
+        let name_clone = item.name.clone();
+        let entry_clone = entry_icon.clone();
+        let dialog_clone = dialog.clone();
+        btn.connect_clicked(move |_| {
+            entry_clone.set_text(&name_clone);
+            dialog_clone.close();
+        });
+        btn
+    }
+
+    fn build_system_button(
+        item: &SystemIconItem,
+        entry_icon: &gtk::Entry,
+        dialog: &gtk::Window,
+    ) -> gtk::Button {
+        let btn = gtk::Button::builder().has_frame(false).build();
+        let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+
+        let img = gtk::Image::from_icon_name(&item.name);
+        img.set_icon_size(gtk::IconSize::Large);
+
+        let lbl_name = gtk::Label::new(Some(&item.name));
+        lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        lbl_name.set_max_width_chars(10);
+
+        btn_box.append(&img);
+        btn_box.append(&lbl_name);
+        btn.set_child(Some(&btn_box));
+
+        let name_clone = item.name.clone();
+        let entry_clone = entry_icon.clone();
+        let dialog_clone = dialog.clone();
+        btn.connect_clicked(move |_| {
+            entry_clone.set_text(&format!("sys:{}", name_clone));
+            dialog_clone.close();
+        });
+        btn
+    }
+
+    fn load_material_chunk(
         flow_box: &gtk::FlowBox,
-        search_text: &str,
-        icons: &[SystemIconItem],
+        grid: &mut IconGrid<MaterialIconItem>,
         entry_icon: &gtk::Entry,
         dialog: &gtk::Window,
     ) {
-        // Clear existing children
-        while let Some(child) = flow_box.first_child() {
-            flow_box.remove(&child);
+        let end = (grid.added + Self::GRID_CHUNK).min(grid.items.len());
+        for item in &grid.items[grid.added..end] {
+            flow_box.insert(&Self::build_material_button(item, entry_icon, dialog), -1);
         }
+        grid.added = end;
+    }
 
-        let search_lower = search_text.trim().to_lowercase();
-        let mut count = 0;
-
-        for item in icons {
-            if search_lower.is_empty() || item.search_key.contains(&search_lower) {
-                let btn = gtk::Button::builder().has_frame(false).build();
-                let btn_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-
-                let img = gtk::Image::from_icon_name(&item.name);
-                img.set_icon_size(gtk::IconSize::Large);
-
-                let lbl_name = gtk::Label::new(Some(&item.name));
-                lbl_name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                lbl_name.set_max_width_chars(10);
-
-                btn_box.append(&img);
-                btn_box.append(&lbl_name);
-                btn.set_child(Some(&btn_box));
-
-                flow_box.insert(&btn, -1);
-
-                let name_clone = item.name.clone();
-                let entry_clone = entry_icon.clone();
-                let dialog_clone = dialog.clone();
-                btn.connect_clicked(move |_| {
-                    entry_clone.set_text(&format!("sys:{}", name_clone));
-                    dialog_clone.close();
-                });
-
-                count += 1;
-                if count >= 100 {
-                    break;
-                }
-            }
+    fn load_system_chunk(
+        flow_box: &gtk::FlowBox,
+        grid: &mut IconGrid<SystemIconItem>,
+        entry_icon: &gtk::Entry,
+        dialog: &gtk::Window,
+    ) {
+        let end = (grid.added + Self::GRID_CHUNK).min(grid.items.len());
+        for item in &grid.items[grid.added..end] {
+            flow_box.insert(&Self::build_system_button(item, entry_icon, dialog), -1);
         }
+        grid.added = end;
+    }
+
+    fn material_matches(items: &[MaterialIconItem], query: &str) -> Vec<MaterialIconItem> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return items.to_vec();
+        }
+        let mut scored: Vec<(u8, &MaterialIconItem)> = items
+            .iter()
+            .filter(|i| i.search_key.contains(&query))
+            .map(|i| {
+                let score = if i.name == query {
+                    0
+                } else if i.name.starts_with(&query) {
+                    1
+                } else if i.name.contains(&query) {
+                    2
+                } else {
+                    3
+                };
+                (score, i)
+            })
+            .collect();
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)));
+        scored.into_iter().map(|(_, i)| i.clone()).collect()
+    }
+
+    fn system_matches(icons: &[SystemIconItem], query: &str) -> Vec<SystemIconItem> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return icons.to_vec();
+        }
+        icons
+            .iter()
+            .filter(|i| i.search_key.contains(&query))
+            .cloned()
+            .collect()
     }
 
     fn show_icon_picker(
@@ -2531,9 +2646,60 @@ icon = "terminal"
             .collect();
         system_icons_vec.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Initial populate (first 100 items)
-        Self::refresh_material_grid(&material_flow, "", &material_items, entry_icon, &dialog);
-        Self::refresh_system_grid(&system_flow, "", &system_icons_vec, entry_icon, &dialog);
+        // Initial populate + incremental loading on scroll-to-bottom
+        let material_grid = Rc::new(RefCell::new(IconGrid::<MaterialIconItem>::new()));
+        let system_grid = Rc::new(RefCell::new(IconGrid::<SystemIconItem>::new()));
+
+        material_grid
+            .borrow_mut()
+            .reset_with(Self::material_matches(&material_items, ""));
+        Self::load_material_chunk(
+            &material_flow,
+            &mut material_grid.borrow_mut(),
+            entry_icon,
+            &dialog,
+        );
+
+        system_grid
+            .borrow_mut()
+            .reset_with(Self::system_matches(&system_icons_vec, ""));
+        Self::load_system_chunk(
+            &system_flow,
+            &mut system_grid.borrow_mut(),
+            entry_icon,
+            &dialog,
+        );
+
+        // Load the next chunk when scrolling reaches the bottom
+        let mat_grid_edge = material_grid.clone();
+        let mat_flow_edge = material_flow.clone();
+        let mat_entry_edge = entry_icon.clone();
+        let mat_dialog_edge = dialog.clone();
+        material_scrolled.connect_edge_reached(move |_sw, pos| {
+            if pos == gtk::PositionType::Bottom {
+                Self::load_material_chunk(
+                    &mat_flow_edge,
+                    &mut mat_grid_edge.borrow_mut(),
+                    &mat_entry_edge,
+                    &mat_dialog_edge,
+                );
+            }
+        });
+
+        let sys_grid_edge = system_grid.clone();
+        let sys_flow_edge = system_flow.clone();
+        let sys_entry_edge = entry_icon.clone();
+        let sys_dialog_edge = dialog.clone();
+        system_scrolled.connect_edge_reached(move |_sw, pos| {
+            if pos == gtk::PositionType::Bottom {
+                Self::load_system_chunk(
+                    &sys_flow_edge,
+                    &mut sys_grid_edge.borrow_mut(),
+                    &sys_entry_edge,
+                    &sys_dialog_edge,
+                );
+            }
+        });
 
         // Connect Search with 150ms debounce
         let material_flow_clone = material_flow.clone();
@@ -2542,6 +2708,8 @@ icon = "terminal"
         let system_icons_clone = system_icons_vec.clone();
         let entry_icon_clone = entry_icon.clone();
         let dialog_clone = dialog.clone();
+        let mat_grid_clone = material_grid.clone();
+        let sys_grid_clone = system_grid.clone();
         let debounce_source = Rc::new(RefCell::new(None::<gtk::glib::SourceId>));
         let debounce_source_clone = debounce_source.clone();
 
@@ -2556,13 +2724,23 @@ icon = "terminal"
             let sys_items = system_icons_clone.clone();
             let ent_icon = entry_icon_clone.clone();
             let dlg = dialog_clone.clone();
+            let mat_grid = mat_grid_clone.clone();
+            let sys_grid = sys_grid_clone.clone();
             let src_holder = debounce_source_clone.clone();
 
             let source_id =
                 gtk::glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
                     *src_holder.borrow_mut() = None;
-                    Self::refresh_material_grid(&mat_flow, &text, &mat_items, &ent_icon, &dlg);
-                    Self::refresh_system_grid(&sys_flow, &text, &sys_items, &ent_icon, &dlg);
+                    Self::clear_flow(&mat_flow);
+                    mat_grid
+                        .borrow_mut()
+                        .reset_with(Self::material_matches(&mat_items, &text));
+                    Self::load_material_chunk(&mat_flow, &mut mat_grid.borrow_mut(), &ent_icon, &dlg);
+                    Self::clear_flow(&sys_flow);
+                    sys_grid
+                        .borrow_mut()
+                        .reset_with(Self::system_matches(&sys_items, &text));
+                    Self::load_system_chunk(&sys_flow, &mut sys_grid.borrow_mut(), &ent_icon, &dlg);
                     gtk::glib::ControlFlow::Break
                 });
             *debounce_source_clone.borrow_mut() = Some(source_id);

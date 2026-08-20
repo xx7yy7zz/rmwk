@@ -19,6 +19,8 @@ const BASE_R: f64 = 80.0;
 const SLICE_WIDTH: f64 = 110.0;
 const HOVER_GROW: f64 = 15.0;
 
+const MATERIAL_ICON_WEIGHT: f64 = 400.0;
+
 // Trace a rounded rectangle from (rx0, ry0) with the given size and corner radius.
 fn rounded_rect_path(cr: &cairo::Context, rx0: f64, ry0: f64, rw: f64, rh: f64, rad: f64) {
     cr.new_path();
@@ -87,6 +89,9 @@ struct MenuState {
 
     // Cached Pango layouts for single char icons (avoids shaping every frame)
     text_layout_cache: HashMap<(String, u32), gtk::pango::Layout>,
+
+    // Cached Pango layouts for Material Symbols glyphs (avoids shaping every frame)
+    material_layout_cache: HashMap<(String, u32), gtk::pango::Layout>,
 
     // Cached Pango layouts for slice labels
     label_layout_cache: HashMap<String, gtk::pango::Layout>,
@@ -192,6 +197,27 @@ impl MenuState {
                 self.icon_cache.insert(raw_icon_name.clone(), surface);
             }
         }
+    }
+
+    fn material_glyph_layout(
+        &mut self,
+        area: &gtk::DrawingArea,
+        codepoint: char,
+        size: f64,
+    ) -> gtk::pango::Layout {
+        let font_size = size.round().max(1.0) as u32;
+        let key = (codepoint.to_string(), font_size);
+        if let Some(l) = self.material_layout_cache.get(&key) {
+            return l.clone();
+        }
+        let l = area.create_pango_layout(Some(&codepoint.to_string()));
+        let mut font_desc = gtk::pango::FontDescription::new();
+        font_desc.set_family("Material Symbols Rounded");
+        font_desc.set_absolute_size(size * gtk::pango::SCALE as f64);
+        font_desc.set_variations(Some(&format!("wght {}", MATERIAL_ICON_WEIGHT.round())));
+        l.set_font_description(Some(&font_desc));
+        self.material_layout_cache.insert(key, l.clone());
+        l
     }
 
     fn hit_test(&self, x: f64, y: f64, cx: f64, cy: f64) -> Option<usize> {
@@ -663,6 +689,7 @@ impl LauncherApp {
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
             text_layout_cache: HashMap::new(),
+            material_layout_cache: HashMap::new(),
             label_layout_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
             pill_roundness: ui_config.pill_roundness,
@@ -976,11 +1003,13 @@ impl LauncherApp {
                     let mut icon_w = 0.0;
                     let mut icon_h = 0.0;
                     let mut icon_layout = None;
+                    // Hub icon size in px (material glyph / system image / single-char).
+                    // PIE MODE: adjust the `80.0` in the else branch; floating stays at 80.0.
                     let icon_size = if state_ref.menu_style == "floating" {
                         80.0 * ease_progress
                     } else {
-                        72.0 * ease_progress
-                    }; // slightly larger for center
+                        92.0 * ease_progress
+                    };
                     let mut surf_to_draw = None;
 
                     if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
@@ -1005,20 +1034,10 @@ impl LauncherApp {
                         icon_h = ih as f64 * ease_progress;
                         icon_layout = Some(l);
                     } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                        let _ = cr.save();
-                        cr.select_font_face(
-                            "Material Symbols Rounded",
-                            cairo::FontSlant::Normal,
-                            cairo::FontWeight::Normal,
-                        );
-                        cr.set_font_size(icon_size);
-                        let mut glyph_buf = [0u8; 4];
-                        let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
-                        if let Ok(ext) = cr.text_extents(glyph_str) {
-                            icon_w = ext.width();
-                            icon_h = ext.height();
-                        }
-                        let _ = cr.restore();
+                        let layout = state_ref.material_glyph_layout(&area, codepoint, icon_size);
+                        let (ink, _logical) = layout.pixel_extents();
+                        icon_w = ink.width() as f64;
+                        icon_h = ink.height() as f64;
                     } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
                         let cw = surf.width() as f64;
                         let ch = surf.height() as f64;
@@ -1038,26 +1057,18 @@ impl LauncherApp {
                         pangocairo::functions::show_layout(&cr, &l);
                         let _ = cr.restore();
                     } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+                        let layout = state_ref.material_glyph_layout(&area, codepoint, icon_size);
+                        let (ink, _logical) = layout.pixel_extents();
                         let _ = cr.save();
                         cr.translate(cx, cy);
                         if ease_progress > 0.001 {
                             cr.scale(ease_progress, ease_progress);
                         }
-                        cr.select_font_face(
-                            "Material Symbols Rounded",
-                            cairo::FontSlant::Normal,
-                            cairo::FontWeight::Normal,
+                        cr.move_to(
+                            -(ink.x() as f64 + ink.width() as f64 / 2.0),
+                            -(ink.y() as f64 + ink.height() as f64 / 2.0),
                         );
-                        cr.set_font_size(icon_size);
-                        let mut glyph_buf = [0u8; 4];
-                        let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
-                        if let Ok(extents) = cr.text_extents(glyph_str) {
-                            cr.move_to(
-                                -extents.width() / 2.0 - extents.x_bearing(),
-                                -extents.height() / 2.0 - extents.y_bearing(),
-                            );
-                        }
-                        let _ = cr.show_text(glyph_str);
+                        let _ = pangocairo::functions::show_layout(&cr, &layout);
                         let _ = cr.restore();
                     } else if let Some((surf, scale)) = surf_to_draw {
                         let _ = cr.save();
@@ -1187,20 +1198,11 @@ impl LauncherApp {
                                 icon_w = icon_size * 0.75;
                                 icon_h = icon_size * 0.75;
                             } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
-                                let _ = cr.save();
-                                cr.select_font_face(
-                                    "Material Symbols Rounded",
-                                    cairo::FontSlant::Normal,
-                                    cairo::FontWeight::Normal,
-                                );
-                                cr.set_font_size(32.0);
-                                let mut glyph_buf = [0u8; 4];
-                                let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
-                                if let Ok(ext) = cr.text_extents(glyph_str) {
-                                    icon_w = ext.width() * ease_progress;
-                                    icon_h = ext.height() * ease_progress;
-                                }
-                                let _ = cr.restore();
+                                let layout =
+                                    state_ref.material_glyph_layout(&area, codepoint, 32.0);
+                                let (ink, _logical) = layout.pixel_extents();
+                                icon_w = ink.width() as f64 * ease_progress;
+                                icon_h = ink.height() as f64 * ease_progress;
                             } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
                                 let cw = surf.width() as f64;
                                 let ch = surf.height() as f64;
@@ -1546,26 +1548,19 @@ impl LauncherApp {
                                     }
                                 } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name)
                                 {
+                                    let layout =
+                                        state_ref.material_glyph_layout(&area, codepoint, 32.0);
+                                    let (ink, _logical) = layout.pixel_extents();
                                     let _ = cr.save();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                     if ease_progress > 0.001 {
                                         cr.scale(ease_progress, ease_progress);
                                     }
-                                    cr.select_font_face(
-                                        "Material Symbols Rounded",
-                                        cairo::FontSlant::Normal,
-                                        cairo::FontWeight::Normal,
+                                    cr.move_to(
+                                        -(ink.x() as f64 + ink.width() as f64 / 2.0),
+                                        -(ink.y() as f64 + ink.height() as f64 / 2.0),
                                     );
-                                    cr.set_font_size(32.0);
-                                    let mut glyph_buf = [0u8; 4];
-                                    let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
-                                    if let Ok(extents) = cr.text_extents(glyph_str) {
-                                        cr.move_to(
-                                            -extents.width() / 2.0 - extents.x_bearing(),
-                                            -extents.height() / 2.0 - extents.y_bearing(),
-                                        );
-                                        let _ = cr.show_text(glyph_str);
-                                    }
+                                    let _ = pangocairo::functions::show_layout(&cr, &layout);
                                     let _ = cr.restore();
                                 } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name)
                                 {
@@ -1850,40 +1845,34 @@ impl LauncherApp {
                             } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
                                 let ix = cx + r_center * mid_angle.cos();
                                 let iy = cy + r_center * mid_angle.sin();
+                                let layout =
+                                    state_ref.material_glyph_layout(&area, codepoint, icon_size);
+                                let (ink, _logical) = layout.pixel_extents();
                                 let _ = cr.save();
                                 cr.translate(ix, iy);
                                 if ease_progress > 0.001 {
                                     cr.scale(ease_progress, ease_progress);
                                 }
-                                cr.select_font_face(
-                                    "Material Symbols Rounded",
-                                    cairo::FontSlant::Normal,
-                                    cairo::FontWeight::Normal,
+                                cr.move_to(
+                                    -(ink.x() as f64 + ink.width() as f64 / 2.0),
+                                    -(ink.y() as f64 + ink.height() as f64 / 2.0),
                                 );
-                                cr.set_font_size(icon_size);
-                                let mut glyph_buf = [0u8; 4];
-                                let glyph_str = codepoint.encode_utf8(&mut glyph_buf);
-                                if let Ok(extents) = cr.text_extents(glyph_str) {
-                                    let rx = -extents.width() / 2.0 - extents.x_bearing();
-                                    let ry = -extents.height() / 2.0 - extents.y_bearing();
-                                    cr.move_to(rx, ry);
-                                    if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
-                                        cr.set_source_rgba(
-                                            hover_icon_color.red() as f64,
-                                            hover_icon_color.green() as f64,
-                                            hover_icon_color.blue() as f64,
-                                            hover_icon_color.alpha() as f64 * ease_progress,
-                                        );
-                                    } else {
-                                        cr.set_source_rgba(
-                                            icon_color.red() as f64,
-                                            icon_color.green() as f64,
-                                            icon_color.blue() as f64,
-                                            icon_color.alpha() as f64 * ease_progress,
-                                        );
-                                    }
-                                    let _ = cr.show_text(glyph_str);
+                                if state_ref.hovered_index == Some(i) && !state_ref.is_closing {
+                                    cr.set_source_rgba(
+                                        hover_icon_color.red() as f64,
+                                        hover_icon_color.green() as f64,
+                                        hover_icon_color.blue() as f64,
+                                        hover_icon_color.alpha() as f64 * ease_progress,
+                                    );
+                                } else {
+                                    cr.set_source_rgba(
+                                        icon_color.red() as f64,
+                                        icon_color.green() as f64,
+                                        icon_color.blue() as f64,
+                                        icon_color.alpha() as f64 * ease_progress,
+                                    );
                                 }
+                                let _ = pangocairo::functions::show_layout(&cr, &layout);
                                 let _ = cr.restore();
                             } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
                                 let current_w = surf.width() as f64;

@@ -161,8 +161,11 @@ impl ThemeEditor {
         combo_theme.add_controller(scroll_ctrl_theme);
 
         let btn_new_theme = gtk4::Button::from_icon_name("document-new-symbolic");
+        btn_new_theme.set_tooltip_text(Some("Create a new theme with default values."));
         let btn_rename_theme = gtk4::Button::from_icon_name("document-edit-symbolic");
+        btn_rename_theme.set_tooltip_text(Some("Rename the current theme."));
         let btn_delete_theme = gtk4::Button::from_icon_name("user-trash-symbolic");
+        btn_delete_theme.set_tooltip_text(Some("Delete the current theme."));
 
         header_hbox.append(&lbl_theme);
         header_hbox.append(&combo_theme);
@@ -180,7 +183,9 @@ impl ThemeEditor {
 
         let btn_save = gtk4::Button::with_label("Save Theme");
         let btn_save_as = gtk4::Button::with_label("Save As...");
+        btn_save_as.set_tooltip_text(Some("Save the current color values as a completely new theme."));
         let btn_reset = gtk4::Button::with_label("Reset to Defaults");
+        btn_reset.set_tooltip_text(Some("Reset the system (GTK) theme to its default values."));
         let btn_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 5);
         btn_hbox.append(&btn_save);
         btn_hbox.append(&btn_save_as);
@@ -845,13 +850,18 @@ impl ThemeEditor {
             let update_fn_c2 = update_fn_rc.clone();
             let hex_entry_c2 = hex_entry_c.clone();
             let rgba_state_c2 = current_rgba.clone();
+            let preview_c2 = preview.clone();
             op_spin.connect_value_changed(move |s| {
-                if let Ok(parsed) = gdk::RGBA::from_str(&hex_entry_c2.text().to_string()) {
-                    update_fn_c2(parsed, s.value());
-                } else {
-                    let col = *rgba_state_c2.borrow();
-                    update_fn_c2(col, s.value());
-                }
+                let mut col =
+                    if let Ok(parsed) = gdk::RGBA::from_str(&hex_entry_c2.text().to_string()) {
+                        parsed
+                    } else {
+                        *rgba_state_c2.borrow()
+                    };
+                col.set_alpha(s.value() as f32);
+                *rgba_state_c2.borrow_mut() = col;
+                preview_c2.queue_draw();
+                update_fn_c2(col, s.value());
             });
 
             // Clicking the swatch opens the native HSV dialog and syncs the row
