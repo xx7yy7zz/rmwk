@@ -352,6 +352,7 @@ pub fn parse_hotkey(hotkey: &str) -> Result<Vec<String>, String> {
 pub struct MenuConfig {
     #[serde(default)]
     pub icon: Option<String>,
+    #[serde(default)]
     pub menu: Vec<MenuItem>,
 }
 

@@ -2632,14 +2632,24 @@ impl LauncherApp {
                         }
 
                         if blur_needs_update {
+                            let radius = if state.enable_blur {
+                                BASE_R + SLICE_WIDTH + HOVER_GROW
+                            } else {
+                                0.0
+                            };
+                            // The WaylandBlur is normally created at realize time,
+                            // only when blur is already enabled. If it was enabled
+                            // at runtime (e.g. switching to pie mode), create it now.
+                            if state.enable_blur && wayland_blur.borrow().is_none() {
+                                if let Some(blur) = wayland::WaylandBlur::new(&window_clone_ipc) {
+                                    *wayland_blur.borrow_mut() = Some(blur);
+                                }
+                            }
+                            let cx = window_clone_ipc.width() as f64 / 2.0;
+                            let cy = window_clone_ipc.height() as f64 / 2.0;
+                            state.last_cx = cx;
+                            state.last_cy = cy;
                             if let Some(blur) = wayland_blur.borrow().as_ref() {
-                                let cx = state.last_cx;
-                                let cy = state.last_cy;
-                                let radius = if state.enable_blur {
-                                    BASE_R + SLICE_WIDTH + HOVER_GROW
-                                } else {
-                                    0.0
-                                };
                                 blur.update_circular_region(radius, cx, cy);
                             }
                         }

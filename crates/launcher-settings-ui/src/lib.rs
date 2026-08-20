@@ -523,7 +523,7 @@ impl SettingsApp {
         right_vbox.append(&prop_frame);
 
         // Theme and Global settings Box
-        let settings_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let settings_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
 
         let lbl_extra_radius = gtk::Label::new(Some("Active Margin (px):"));
         let spin_extra_radius = gtk::SpinButton::with_range(0.0, 1000.0, 5.0);
@@ -556,13 +556,13 @@ impl SettingsApp {
         }
 
         let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
-        icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Your Wayland compositor must support this protocol for blur to work."));
+        icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Pie Mode + Niri only. Hyrpland works the best with a layer rule enabling blur and ignoring alpha."));
 
         let blur_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         blur_hbox.append(&chk_enable_blur);
         blur_hbox.append(&icon_blur_warning);
 
-        let lbl_visual_cue = gtk::Label::new(Some("Hover Visual Cue:"));
+        let lbl_visual_cue = gtk::Label::new(Some("Pie Hover Cue:"));
         lbl_visual_cue.set_halign(gtk::Align::Start);
         let combo_visual_cue = gtk::ComboBoxText::new();
         combo_visual_cue.append(Some("outwards"), "Expand Outwards");
@@ -602,11 +602,18 @@ impl SettingsApp {
             }
         });
 
-        settings_hbox.append(&lbl_extra_radius);
-        settings_hbox.append(&spin_extra_radius);
-        settings_hbox.append(&lbl_pill_roundness);
-        settings_hbox.append(&spin_pill_roundness);
-        right_vbox.append(&settings_hbox);
+        let pill_roundness_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        pill_roundness_hbox.append(&lbl_pill_roundness);
+        pill_roundness_hbox.append(&spin_pill_roundness);
+
+        let extra_radius_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        extra_radius_hbox.append(&lbl_extra_radius);
+        extra_radius_hbox.append(&spin_extra_radius);
+
+        settings_vbox.append(&menu_style_hbox);
+        settings_vbox.append(&pill_roundness_hbox);
+        settings_vbox.append(&extra_radius_hbox);
+        right_vbox.append(&settings_vbox);
 
         let checkboxes_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
         checkboxes_vbox.append(&chk_symbolic_icons);
@@ -615,7 +622,6 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_disable_hover_anim);
         checkboxes_vbox.append(&blur_hbox);
         checkboxes_vbox.append(&visual_cue_hbox);
-        checkboxes_vbox.append(&menu_style_hbox);
         right_vbox.append(&checkboxes_vbox);
 
         // Save & Save/Reload buttons at the bottom
@@ -1874,7 +1880,9 @@ impl SettingsApp {
 
                                             if let Some(path) = selected_path {
                                                 tree_w.selection().select_path(&path);
-                                            } else if let Some(root) = store_w.iter_nth_child(None, 0) {
+                                            } else if let Some(root) =
+                                                store_w.iter_nth_child(None, 0)
+                                            {
                                                 tree_w.selection().select_iter(&root);
                                             }
                                         }
