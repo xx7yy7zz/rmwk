@@ -565,6 +565,79 @@ impl LauncherApp {
         }
     }
 
+    fn init_color_scheme_sync() -> Option<gtk::gio::Settings> {
+        let apply_preference = |is_dark: bool| {
+            if let Some(gtk_settings) = gtk::Settings::default() {
+                gtk_settings.set_gtk_application_prefer_dark_theme(is_dark);
+            }
+        };
+
+        let source = gtk::gio::SettingsSchemaSource::default();
+        if source.map_or(false, |s| {
+            s.lookup("org.gnome.desktop.interface", true).is_some()
+        }) {
+            let gsettings = gtk::gio::Settings::new("org.gnome.desktop.interface");
+            let update_from_gsettings = {
+                let gsettings = gsettings.clone();
+                move || {
+                    let color_scheme = gsettings.string("color-scheme");
+                    let is_dark = if color_scheme == "prefer-dark" {
+                        true
+                    } else if color_scheme == "prefer-light" {
+                        false
+                    } else {
+                        let theme = gsettings.string("gtk-theme");
+                        theme.to_lowercase().contains("dark")
+                    };
+                    apply_preference(is_dark);
+                }
+            };
+
+            update_from_gsettings();
+
+            gsettings.connect_changed(Some("color-scheme"), {
+                let gsettings = gsettings.clone();
+                move |_, _| {
+                    let color_scheme = gsettings.string("color-scheme");
+                    let is_dark = if color_scheme == "prefer-dark" {
+                        true
+                    } else if color_scheme == "prefer-light" {
+                        false
+                    } else {
+                        let theme = gsettings.string("gtk-theme");
+                        theme.to_lowercase().contains("dark")
+                    };
+                    apply_preference(is_dark);
+                }
+            });
+
+            gsettings.connect_changed(Some("gtk-theme"), {
+                let gsettings = gsettings.clone();
+                move |_, _| {
+                    let color_scheme = gsettings.string("color-scheme");
+                    if color_scheme != "prefer-dark" && color_scheme != "prefer-light" {
+                        let theme = gsettings.string("gtk-theme");
+                        apply_preference(theme.to_lowercase().contains("dark"));
+                    }
+                }
+            });
+
+            Some(gsettings)
+        } else {
+            let is_dark = if let Ok(gtk_theme_env) = std::env::var("GTK_THEME") {
+                gtk_theme_env.to_lowercase().contains("dark")
+            } else if let Some(gtk_settings) = gtk::Settings::default() {
+                gtk_settings
+                    .gtk_theme_name()
+                    .map_or(false, |t| t.to_lowercase().contains("dark"))
+            } else {
+                false
+            };
+            apply_preference(is_dark);
+            None
+        }
+    }
+
     pub fn run(&self) -> i32 {
         let menu_path = self.menu_path.clone();
         let config_path = self.config_path.clone();
@@ -598,6 +671,8 @@ impl LauncherApp {
         config_path: PathBuf,
         start_hidden: bool,
     ) -> anyhow::Result<()> {
+        let _gsettings = Self::init_color_scheme_sync();
+
         // Load the menu config from disk
         let menu_config = match launcher_core::load_menu(&menu_path) {
             Ok(m) => m,
