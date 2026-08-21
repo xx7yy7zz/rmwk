@@ -1,3 +1,4 @@
+pub mod dropdown_utils;
 pub mod standard_theme;
 mod theme_editor;
 use gtk::gdk;
@@ -217,7 +218,7 @@ impl SettingsApp {
         // Menu Selector
         let menu_selector_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         let lbl_menu = gtk::Label::new(Some("Menu:"));
-        let combo_menu_files = gtk::ComboBoxText::new();
+        let combo_menu_files = crate::dropdown_utils::create_dropdown();
         let is_rebuilding_combo = Rc::new(std::cell::Cell::new(false));
         let btn_new_menu = gtk::Button::from_icon_name("document-new-symbolic");
         btn_new_menu.set_tooltip_text(Some("Create a new menu."));
@@ -228,15 +229,15 @@ impl SettingsApp {
 
         let available_menus = Self::get_available_menus(&config_path);
         for m in &available_menus {
-            combo_menu_files.append(Some(m), m);
+            crate::dropdown_utils::dropdown_append(&combo_menu_files, m);
         }
         if let Some(stem) = menu_path.file_stem().and_then(|s| s.to_str()) {
             if !available_menus.contains(&stem.to_string()) && menu_path.exists() {
-                combo_menu_files.append(Some(stem), stem);
+                crate::dropdown_utils::dropdown_append(&combo_menu_files, stem);
             }
-            combo_menu_files.set_active_id(Some(stem));
+            crate::dropdown_utils::dropdown_set_active_id(&combo_menu_files, stem);
         } else if !available_menus.is_empty() {
-            combo_menu_files.set_active_id(Some(&available_menus[0]));
+            crate::dropdown_utils::dropdown_set_active_id(&combo_menu_files, &available_menus[0]);
         }
 
         // GTK4's GtkComboBox scrolls through its items on mouse wheel
@@ -445,7 +446,9 @@ impl SettingsApp {
                 let left_vbox_c = left_vbox_clone.clone();
                 let label_col_c = label_col_clone.clone();
                 let type_col_c = type_col_clone.clone();
-                let initial_w = (surface.width() / 2) - 15;
+                let total = surface.width();
+                let base = if total <= 900 { total * 4 / 10 } else { 360 + (total - 900) / 2 };
+                let initial_w = base - 15;
                 if initial_w >= 100 {
                     left_vbox_c.set_width_request(initial_w);
                     label_col_c.set_fixed_width((initial_w * 3) / 4);
@@ -463,7 +466,9 @@ impl SettingsApp {
                 let label_col_c2 = label_col_clone.clone();
                 let type_col_c2 = type_col_clone.clone();
                 surface.connect_notify_local(Some("width"), move |surf, _| {
-                    let dynamic_w = (surf.width() / 2) - 15;
+                    let total = surf.width();
+                    let base = if total <= 900 { total * 4 / 10 } else { 360 + (total - 900) / 2 };
+                    let dynamic_w = base - 15;
                     if dynamic_w >= 100 {
                         left_vbox_c2.set_width_request(dynamic_w);
                         label_col_c2.set_fixed_width((dynamic_w * 3) / 4);
@@ -533,6 +538,7 @@ impl SettingsApp {
         // Properties Frame
         let prop_frame = gtk::Frame::new(Some("Properties"));
         let prop_grid = gtk::Grid::new();
+        prop_grid.set_width_request(400);
         prop_grid.set_row_spacing(10);
         prop_grid.set_column_spacing(10);
         prop_grid.set_margin_start(10);
@@ -550,10 +556,9 @@ impl SettingsApp {
         // 2. Icon Type Dropdown
         let lbl_icon_type = gtk::Label::new(Some("Icon Type:"));
         lbl_icon_type.set_halign(gtk::Align::End);
-        let combo_icon_type = gtk::ComboBoxText::new();
-        combo_icon_type.append(Some("picker"), "Icon Picker");
-        combo_icon_type.append(Some("char"), "Single Character");
-        combo_icon_type.set_active_id(Some("picker"));
+        let combo_icon_type_model = gtk::StringList::new(&["Icon Picker", "Single Character"]);
+        let combo_icon_type = gtk::DropDown::new(Some(combo_icon_type_model), gtk::Expression::NONE);
+        combo_icon_type.set_selected(0);
         prop_grid.attach(&lbl_icon_type, 0, 1, 1, 1);
         prop_grid.attach(&combo_icon_type, 1, 1, 1, 1);
 
@@ -581,11 +586,8 @@ impl SettingsApp {
         // Icon Type Changed signal connection
         let btn_pick_icon_toggle = btn_pick_icon.clone();
         let entry_icon_toggle = entry_icon.clone();
-        combo_icon_type.connect_changed(move |combo| {
-            let active_id = combo
-                .active_id()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "picker".to_string());
+        combo_icon_type.connect_notify_local(Some("selected"), move |combo, _| {
+            let active_id = if combo.selected() == 1 { "char".to_string() } else { "picker".to_string() };
             if active_id == "char" {
                 entry_icon_toggle.set_max_length(1);
                 entry_icon_toggle.set_placeholder_text(Some("e.g. A, 🚀"));
@@ -679,11 +681,14 @@ impl SettingsApp {
 
         let lbl_visual_cue = gtk::Label::new(Some("Pie Hover Cue:"));
         lbl_visual_cue.set_halign(gtk::Align::Start);
-        let combo_visual_cue = gtk::ComboBoxText::new();
-        combo_visual_cue.append(Some("outwards"), "Expand Outwards");
-        combo_visual_cue.append(Some("sides"), "Expand Sides");
-        combo_visual_cue.append(Some("none"), "None");
-        combo_visual_cue.set_active_id(Some(&ui_config.ui.hover_visual_cue));
+        let combo_visual_cue_model = gtk::StringList::new(&["Expand Outwards", "Expand Sides", "None"]);
+        let combo_visual_cue = gtk::DropDown::new(Some(combo_visual_cue_model), gtk::Expression::NONE);
+        let selected_idx = match ui_config.ui.hover_visual_cue.as_str() {
+            "sides" => 1,
+            "none" => 2,
+            _ => 0,
+        };
+        combo_visual_cue.set_selected(selected_idx);
 
         let visual_cue_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         visual_cue_hbox.append(&lbl_visual_cue);
@@ -691,10 +696,10 @@ impl SettingsApp {
 
         let lbl_menu_style = gtk::Label::new(Some("Menu Style:"));
         lbl_menu_style.set_halign(gtk::Align::Start);
-        let combo_menu_style = gtk::ComboBoxText::new();
-        combo_menu_style.append(Some("pie"), "Pie");
-        combo_menu_style.append(Some("floating"), "Floating Entries");
-        combo_menu_style.set_active_id(Some(&ui_config.ui.menu_style));
+        let combo_menu_style_model = gtk::StringList::new(&["Pie", "Floating Entries"]);
+        let combo_menu_style = gtk::DropDown::new(Some(combo_menu_style_model), gtk::Expression::NONE);
+        let selected_idx = if ui_config.ui.menu_style == "floating" { 1 } else { 0 };
+        combo_menu_style.set_selected(selected_idx);
 
         let menu_style_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         menu_style_hbox.append(&lbl_menu_style);
@@ -703,8 +708,9 @@ impl SettingsApp {
         let chk_enable_blur_style = chk_enable_blur.clone();
         let spin_pill_roundness_style = spin_pill_roundness.clone();
         let lbl_pill_roundness_style = lbl_pill_roundness.clone();
-        combo_menu_style.connect_changed(move |combo| {
-            if let Some(id) = combo.active_id() {
+        combo_menu_style.connect_notify_local(Some("selected"), move |combo, _| {
+            let id = if combo.selected() == 1 { "floating" } else { "pie" };
+            if true {
                 if id == "floating" {
                     chk_enable_blur_style.set_sensitive(false);
                     spin_pill_roundness_style.set_sensitive(true);
@@ -853,9 +859,9 @@ impl SettingsApp {
                 sel_label.set_text(&label);
 
                 if icon.chars().count() == 1 && !icon.starts_with('/') {
-                    sel_icon_type.set_active_id(Some("char"));
+                    sel_icon_type.set_selected(1);
                 } else {
-                    sel_icon_type.set_active_id(Some("picker"));
+                    sel_icon_type.set_selected(0);
                 }
 
                 sel_icon.set_text(&icon);
@@ -1619,7 +1625,7 @@ impl SettingsApp {
             }
 
             // 2. Save active theme, extra_radius, etc. back to config.toml
-            if let Some(theme_id) = combo_theme_save.active_id() {
+            if let Some(theme_id) = crate::dropdown_utils::dropdown_active_id(&combo_theme_save) {
                 let mut cfg = match launcher_core::load_config(&config_path_save) {
                     Ok(c) => c,
                     Err(_) => launcher_core::Config::default(),
@@ -1632,14 +1638,12 @@ impl SettingsApp {
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
-                cfg.ui.hover_visual_cue = combo_visual_cue_save
-                    .active_id()
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "outwards".to_string());
-                cfg.ui.menu_style = combo_menu_style_save
-                    .active_id()
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "pie".to_string());
+                cfg.ui.hover_visual_cue = match combo_visual_cue_save.selected() {
+                    1 => "sides".to_string(),
+                    2 => "none".to_string(),
+                    _ => "outwards".to_string(),
+                };
+                cfg.ui.menu_style = if combo_menu_style_save.selected() == 1 { "floating".to_string() } else { "pie".to_string() };
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
                 cfg.last_edited_menu = current_menu_path
                     .file_stem()
@@ -1806,7 +1810,7 @@ impl SettingsApp {
                                 return gtk::glib::ControlFlow::Break;
                             }
                             if let Ok(cfg) = launcher_core::load_config(&cp_cb) {
-                                combo_th_cb.set_active_id(Some(&cfg.ui.theme));
+                                crate::dropdown_utils::dropdown_set_active_id(&combo_th_cb, &cfg.ui.theme);
                                 spin_r_cb.set_value(cfg.ui.extra_radius);
                                 spin_pill_cb.set_value(cfg.ui.pill_roundness * 100.0);
                                 chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
@@ -1814,12 +1818,18 @@ impl SettingsApp {
                                 chk_cnt_cb.set_active(cfg.ui.center_layout);
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
-                                combo_vis_cb.set_active_id(Some(&cfg.ui.hover_visual_cue));
-                                combo_sty_cb.set_active_id(Some(&cfg.ui.menu_style));
+                                let selected_idx = match cfg.ui.hover_visual_cue.as_str() {
+                    "sides" => 1,
+                    "none" => 2,
+                    _ => 0,
+                };
+                combo_vis_cb.set_selected(selected_idx);
+                                let selected_idx = if cfg.ui.menu_style == "floating" { 1 } else { 0 };
+                combo_sty_cb.set_selected(selected_idx);
                                 if let Some(sys) = cfg.ui.system_theme_overrides {
                                     *sys_ov_cb.borrow_mut() = sys;
                                 }
-                                combo_th_cb.emit_by_name::<()>("changed", &[]);
+                                combo_th_cb.notify("selected");
                             }
                             gtk::glib::ControlFlow::Break
                         },
@@ -1882,18 +1892,18 @@ impl SettingsApp {
                                     .and_then(|s| s.to_str())
                                     .map(|s| s.to_string());
 
-                                combo.remove_all();
+                                crate::dropdown_utils::dropdown_remove_all(&combo);
                                 let available = Self::get_available_menus(&cp);
                                 for m in &available {
-                                    combo.append(Some(m), m);
+                                    crate::dropdown_utils::dropdown_append(&combo, m);
                                 }
                                 if let Some(act) = intended_active {
                                     if available.contains(&act) {
-                                        combo.set_active_id(Some(&act));
+                                        crate::dropdown_utils::dropdown_set_active_id(&combo, &act);
                                     } else {
-                                        combo.set_active_id(None::<&str>);
+                                        combo.set_selected(gtk::INVALID_LIST_POSITION);
                                         is_reb.set(false);
-                                        combo.emit_by_name::<()>("changed", &[]);
+                                        combo.notify("selected");
                                         return gtk::glib::ControlFlow::Break;
                                     }
                                 }
@@ -1922,11 +1932,11 @@ impl SettingsApp {
 
         let active_menu_monitor_clone = active_menu_monitor.clone();
         let is_rebuilding_changed = is_rebuilding_combo.clone();
-        combo_menu_files.connect_changed(move |combo| {
+        combo_menu_files.connect_notify_local(Some("selected"), move |combo, _| {
             if is_rebuilding_changed.get() {
                 return;
             }
-            if let Some(id) = combo.active_id() {
+            if let Some(id) = crate::dropdown_utils::dropdown_active_id(combo) {
                 let name = id.to_string();
                 let parent = config_path_clone
                     .parent()
@@ -2062,7 +2072,7 @@ impl SettingsApp {
             }
         });
         // Initial setup for the first file monitor
-        combo_menu_files.emit_by_name::<()>("changed", &[]);
+        combo_menu_files.notify("selected");
 
         let window_for_dialog = window.clone();
         let combo_menu_files_clone2 = combo_menu_files.clone();
@@ -2119,8 +2129,8 @@ icon = "terminal"
                                 let _ = std::fs::create_dir_all(p);
                             }
                             let _ = std::fs::write(&np, default_content);
-                            combo.append(Some(&t), &t);
-                            combo.set_active_id(Some(&t));
+                            crate::dropdown_utils::dropdown_append(&combo, &t);
+                            crate::dropdown_utils::dropdown_set_active_id(&combo, &t);
                         }
                     };
 
@@ -2201,31 +2211,12 @@ icon = "terminal"
                                     return;
                                 }
                                 // Remove old item from combo, add new one, and set active
-                                let mut to_remove_index = None;
-                                if let Some(model) = combo.model() {
-                                    let mut iter = model.iter_first();
-                                    let mut i = 0;
-                                    while let Some(mut it) = iter {
-                                        let val: Option<String> = model.get(&it, 0);
-                                        if val == Some(o_txt.clone()) {
-                                            to_remove_index = Some(i);
-                                            break;
-                                        }
-                                        i += 1;
-                                        if !model.iter_next(&mut it) {
-                                            break;
-                                        }
-                                        iter = Some(it);
-                                    }
-                                }
-                                if let Some(idx) = to_remove_index {
-                                    combo.remove(idx);
-                                }
-                                combo.append(Some(&n_txt), &n_txt);
+                                crate::dropdown_utils::dropdown_remove_id(&combo, &o_txt);
+                                crate::dropdown_utils::dropdown_append(&combo, &n_txt);
 
                                 // Update active path pointer
                                 *active_p.borrow_mut() = new_p.clone();
-                                combo.set_active_id(Some(&n_txt));
+                                crate::dropdown_utils::dropdown_set_active_id(&combo, &n_txt);
                             }
                         };
 
@@ -2287,16 +2278,16 @@ icon = "terminal"
                 dialog.connect_response(move |d, response| {
                     if response == gtk::ResponseType::Ok {
                         let _ = std::fs::remove_file(&path);
-                        combo.remove_all();
+                        crate::dropdown_utils::dropdown_remove_all(&combo);
                         let menus = Self::get_available_menus(&cp);
                         for m in &menus {
-                            combo.append(Some(m), m);
+                            crate::dropdown_utils::dropdown_append(&combo, m);
                         }
                         if menus.is_empty() {
-                            combo.set_active_id(None);
+                            combo.set_selected(gtk::INVALID_LIST_POSITION);
                             store_response.clear();
                         } else {
-                            combo.set_active_id(Some(&menus[0]));
+                            crate::dropdown_utils::dropdown_set_active_id(&combo, &menus[0]);
                         }
                     }
                     d.destroy();

@@ -85,47 +85,18 @@ fn scan_available_themes() -> Vec<String> {
     themes
 }
 
-fn combo_has_id(combo: &gtk4::ComboBoxText, id: &str) -> bool {
-    if let Some(model) = combo.model() {
-        let mut iter = model.iter_first();
-        while let Some(it) = iter {
-            let val: Option<String> = model.get(&it, 0);
-            if val.as_deref() == Some(id) {
-                return true;
-            }
-            let mut it2 = it;
-            if !model.iter_next(&mut it2) {
-                break;
-            }
-            iter = Some(it2);
-        }
-    }
-    false
+fn combo_has_id(combo: &gtk4::DropDown, id: &str) -> bool {
+    crate::dropdown_utils::dropdown_has_id(combo, id)
 }
 
-fn combo_remove_id(combo: &gtk4::ComboBoxText, id: &str) {
-    if let Some(model) = combo.model() {
-        let mut iter = model.iter_first();
-        let mut i = 0;
-        while let Some(mut it) = iter {
-            let val: Option<String> = model.get(&it, 0);
-            if val.as_deref() == Some(id) {
-                combo.remove(i);
-                return;
-            }
-            i += 1;
-            if !model.iter_next(&mut it) {
-                break;
-            }
-            iter = Some(it);
-        }
-    }
+fn combo_remove_id(combo: &gtk4::DropDown, id: &str) {
+    crate::dropdown_utils::dropdown_remove_id(combo, id);
 }
 
 #[allow(dead_code)]
 pub struct ThemeEditor {
     pub container: gtk4::Box,
-    pub combo_theme: gtk4::ComboBoxText,
+    pub combo_theme: gtk4::DropDown,
     pub btn_save: gtk4::Button,
     pub btn_save_as: gtk4::Button,
     pub btn_reset: gtk4::Button,
@@ -147,11 +118,11 @@ impl ThemeEditor {
 
         let header_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
         let lbl_theme = gtk4::Label::new(Some("Theme:"));
-        let combo_theme = gtk4::ComboBoxText::new();
+        let combo_theme = crate::dropdown_utils::create_dropdown();
         for t in available_themes {
-            combo_theme.append(Some(t), t);
+            crate::dropdown_utils::dropdown_append(&combo_theme, t);
         }
-        combo_theme.set_active_id(Some(initial_theme));
+        crate::dropdown_utils::dropdown_set_active_id(&combo_theme, initial_theme);
 
         let scroll_ctrl_theme = gtk4::EventControllerScroll::new(
             gtk4::EventControllerScrollFlags::VERTICAL
@@ -206,11 +177,11 @@ impl ThemeEditor {
         let active_monitor_c = active_monitor.clone();
         let is_saving_mon = is_saving.clone();
 
-        combo_theme.connect_changed(move |combo| {
+        combo_theme.connect_notify_local(Some("selected"), move |combo, _| {
             if let Some(m) = active_monitor_c.borrow_mut().take() {
                 m.cancel();
             }
-            if let Some(id) = combo.active_id() {
+            if let Some(id) = crate::dropdown_utils::dropdown_active_id(combo) {
                 if id == "system" {
                     btn_save_as_c.set_sensitive(true);
                     btn_reset_c.set_sensitive(true);
@@ -324,17 +295,17 @@ impl ThemeEditor {
                                 if is_sav_cb.get() {
                                     return gtk4::glib::ControlFlow::Break;
                                 }
-                                let intended: Option<String> = combo.active_id().map(|s| s.to_string());
-                                combo.remove_all();
+                                let intended: Option<String> = crate::dropdown_utils::dropdown_active_id(&combo);
+                                crate::dropdown_utils::dropdown_remove_all(&combo);
                                 let available = scan_available_themes();
                                 for t in &available {
-                                    combo.append(Some(t), t);
+                                    crate::dropdown_utils::dropdown_append(&combo, t);
                                 }
                                 if let Some(act) = intended {
                                     if available.contains(&act) {
-                                        combo.set_active_id(Some(&act));
+                                        crate::dropdown_utils::dropdown_set_active_id(&combo, &act);
                                     } else if !available.is_empty() {
-                                        combo.set_active_id(Some(&available[0]));
+                                        crate::dropdown_utils::dropdown_set_active_id(&combo, &available[0]);
                                     }
                                 }
                                 gtk4::glib::ControlFlow::Break
@@ -389,9 +360,9 @@ impl ThemeEditor {
                         move || {
                             save_standard_theme(&name, &load_standard_theme("default"));
                             if !combo_has_id(&combo, &name) {
-                                combo.append(Some(&name), &name);
+                                crate::dropdown_utils::dropdown_append(&combo, &name);
                             }
-                            combo.set_active_id(Some(&name));
+                            crate::dropdown_utils::dropdown_set_active_id(&combo, &name);
                         }
                     };
 
@@ -425,7 +396,7 @@ impl ThemeEditor {
         // Rename Theme Button
         let combo_rename = combo_theme.clone();
         btn_rename_theme.connect_clicked(move |btn| {
-            if let Some(id) = combo_rename.active_id() {
+            if let Some(id) = crate::dropdown_utils::dropdown_active_id(&combo_rename) {
                 if id == "system" {
                     return;
                 }
@@ -471,9 +442,9 @@ impl ThemeEditor {
                                 }
                                 combo_remove_id(&combo, &old_n);
                                 if !combo_has_id(&combo, &new_n) {
-                                    combo.append(Some(&new_n), &new_n);
+                                    crate::dropdown_utils::dropdown_append(&combo, &new_n);
                                 }
-                                combo.set_active_id(Some(&new_n));
+                                crate::dropdown_utils::dropdown_set_active_id(&combo, &new_n);
                             }
                         };
 
@@ -508,7 +479,7 @@ impl ThemeEditor {
         // Delete Theme Button
         let combo_del = combo_theme.clone();
         btn_delete_theme.connect_clicked(move |btn| {
-            if let Some(id) = combo_del.active_id() {
+            if let Some(id) = crate::dropdown_utils::dropdown_active_id(&combo_del) {
                 if id == "system" {
                     return;
                 }
@@ -525,15 +496,15 @@ impl ThemeEditor {
                 dialog.connect_response(move |d, response| {
                     if response == gtk4::ResponseType::Ok {
                         let _ = std::fs::remove_file(theme_file_path(&id));
-                        combo.remove_all();
+                        crate::dropdown_utils::dropdown_remove_all(&combo);
                         let themes = scan_available_themes();
                         for t in &themes {
-                            combo.append(Some(t), t);
+                            crate::dropdown_utils::dropdown_append(&combo, t);
                         }
                         if themes.is_empty() {
-                            combo.set_active_id(None);
+                            combo.set_selected(gtk4::INVALID_LIST_POSITION);
                         } else {
-                            combo.set_active_id(Some(&themes[0]));
+                            crate::dropdown_utils::dropdown_set_active_id(&combo, &themes[0]);
                         }
                     }
                     d.destroy();
@@ -543,7 +514,7 @@ impl ThemeEditor {
         });
 
         // Trigger initial population
-        combo_theme.emit_by_name::<()>("changed", &[]);
+        combo_theme.notify("selected");
 
         let btn_save_config_path = config_path.clone();
         let btn_save_combo = combo_theme.clone();
@@ -551,7 +522,7 @@ impl ThemeEditor {
         let btn_save_std = std_overrides.clone();
         let is_saving_btn = is_saving.clone();
         btn_save.connect_clicked(move |_| {
-            if let Some(theme_id) = btn_save_combo.active_id() {
+            if let Some(theme_id) = crate::dropdown_utils::dropdown_active_id(&btn_save_combo) {
                 is_saving_btn.set(true);
                 if let Ok(mut cfg) = launcher_core::load_config(&btn_save_config_path) {
                     if theme_id == "system" {
@@ -587,7 +558,7 @@ impl ThemeEditor {
 
             // If saving from the system theme, resolve its GTK variables (with
             // their opacities) into a concrete standard palette up front.
-            let is_system = combo_save_as.active_id().as_deref() == Some("system");
+            let is_system = crate::dropdown_utils::dropdown_active_id(&combo_save_as).as_deref() == Some("system");
             let resolved_std = if is_system {
                 Some(system_to_standard(&save_as_sys.borrow(), &win.style_context()))
             } else {
@@ -635,9 +606,9 @@ impl ThemeEditor {
                                 save_standard_theme(&n, &std_c.borrow());
                             }
                             if !combo_has_id(&combo, &n) {
-                                combo.append(Some(&n), &n);
+                                crate::dropdown_utils::dropdown_append(&combo, &n);
                             }
-                            combo.set_active_id(Some(&n));
+                            crate::dropdown_utils::dropdown_set_active_id(&combo, &n);
                         }
                     };
 
@@ -989,15 +960,15 @@ impl ThemeEditor {
             let lbl = gtk4::Label::new(Some(label));
             grid.attach(&lbl, 0, row, 1, 1);
 
-            let var_combo = gtk4::ComboBoxText::new();
+            let var_combo = crate::dropdown_utils::create_dropdown();
             for var in &gtk_vars {
-                var_combo.append(Some(var), var);
+                crate::dropdown_utils::dropdown_append(&var_combo, var);
             }
             if gtk_vars.contains(&initial_color.variable.as_str()) {
-                var_combo.set_active_id(Some(&initial_color.variable));
+                crate::dropdown_utils::dropdown_set_active_id(&var_combo, &initial_color.variable);
             } else {
-                var_combo.append(Some(&initial_color.variable), &initial_color.variable);
-                var_combo.set_active_id(Some(&initial_color.variable));
+                crate::dropdown_utils::dropdown_append(&var_combo, &initial_color.variable);
+                crate::dropdown_utils::dropdown_set_active_id(&var_combo, &initial_color.variable);
             }
 
             let op_spin = gtk4::SpinButton::with_range(0.0, 1.0, 0.05);
@@ -1052,8 +1023,8 @@ impl ThemeEditor {
             let update_fn_rc = Rc::new(update_fn);
 
             let update_fn_c1 = update_fn_rc.clone();
-            var_combo.connect_changed(move |c| {
-                if let Some(id) = c.active_id() {
+            var_combo.connect_notify_local(Some("selected"), move |c, _| {
+                if let Some(id) = crate::dropdown_utils::dropdown_active_id(c) {
                     update_fn_c1(id.to_string(), op_spin_c.value());
                 }
             });
@@ -1061,7 +1032,7 @@ impl ThemeEditor {
             let update_fn_c2 = update_fn_rc.clone();
             let var_combo_c2 = var_combo_c.clone();
             op_spin.connect_value_changed(move |s| {
-                if let Some(id) = var_combo_c2.active_id() {
+                if let Some(id) = crate::dropdown_utils::dropdown_active_id(&var_combo_c2) {
                     update_fn_c2(id.to_string(), s.value());
                 }
             });
