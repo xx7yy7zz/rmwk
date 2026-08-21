@@ -2253,9 +2253,9 @@ impl LauncherApp {
         let click_state = state.clone();
         let area_clone_click = drawing_area.clone();
         let trigger_anim_click = trigger_anim.clone();
-        click_controller.connect_pressed(move |gesture, _n_press, x, y| {
+        click_controller.connect_released(move |gesture, _n_press, x, y| {
             let button = gesture.current_button();
-            debug!("Mouse pressed at ({}, {}), button: {}", x, y, button);
+            debug!("Mouse released at ({}, {}), button: {}", x, y, button);
 
             let mut state = match click_state.try_borrow_mut() {
                 Ok(s) => s,
