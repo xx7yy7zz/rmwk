@@ -75,10 +75,13 @@ struct MenuState {
     root_items: Vec<launcher_core::MenuItem>,
     current_items: Vec<launcher_core::MenuItem>,
     history: Vec<Vec<launcher_core::MenuItem>>,
+    forward_history: Vec<Vec<launcher_core::MenuItem>>,
     root_icon: Option<String>,
     current_icon: Option<String>,
     history_icons: Vec<Option<String>>,
+    forward_history_icons: Vec<Option<String>>,
     hovered_index: Option<usize>,
+    hide_back_entry: bool,
 
     // Animation state
     is_closing: bool,
@@ -129,13 +132,15 @@ impl MenuState {
         self.current_items = self.root_items.clone();
         self.current_icon = self.root_icon.clone();
         self.history.clear();
+        self.forward_history.clear();
         self.history_icons.clear();
+        self.forward_history_icons.clear();
         self.hovered_index = None;
     }
 
     fn get_display_items(&self) -> Vec<launcher_core::MenuItem> {
         let mut items = self.current_items.clone();
-        if !self.history.is_empty() {
+        if !self.history.is_empty() && !self.hide_back_entry {
             items.push(launcher_core::MenuItem {
                 label: "Back".to_string(),
                 icon: Some("go-previous".to_string()),
@@ -148,7 +153,7 @@ impl MenuState {
     }
 
     fn get_display_items_count(&self) -> usize {
-        if self.history.is_empty() {
+        if self.history.is_empty() || self.hide_back_entry {
             self.current_items.len()
         } else {
             self.current_items.len() + 1
@@ -456,6 +461,55 @@ fn load_and_apply_theme(
     }
 }
 
+
+fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
+    if let Some(prev) = state.history.pop() {
+        let prev_icon = state.history_icons.pop().unwrap_or(None);
+        
+        // Push current state to forward history
+        state.forward_history.push(state.current_items.clone());
+        state.forward_history_icons.push(state.current_icon.clone());
+
+        if let Some(icon) = prev_icon.clone() {
+            state.current_icon = Some(icon);
+        } else if prev_icon.is_none() && state.history.is_empty() {
+            state.current_icon = state.root_icon.clone();
+        } else {
+            state.current_icon = None; // fallback
+        }
+        
+        state.current_items = prev;
+        state.hovered_index = None;
+        if let Some(display) = gdk::Display::default() {
+            state.preload_icons(&display);
+        }
+        area.queue_draw();
+        return true;
+    }
+    false
+}
+
+fn go_forward(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
+    if let Some(next) = state.forward_history.pop() {
+        let next_icon = state.forward_history_icons.pop().flatten();
+
+        // Push current state to history
+        state.history.push(state.current_items.clone());
+        state.history_icons.push(state.current_icon.clone());
+
+        state.current_icon = next_icon;
+        state.current_items = next;
+        state.hovered_index = None;
+        
+        if let Some(display) = gdk::Display::default() {
+            state.preload_icons(&display);
+        }
+        area.queue_draw();
+        return true;
+    }
+    false
+}
+
 fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) {
     let display_items = state.get_display_items();
     let display_items_count = display_items.len();
@@ -463,23 +517,19 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
         return;
     }
 
-    if !state.history.is_empty() && index == display_items_count - 1 {
+    let is_back_button = !state.history.is_empty() && !state.hide_back_entry && index == display_items_count - 1;
+    if is_back_button {
         debug!("Back wedge activated, popping history");
-        if let Some(prev) = state.history.pop() {
-            if let Some(prev_icon) = state.history_icons.pop() {
-                state.current_icon = prev_icon;
-            }
-            state.current_items = prev;
-            state.hovered_index = None;
-            if let Some(display) = gdk::Display::default() {
-                state.preload_icons(&display);
-            }
-            area.queue_draw();
-        }
+        go_back(state, area);
     } else {
         let selected = display_items[index].clone();
         if !selected.children.is_empty() {
             let current_items = state.current_items.clone();
+            
+            // Clear forward history because we took a new path
+            state.forward_history.clear();
+            state.forward_history_icons.clear();
+            
             state.history.push(current_items);
             state.history_icons.push(state.current_icon.clone());
             state.current_icon = selected.icon.clone();
@@ -758,8 +808,11 @@ impl LauncherApp {
             root_icon: menu_config.icon.clone(),
             current_icon: menu_config.icon.clone(),
             history: vec![],
+            forward_history: vec![],
             history_icons: vec![],
+            forward_history_icons: vec![],
             hovered_index: None,
+            hide_back_entry: ui_config.hide_back_entry,
             is_closing: false,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
@@ -2250,21 +2303,26 @@ impl LauncherApp {
         // 6. Connect mouse press controller for navigation and execution triggers
         let click_controller = gtk::GestureClick::new();
         click_controller.set_button(0); // Any mouse button
+
+
         let click_state = state.clone();
         let area_clone_click = drawing_area.clone();
         let trigger_anim_click = trigger_anim.clone();
         click_controller.connect_released(move |gesture, _n_press, x, y| {
             let button = gesture.current_button();
-            debug!("Mouse released at ({}, {}), button: {}", x, y, button);
 
             let mut state = match click_state.try_borrow_mut() {
                 Ok(s) => s,
                 Err(_) => return,
             };
 
+
+
             if button == 3 {
-                // Right click dismisses launcher
-                state.is_closing = true;
+                // Right click goes back, or dismisses launcher if at root
+                if !go_back(&mut state, &area_clone_click) {
+                    state.is_closing = true;
+                }
                 drop(state);
                 trigger_anim_click();
                 return;
@@ -2290,14 +2348,8 @@ impl LauncherApp {
                 // Center hub click - goes back in history if not at root
                 if dist < BASE_R {
                     if !state.history.is_empty() {
-                        if let Some(prev) = state.history.pop() {
-                            state.current_items = prev;
-                            state.hovered_index = None;
-                            if let Some(display) = gdk::Display::default() {
-                                state.preload_icons(&display);
-                            }
-                            activated = true;
-                        }
+                        go_back(&mut state, &area_clone_click);
+                        activated = true;
                     }
                 } else if let Some(index) = state.hit_test(x, y, cx, cy) {
                     activate_index(&mut state, index, &area_clone_click);
@@ -2315,6 +2367,43 @@ impl LauncherApp {
             }
         });
         window.add_controller(click_controller);
+
+        // GestureDrag for button 8 (Back) to ignore drag threshold cancellations
+        let back_drag = gtk::GestureDrag::new();
+        back_drag.set_button(8);
+        let back_state = state.clone();
+        let back_area = drawing_area.clone();
+        let trigger_back = trigger_anim.clone();
+        back_drag.connect_drag_end(move |_gesture, _offset_x, _offset_y| {
+            let mut state = match back_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            if !go_back(&mut state, &back_area) {
+                state.is_closing = true;
+            }
+            drop(state);
+            trigger_back();
+        });
+        window.add_controller(back_drag);
+
+        // GestureDrag for button 9 (Forward) to ignore drag threshold cancellations
+        let forward_drag = gtk::GestureDrag::new();
+        forward_drag.set_button(9);
+        let forward_state = state.clone();
+        let forward_area = drawing_area.clone();
+        let trigger_forward = trigger_anim.clone();
+        forward_drag.connect_drag_end(move |_gesture, _offset_x, _offset_y| {
+            let mut state = match forward_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            if go_forward(&mut state, &forward_area) {
+                drop(state);
+                trigger_forward();
+            }
+        });
+        window.add_controller(forward_drag);
 
         // 7. Keyboard listener to navigate using Tab / arrow keys and activate via Enter / Space
         let key_controller = gtk::EventControllerKey::new();
@@ -2335,6 +2424,24 @@ impl LauncherApp {
                 return glib::Propagation::Proceed;
             }
 
+            if _state.contains(gdk::ModifierType::ALT_MASK) {
+                if key == gdk::Key::Left {
+                    if go_back(&mut state, &area_clone_key) {
+                        state.hovered_index = Some(0);
+                        drop(state);
+                        trigger_anim_key();
+                    }
+                    return glib::Propagation::Stop;
+                } else if key == gdk::Key::Right {
+                    if go_forward(&mut state, &area_clone_key) {
+                        state.hovered_index = Some(0);
+                        drop(state);
+                        trigger_anim_key();
+                    }
+                    return glib::Propagation::Stop;
+                }
+            }
+
             match key {
                 gdk::Key::Escape => {
                     debug!("Escape pressed, initiating close animation");
@@ -2345,16 +2452,10 @@ impl LauncherApp {
                 }
                 gdk::Key::BackSpace => {
                     if !state.history.is_empty() {
-                        if let Some(prev) = state.history.pop() {
-                            state.current_items = prev;
-                            state.hovered_index = None;
-                            if let Some(display) = gdk::Display::default() {
-                                state.preload_icons(&display);
-                            }
+                        if go_back(&mut state, &area_clone_key) {
+                            state.hovered_index = Some(0);
                             drop(state);
                             trigger_anim_key();
-                        } else {
-                            drop(state);
                         }
                     } else {
                         debug!("Backspace pressed at root menu, initiating close animation");
@@ -2389,7 +2490,11 @@ impl LauncherApp {
                 gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::space => {
                     // Activate hovered item
                     if let Some(idx) = state.hovered_index {
+                        let old_history_len = state.history.len();
                         activate_index(&mut state, idx, &area_clone_key);
+                        if state.history.len() != old_history_len {
+                            state.hovered_index = Some(0);
+                        }
                         drop(state);
                         trigger_anim_key();
                     } else {
@@ -2404,6 +2509,7 @@ impl LauncherApp {
                         let mut activated = false;
 
                         // 1. Check for manual quick_select_key match
+                        let old_history_len = state.history.len();
                         for (i, item) in display_items.iter().enumerate() {
                             if let Some(q) = item.quick_select_key {
                                 if q.to_ascii_uppercase() == upper_ch {
@@ -2423,6 +2529,10 @@ impl LauncherApp {
                                 activate_index(&mut state, target_index, &area_clone_key);
                                 activated = true;
                             }
+                        }
+
+                        if activated && state.history.len() != old_history_len {
+                            state.hovered_index = Some(0);
                         }
 
                         drop(state);

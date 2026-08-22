@@ -161,7 +161,11 @@ pub struct UiConfig {
     pub enable_blur: bool,
     #[serde(default = "default_system_theme_overrides")]
     pub system_theme_overrides: Option<SystemThemeOverrides>,
+    #[serde(default = "default_hide_back_entry")]
+    pub hide_back_entry: bool,
 }
+
+fn default_hide_back_entry() -> bool { false }
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
     None
@@ -191,6 +195,7 @@ impl Default for UiConfig {
             hover_visual_cue: default_hover_visual_cue(),
             enable_blur: default_enable_blur(),
             system_theme_overrides: default_system_theme_overrides(),
+            hide_back_entry: default_hide_back_entry(),
         }
     }
 }

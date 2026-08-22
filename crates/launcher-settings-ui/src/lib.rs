@@ -663,6 +663,9 @@ impl SettingsApp {
         let chk_center_layout = gtk::CheckButton::with_label("Center Slices on Axes");
         chk_center_layout.set_active(ui_config.ui.center_layout);
 
+        let chk_hide_back_entry = gtk::CheckButton::with_label("Hide 'Back' Entry");
+        chk_hide_back_entry.set_active(ui_config.ui.hide_back_entry);
+
         let chk_disable_hover_anim = gtk::CheckButton::with_label("Disable Hover Animation");
         chk_disable_hover_anim.set_active(ui_config.ui.disable_hover_animation);
 
@@ -751,19 +754,60 @@ impl SettingsApp {
         checkboxes_vbox.append(&symbolic_icons_hbox);
         checkboxes_vbox.append(&chk_bold_chars);
         checkboxes_vbox.append(&chk_center_layout);
+        checkboxes_vbox.append(&chk_hide_back_entry);
         checkboxes_vbox.append(&chk_disable_hover_anim);
         checkboxes_vbox.append(&blur_hbox);
         checkboxes_vbox.append(&visual_cue_hbox);
         right_vbox.append(&checkboxes_vbox);
 
-        // Save & Save/Reload buttons at the bottom
-        let bottom_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        // Save button stays immediately below checkboxes
         let btn_save = gtk::Button::with_label("Save & Apply Settings");
         btn_save.set_hexpand(true);
         btn_save.add_css_class("suggested-action");
-        bottom_hbox.append(&btn_save);
+        right_vbox.append(&btn_save);
 
-        right_vbox.append(&bottom_hbox);
+        // Spacer to push everything else down
+        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        spacer.set_vexpand(true);
+        right_vbox.append(&spacer);
+
+        // Help Button
+        let btn_help = gtk::Button::from_icon_name("help-about-symbolic");
+        btn_help.set_tooltip_text(Some("Navigation Shortcuts"));
+        let help_popover = gtk::Popover::new();
+        let help_label = gtk::Label::new(None);
+        help_label.set_markup(
+"<b>Mouse Navigation:</b>
+• Left Click: Select slice / Drill down
+• Right Click: Go Back / Close Launcher
+• Center Hub Click: Go Back
+• Side Buttons: Navigate Back &amp; Forward
+
+<b>Keyboard Navigation:</b>
+• Arrows / Tab: Cycle through slices
+• Enter / Space: Select highlighted slice
+• Backspace: Go Back
+• Alt + Left / Right: Navigate Back &amp; Forward
+• Quick Select Keys: Quick select slices with numbers or letters"
+        );
+        help_label.set_margin_top(15);
+        help_label.set_margin_bottom(15);
+        help_label.set_margin_start(15);
+        help_label.set_margin_end(15);
+        help_label.set_justify(gtk::Justification::Left);
+        help_popover.set_child(Some(&help_label));
+        help_popover.set_parent(&btn_help);
+        
+        btn_help.connect_clicked(move |_| {
+            help_popover.popup();
+        });
+        
+        // Push help button to the absolute bottom right
+        let help_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        help_hbox.set_halign(gtk::Align::End);
+        help_hbox.append(&btn_help);
+        
+        right_vbox.append(&help_hbox);
         main_box.append(&right_vbox);
 
         window.set_child(Some(&main_box));
@@ -1590,6 +1634,7 @@ impl SettingsApp {
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
+        let chk_hide_back_entry_save = chk_hide_back_entry.clone();
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
@@ -1637,6 +1682,7 @@ impl SettingsApp {
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
+                cfg.ui.hide_back_entry = chk_hide_back_entry_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = match combo_visual_cue_save.selected() {
                     1 => "sides".to_string(),
@@ -1752,6 +1798,7 @@ impl SettingsApp {
         let chk_symbolic_icons_watch = chk_symbolic_icons.clone();
         let chk_bold_chars_watch = chk_bold_chars.clone();
         let chk_center_layout_watch = chk_center_layout.clone();
+        let chk_hide_back_entry_watch = chk_hide_back_entry.clone();
         let chk_disable_hover_anim_watch = chk_disable_hover_anim.clone();
         let combo_visual_cue_watch = combo_visual_cue.clone();
         let combo_menu_style_watch = combo_menu_style.clone();
@@ -1772,6 +1819,7 @@ impl SettingsApp {
             let chk_sym = chk_symbolic_icons_watch.clone();
             let chk_bold = chk_bold_chars_watch.clone();
             let chk_cnt = chk_center_layout_watch.clone();
+            let chk_hide = chk_hide_back_entry_watch.clone();
             let chk_dis = chk_disable_hover_anim_watch.clone();
             let chk_blr = chk_enable_blur_watch.clone();
             let combo_vis = combo_visual_cue_watch.clone();
@@ -1796,6 +1844,7 @@ impl SettingsApp {
                     let chk_sym_cb = chk_sym.clone();
                     let chk_bold_cb = chk_bold.clone();
                     let chk_cnt_cb = chk_cnt.clone();
+                    let chk_hide_cb = chk_hide.clone();
                     let chk_dis_cb = chk_dis.clone();
                     let chk_blr_cb = chk_blr.clone();
                     let combo_vis_cb = combo_vis.clone();
@@ -1816,6 +1865,7 @@ impl SettingsApp {
                                 chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
                                 chk_bold_cb.set_active(cfg.ui.bold_single_chars);
                                 chk_cnt_cb.set_active(cfg.ui.center_layout);
+                                chk_hide_cb.set_active(cfg.ui.hide_back_entry);
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
                                 let selected_idx = match cfg.ui.hover_visual_cue.as_str() {
