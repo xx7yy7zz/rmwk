@@ -271,6 +271,16 @@ pub enum Action {
         #[serde(default)]
         keep_open: bool,
     },
+    OpenUri {
+        uri: String,
+        #[serde(default)]
+        keep_open: bool,
+    },
+    OpenPath {
+        path: String,
+        #[serde(default)]
+        keep_open: bool,
+    },
 }
 
 impl Action {
@@ -278,6 +288,8 @@ impl Action {
         match self {
             Action::Command { keep_open, .. } => *keep_open,
             Action::Hotkey { keep_open, .. } => *keep_open,
+            Action::OpenUri { keep_open, .. } => *keep_open,
+            Action::OpenPath { keep_open, .. } => *keep_open,
         }
     }
 }
@@ -416,7 +428,33 @@ pub fn run_action(action: &Action) -> Result<()> {
                 }
             }
         }
+        Action::OpenUri { uri, .. } => {
+            spawn_xdg_open(uri.clone())?;
+        }
+        Action::OpenPath { path, .. } => {
+            // Expand a leading ~ so xdg-open resolves it correctly
+            let target = if let Some(rest) = path.strip_prefix("~/") {
+                match std::env::var_os("HOME") {
+                    Some(home) => format!("{}/{}", home.to_string_lossy(), rest),
+                    None => path.clone(),
+                }
+            } else {
+                path.clone()
+            };
+            spawn_xdg_open(target)?;
+        }
     }
+    Ok(())
+}
+
+fn spawn_xdg_open(target: String) -> Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(target)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to spawn xdg-open")?;
     Ok(())
 }
 
@@ -519,5 +557,42 @@ mod tests {
             parse_hotkey("super+space").unwrap(),
             vec!["-M", "logo", "-k", "space", "-m", "logo"]
         );
+    }
+
+    #[test]
+    fn test_uri_and_path_action_roundtrip() {
+        let menu: MenuConfig = toml::from_str(
+            r#"
+[[menu]]
+label = "Site"
+action = { type = "open_uri", uri = "https://example.com" }
+
+[[menu]]
+label = "Docs"
+action = { type = "open_path", path = "~/Documents", keep_open = true }
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            menu.menu[0].action,
+            Some(Action::OpenUri {
+                uri: "https://example.com".to_string(),
+                keep_open: false
+            })
+        );
+        assert_eq!(
+            menu.menu[1].action,
+            Some(Action::OpenPath {
+                path: "~/Documents".to_string(),
+                keep_open: true
+            })
+        );
+        assert!(!menu.menu[0].action.as_ref().unwrap().should_keep_open());
+        assert!(menu.menu[1].action.as_ref().unwrap().should_keep_open());
+
+        let out = toml::to_string_pretty(&menu).unwrap();
+        assert!(out.contains("open_uri"));
+        assert!(out.contains("open_path"));
     }
 }

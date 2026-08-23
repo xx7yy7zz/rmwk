@@ -447,7 +447,11 @@ impl SettingsApp {
                 let label_col_c = label_col_clone.clone();
                 let type_col_c = type_col_clone.clone();
                 let total = surface.width();
-                let base = if total <= 900 { total * 4 / 10 } else { 360 + (total - 900) / 2 };
+                let base = if total <= 900 {
+                    total * 4 / 10
+                } else {
+                    360 + (total - 900) / 2
+                };
                 let initial_w = base - 15;
                 if initial_w >= 100 {
                     left_vbox_c.set_width_request(initial_w);
@@ -467,7 +471,11 @@ impl SettingsApp {
                 let type_col_c2 = type_col_clone.clone();
                 surface.connect_notify_local(Some("width"), move |surf, _| {
                     let total = surf.width();
-                    let base = if total <= 900 { total * 4 / 10 } else { 360 + (total - 900) / 2 };
+                    let base = if total <= 900 {
+                        total * 4 / 10
+                    } else {
+                        360 + (total - 900) / 2
+                    };
                     let dynamic_w = base - 15;
                     if dynamic_w >= 100 {
                         left_vbox_c2.set_width_request(dynamic_w);
@@ -493,6 +501,14 @@ impl SettingsApp {
         btn_add_hotkey.set_tooltip_text(Some(
             "Drag and drop. Add a new hotkey shortcut below the selected entry.",
         ));
+        let btn_add_uri = gtk::Button::with_label("Add URI");
+        btn_add_uri.set_tooltip_text(Some(
+            "Drag and drop. Add a new URI (e.g. https://, mailto:) opener below the selected entry.",
+        ));
+        let btn_add_path = gtk::Button::with_label("Add File/Folder");
+        btn_add_path.set_tooltip_text(Some(
+            "Drag and drop. Add a new file or folder opener below the selected entry.",
+        ));
         let btn_copy = gtk::Button::with_label("Copy");
         btn_copy.set_tooltip_text(Some("Copy all properties of the selected entry."));
         let btn_paste = gtk::Button::with_label("Paste");
@@ -516,6 +532,12 @@ impl SettingsApp {
         btn_hbox.append(&btn_up);
         btn_hbox.append(&btn_down);
         left_vbox.append(&btn_hbox);
+
+        let btn_hbox2 = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        btn_hbox2.set_margin_top(5);
+        btn_hbox2.append(&btn_add_uri);
+        btn_hbox2.append(&btn_add_path);
+        left_vbox.append(&btn_hbox2);
 
         let themes = Self::get_available_themes(&config_path);
         let theme_editor = theme_editor::ThemeEditor::new(
@@ -557,7 +579,8 @@ impl SettingsApp {
         let lbl_icon_type = gtk::Label::new(Some("Icon Type:"));
         lbl_icon_type.set_halign(gtk::Align::End);
         let combo_icon_type_model = gtk::StringList::new(&["Icon Picker", "Single Character"]);
-        let combo_icon_type = gtk::DropDown::new(Some(combo_icon_type_model), gtk::Expression::NONE);
+        let combo_icon_type =
+            gtk::DropDown::new(Some(combo_icon_type_model), gtk::Expression::NONE);
         combo_icon_type.set_selected(0);
         prop_grid.attach(&lbl_icon_type, 0, 1, 1, 1);
         prop_grid.attach(&combo_icon_type, 1, 1, 1, 1);
@@ -587,7 +610,11 @@ impl SettingsApp {
         let btn_pick_icon_toggle = btn_pick_icon.clone();
         let entry_icon_toggle = entry_icon.clone();
         combo_icon_type.connect_notify_local(Some("selected"), move |combo, _| {
-            let active_id = if combo.selected() == 1 { "char".to_string() } else { "picker".to_string() };
+            let active_id = if combo.selected() == 1 {
+                "char".to_string()
+            } else {
+                "picker".to_string()
+            };
             if active_id == "char" {
                 entry_icon_toggle.set_max_length(1);
                 entry_icon_toggle.set_placeholder_text(Some("e.g. A, 🚀"));
@@ -612,12 +639,65 @@ impl SettingsApp {
         entry_cmd.set_hexpand(true);
         let btn_record_hotkey = gtk::ToggleButton::new();
         btn_record_hotkey.set_icon_name("media-record");
+        btn_record_hotkey.set_tooltip_text(Some("Record a keystroke."));
+        let btn_pick_file = gtk::Button::from_icon_name("document-open");
+        btn_pick_file.set_tooltip_text(Some("Pick a file with the system picker."));
+        let btn_pick_dir = gtk::Button::from_icon_name("folder");
+        btn_pick_dir.set_tooltip_text(Some("Pick a folder with the system picker."));
+        btn_pick_file.set_visible(false);
+        btn_pick_dir.set_visible(false);
         let cmd_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         cmd_hbox.append(&entry_cmd);
         cmd_hbox.append(&btn_record_hotkey);
+        cmd_hbox.append(&btn_pick_file);
+        cmd_hbox.append(&btn_pick_dir);
 
         prop_grid.attach(&lbl_cmd, 0, 3, 1, 1);
         prop_grid.attach(&cmd_hbox, 1, 3, 1, 1);
+
+        // System file/folder pickers (FileChooserNative goes through the
+        // xdg-desktop-portal, so the compositor's default dialog is used).
+        {
+            let entry_target = entry_cmd.clone();
+            let window_target = window.clone();
+            btn_pick_file.connect_clicked(move |_| {
+                let entry_for_dialog = entry_target.clone();
+                let chooser = gtk::FileChooserNative::builder()
+                    .title("Select File")
+                    .transient_for(&window_target)
+                    .action(gtk::FileChooserAction::Open)
+                    .build();
+                chooser.connect_response(move |chooser, resp| {
+                    if resp == gtk::ResponseType::Accept {
+                        let entry = entry_for_dialog.clone();
+                        if let Some(path) = chooser.file().and_then(|f| f.path()) {
+                            entry.set_text(&path.to_string_lossy());
+                        }
+                    }
+                });
+                chooser.show();
+            });
+
+            let entry_target = entry_cmd.clone();
+            let window_target = window.clone();
+            btn_pick_dir.connect_clicked(move |_| {
+                let entry_for_dialog = entry_target.clone();
+                let chooser = gtk::FileChooserNative::builder()
+                    .title("Select Folder")
+                    .transient_for(&window_target)
+                    .action(gtk::FileChooserAction::SelectFolder)
+                    .build();
+                chooser.connect_response(move |chooser, resp| {
+                    if resp == gtk::ResponseType::Accept {
+                        let entry = entry_for_dialog.clone();
+                        if let Some(path) = chooser.file().and_then(|f| f.path()) {
+                            entry.set_text(&path.to_string_lossy());
+                        }
+                    }
+                });
+                chooser.show();
+            });
+        }
 
         let lbl_hotkey_status = gtk::Label::new(None);
         lbl_hotkey_status.set_halign(gtk::Align::Start);
@@ -684,8 +764,10 @@ impl SettingsApp {
 
         let lbl_visual_cue = gtk::Label::new(Some("Pie Hover Cue:"));
         lbl_visual_cue.set_halign(gtk::Align::Start);
-        let combo_visual_cue_model = gtk::StringList::new(&["Expand Outwards", "Expand Sides", "None"]);
-        let combo_visual_cue = gtk::DropDown::new(Some(combo_visual_cue_model), gtk::Expression::NONE);
+        let combo_visual_cue_model =
+            gtk::StringList::new(&["Expand Outwards", "Expand Sides", "None"]);
+        let combo_visual_cue =
+            gtk::DropDown::new(Some(combo_visual_cue_model), gtk::Expression::NONE);
         let selected_idx = match ui_config.ui.hover_visual_cue.as_str() {
             "sides" => 1,
             "none" => 2,
@@ -700,8 +782,13 @@ impl SettingsApp {
         let lbl_menu_style = gtk::Label::new(Some("Menu Style:"));
         lbl_menu_style.set_halign(gtk::Align::Start);
         let combo_menu_style_model = gtk::StringList::new(&["Pie", "Floating Entries"]);
-        let combo_menu_style = gtk::DropDown::new(Some(combo_menu_style_model), gtk::Expression::NONE);
-        let selected_idx = if ui_config.ui.menu_style == "floating" { 1 } else { 0 };
+        let combo_menu_style =
+            gtk::DropDown::new(Some(combo_menu_style_model), gtk::Expression::NONE);
+        let selected_idx = if ui_config.ui.menu_style == "floating" {
+            1
+        } else {
+            0
+        };
         combo_menu_style.set_selected(selected_idx);
 
         let menu_style_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -712,7 +799,11 @@ impl SettingsApp {
         let spin_pill_roundness_style = spin_pill_roundness.clone();
         let lbl_pill_roundness_style = lbl_pill_roundness.clone();
         combo_menu_style.connect_notify_local(Some("selected"), move |combo, _| {
-            let id = if combo.selected() == 1 { "floating" } else { "pie" };
+            let id = if combo.selected() == 1 {
+                "floating"
+            } else {
+                "pie"
+            };
             if true {
                 if id == "floating" {
                     chk_enable_blur_style.set_sensitive(false);
@@ -777,7 +868,7 @@ impl SettingsApp {
         let help_popover = gtk::Popover::new();
         let help_label = gtk::Label::new(None);
         help_label.set_markup(
-"<b>Mouse Navigation:</b>
+            "<b>Mouse Navigation:</b>
 • Left Click: Select slice / Drill down
 • Right Click: Go Back / Close Launcher
 • Center Hub Click: Go Back
@@ -788,7 +879,7 @@ impl SettingsApp {
 • Enter / Space: Select highlighted slice
 • Backspace: Go Back
 • Alt + Left / Right: Navigate Back &amp; Forward
-• Quick Select Keys: Quick select slices with numbers or letters"
+• Quick Select Keys: Quick select slices with numbers or letters",
         );
         help_label.set_margin_top(15);
         help_label.set_margin_bottom(15);
@@ -797,16 +888,16 @@ impl SettingsApp {
         help_label.set_justify(gtk::Justification::Left);
         help_popover.set_child(Some(&help_label));
         help_popover.set_parent(&btn_help);
-        
+
         btn_help.connect_clicked(move |_| {
             help_popover.popup();
         });
-        
+
         // Push help button to the absolute bottom right
         let help_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         help_hbox.set_halign(gtk::Align::End);
         help_hbox.append(&btn_help);
-        
+
         right_vbox.append(&help_hbox);
         main_box.append(&right_vbox);
 
@@ -826,6 +917,8 @@ impl SettingsApp {
         let lbl_cmd_clone = lbl_cmd.clone();
         let entry_cmd_clone = entry_cmd.clone();
         let btn_record_hotkey_clone = btn_record_hotkey.clone();
+        let btn_pick_file_clone = btn_pick_file.clone();
+        let btn_pick_dir_clone = btn_pick_dir.clone();
         let chk_keep_open_clone = chk_item_keep_open.clone();
         let lbl_hotkey_status_clone = lbl_hotkey_status.clone();
         let btn_pick_icon_clone = btn_pick_icon.clone();
@@ -860,6 +953,8 @@ impl SettingsApp {
                     lbl_cmd_clone.set_visible(false);
                     entry_cmd_clone.set_visible(false);
                     btn_record_hotkey_clone.set_visible(false);
+                    btn_pick_file_clone.set_visible(false);
+                    btn_pick_dir_clone.set_visible(false);
                     chk_keep_open_clone.set_visible(false);
                     lbl_hotkey_status_clone.set_visible(false);
                 } else {
@@ -881,6 +976,8 @@ impl SettingsApp {
                         lbl_cmd_clone.set_visible(false);
                         entry_cmd_clone.set_visible(false);
                         btn_record_hotkey_clone.set_visible(false);
+                        btn_pick_file_clone.set_visible(false);
+                        btn_pick_dir_clone.set_visible(false);
                         chk_keep_open_clone.set_visible(false);
                         lbl_hotkey_status_clone.set_visible(false);
                     } else if act_type == "hotkey" {
@@ -888,13 +985,35 @@ impl SettingsApp {
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
                         btn_record_hotkey_clone.set_visible(true);
+                        btn_pick_file_clone.set_visible(false);
+                        btn_pick_dir_clone.set_visible(false);
                         chk_keep_open_clone.set_visible(true);
                         lbl_hotkey_status_clone.set_visible(true);
+                    } else if act_type == "uri" {
+                        lbl_cmd_clone.set_label("URI:");
+                        lbl_cmd_clone.set_visible(true);
+                        entry_cmd_clone.set_visible(true);
+                        btn_record_hotkey_clone.set_visible(false);
+                        btn_pick_file_clone.set_visible(false);
+                        btn_pick_dir_clone.set_visible(false);
+                        chk_keep_open_clone.set_visible(true);
+                        lbl_hotkey_status_clone.set_visible(false);
+                    } else if act_type == "file" {
+                        lbl_cmd_clone.set_label("File/Folder:");
+                        lbl_cmd_clone.set_visible(true);
+                        entry_cmd_clone.set_visible(true);
+                        btn_record_hotkey_clone.set_visible(false);
+                        btn_pick_file_clone.set_visible(true);
+                        btn_pick_dir_clone.set_visible(true);
+                        chk_keep_open_clone.set_visible(true);
+                        lbl_hotkey_status_clone.set_visible(false);
                     } else {
                         lbl_cmd_clone.set_label("Command:");
                         lbl_cmd_clone.set_visible(true);
                         entry_cmd_clone.set_visible(true);
                         btn_record_hotkey_clone.set_visible(false);
+                        btn_pick_file_clone.set_visible(false);
+                        btn_pick_dir_clone.set_visible(false);
                         chk_keep_open_clone.set_visible(true);
                         lbl_hotkey_status_clone.set_visible(false);
                     }
@@ -1050,6 +1169,36 @@ impl SettingsApp {
             selection_hot.select_iter(&new_iter);
         });
 
+        // Add URI Button
+        let store_uri = store.clone();
+        let selection_uri = tree_view.selection();
+        btn_add_uri.connect_clicked(move |_| {
+            let (parent, sibling) = Self::resolve_insertion_coords(&store_uri, &selection_uri);
+            let new_iter = store_uri.insert_after(parent.as_ref(), sibling.as_ref());
+            store_uri.set_value(&new_iter, 0, &"link".to_value());
+            store_uri.set_value(&new_iter, 1, &"New URI".to_value());
+            store_uri.set_value(&new_iter, 2, &"uri".to_value());
+            store_uri.set_value(&new_iter, 3, &"".to_value());
+            store_uri.set_value(&new_iter, 4, &false.to_value());
+            store_uri.set_value(&new_iter, 5, &"".to_value());
+            selection_uri.select_iter(&new_iter);
+        });
+
+        // Add File/Folder Button
+        let store_path = store.clone();
+        let selection_path = tree_view.selection();
+        btn_add_path.connect_clicked(move |_| {
+            let (parent, sibling) = Self::resolve_insertion_coords(&store_path, &selection_path);
+            let new_iter = store_path.insert_after(parent.as_ref(), sibling.as_ref());
+            store_path.set_value(&new_iter, 0, &"docs".to_value());
+            store_path.set_value(&new_iter, 1, &"New File/Folder".to_value());
+            store_path.set_value(&new_iter, 2, &"file".to_value());
+            store_path.set_value(&new_iter, 3, &"".to_value());
+            store_path.set_value(&new_iter, 4, &false.to_value());
+            store_path.set_value(&new_iter, 5, &"".to_value());
+            selection_path.select_iter(&new_iter);
+        });
+
         // Delete Button
         let store_del = store.clone();
         let selection_del = tree_view.selection();
@@ -1059,12 +1208,18 @@ impl SettingsApp {
                 if act_type == "root" {
                     return; // Cannot delete root
                 }
-                // Focus the entry above the deleted one (previous sibling, or its parent)
+                // Focus the entry below the deleted one (next sibling); if it
+                // was the last entry of its level, fall back to the one above
+                // it, then to its parent.
+                let mut next = iter.clone();
+                let has_next = store_del.iter_next(&mut next);
                 let mut prev = iter.clone();
                 let has_prev = store_del.iter_previous(&mut prev);
                 let parent = store_del.iter_parent(&iter);
                 store_del.remove(&iter);
-                if has_prev {
+                if has_next {
+                    selection_del.select_iter(&next);
+                } else if has_prev {
                     selection_del.select_iter(&prev);
                 } else if let Some(p) = parent {
                     selection_del.select_iter(&p);
@@ -1196,6 +1351,38 @@ impl SettingsApp {
         drag_src_hot.set_icon(Some(&icon_hot), 12, 12);
         drag_src_hot.connect_prepare(|_src, _x, _y| Some(Self::create_drag_content("new:hotkey")));
         btn_add_hotkey.add_controller(drag_src_hot);
+
+        let drag_src_uri = gtk::DragSource::new();
+        drag_src_uri.set_actions(gdk::DragAction::COPY);
+        let icon_uri = icon_theme.lookup_icon(
+            "link",
+            &[
+                "web-browser",
+                "internet-web-browser",
+                "applications-internet",
+            ],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
+        drag_src_uri.set_icon(Some(&icon_uri), 12, 12);
+        drag_src_uri.connect_prepare(|_src, _x, _y| Some(Self::create_drag_content("new:uri")));
+        btn_add_uri.add_controller(drag_src_uri);
+
+        let drag_src_path = gtk::DragSource::new();
+        drag_src_path.set_actions(gdk::DragAction::COPY);
+        let icon_path = icon_theme.lookup_icon(
+            "docs",
+            &["folder", "file"],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::empty(),
+        );
+        drag_src_path.set_icon(Some(&icon_path), 12, 12);
+        drag_src_path.connect_prepare(|_src, _x, _y| Some(Self::create_drag_content("new:file")));
+        btn_add_path.add_controller(drag_src_path);
 
         let drag_src_paste = gtk::DragSource::new();
         drag_src_paste.set_actions(gdk::DragAction::COPY);
@@ -1494,6 +1681,24 @@ impl SettingsApp {
                         quick_select: "".to_string(),
                         children: vec![],
                     },
+                    "new:uri" => CopiedNode {
+                        label: "New URI".to_string(),
+                        icon: "link".to_string(),
+                        action_type: "uri".to_string(),
+                        action_cmd: "".to_string(),
+                        keep_open: false,
+                        quick_select: "".to_string(),
+                        children: vec![],
+                    },
+                    "new:file" => CopiedNode {
+                        label: "New File/Folder".to_string(),
+                        icon: "docs".to_string(),
+                        action_type: "file".to_string(),
+                        action_cmd: "".to_string(),
+                        keep_open: false,
+                        quick_select: "".to_string(),
+                        children: vec![],
+                    },
                     _ => return false,
                 };
 
@@ -1689,7 +1894,11 @@ impl SettingsApp {
                     2 => "none".to_string(),
                     _ => "outwards".to_string(),
                 };
-                cfg.ui.menu_style = if combo_menu_style_save.selected() == 1 { "floating".to_string() } else { "pie".to_string() };
+                cfg.ui.menu_style = if combo_menu_style_save.selected() == 1 {
+                    "floating".to_string()
+                } else {
+                    "pie".to_string()
+                };
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
                 cfg.last_edited_menu = current_menu_path
                     .file_stem()
@@ -1859,7 +2068,10 @@ impl SettingsApp {
                                 return gtk::glib::ControlFlow::Break;
                             }
                             if let Ok(cfg) = launcher_core::load_config(&cp_cb) {
-                                crate::dropdown_utils::dropdown_set_active_id(&combo_th_cb, &cfg.ui.theme);
+                                crate::dropdown_utils::dropdown_set_active_id(
+                                    &combo_th_cb,
+                                    &cfg.ui.theme,
+                                );
                                 spin_r_cb.set_value(cfg.ui.extra_radius);
                                 spin_pill_cb.set_value(cfg.ui.pill_roundness * 100.0);
                                 chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
@@ -1869,13 +2081,17 @@ impl SettingsApp {
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
                                 let selected_idx = match cfg.ui.hover_visual_cue.as_str() {
-                    "sides" => 1,
-                    "none" => 2,
-                    _ => 0,
-                };
-                combo_vis_cb.set_selected(selected_idx);
-                                let selected_idx = if cfg.ui.menu_style == "floating" { 1 } else { 0 };
-                combo_sty_cb.set_selected(selected_idx);
+                                    "sides" => 1,
+                                    "none" => 2,
+                                    _ => 0,
+                                };
+                                combo_vis_cb.set_selected(selected_idx);
+                                let selected_idx = if cfg.ui.menu_style == "floating" {
+                                    1
+                                } else {
+                                    0
+                                };
+                                combo_sty_cb.set_selected(selected_idx);
                                 if let Some(sys) = cfg.ui.system_theme_overrides {
                                     *sys_ov_cb.borrow_mut() = sys;
                                 }
@@ -2374,6 +2590,8 @@ icon = "terminal"
                                 "shell command".to_value()
                             }
                             Some(launcher_core::Action::Hotkey { .. }) => "hotkey".to_value(),
+                            Some(launcher_core::Action::OpenUri { .. }) => "uri".to_value(),
+                            Some(launcher_core::Action::OpenPath { .. }) => "file".to_value(),
                             None => {
                                 if item.children.is_empty() {
                                     "shell command".to_value()
@@ -2388,6 +2606,8 @@ icon = "terminal"
                         &match &item.action {
                             Some(launcher_core::Action::Command { cmd, .. }) => cmd.to_value(),
                             Some(launcher_core::Action::Hotkey { keys, .. }) => keys.to_value(),
+                            Some(launcher_core::Action::OpenUri { uri, .. }) => uri.to_value(),
+                            Some(launcher_core::Action::OpenPath { path, .. }) => path.to_value(),
                             None => "".to_value(),
                         },
                     ),
@@ -2398,6 +2618,12 @@ icon = "terminal"
                                 keep_open.to_value()
                             }
                             Some(launcher_core::Action::Hotkey { keep_open, .. }) => {
+                                keep_open.to_value()
+                            }
+                            Some(launcher_core::Action::OpenUri { keep_open, .. }) => {
+                                keep_open.to_value()
+                            }
+                            Some(launcher_core::Action::OpenPath { keep_open, .. }) => {
                                 keep_open.to_value()
                             }
                             None => false.to_value(),
@@ -2476,6 +2702,14 @@ icon = "terminal"
                     }),
                     "hotkey" => Some(launcher_core::Action::Hotkey {
                         keys: action_cmd,
+                        keep_open,
+                    }),
+                    "uri" => Some(launcher_core::Action::OpenUri {
+                        uri: action_cmd,
+                        keep_open,
+                    }),
+                    "file" => Some(launcher_core::Action::OpenPath {
+                        path: action_cmd,
                         keep_open,
                     }),
                     _ => None,
@@ -2851,7 +3085,12 @@ icon = "terminal"
                     mat_grid
                         .borrow_mut()
                         .reset_with(Self::material_matches(&mat_items, &text));
-                    Self::load_material_chunk(&mat_flow, &mut mat_grid.borrow_mut(), &ent_icon, &dlg);
+                    Self::load_material_chunk(
+                        &mat_flow,
+                        &mut mat_grid.borrow_mut(),
+                        &ent_icon,
+                        &dlg,
+                    );
                     Self::clear_flow(&sys_flow);
                     sys_grid
                         .borrow_mut()

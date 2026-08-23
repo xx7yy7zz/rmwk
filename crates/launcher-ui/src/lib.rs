@@ -2790,6 +2790,7 @@ impl LauncherApp {
                             if state.hover_visual_cue != cfg.ui.hover_visual_cue {
                                 state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();
                             }
+                            state.hide_back_entry = cfg.ui.hide_back_entry;
                             let new_blur = cfg.ui.enable_blur && cfg.ui.menu_style != "floating";
                             if state.enable_blur != new_blur {
                                 state.enable_blur = new_blur;
