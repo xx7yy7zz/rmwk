@@ -489,35 +489,40 @@ impl SettingsApp {
         // Buttons under TreeView
         let btn_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
 
-        let btn_add_item = gtk::Button::with_label("Add Command");
-        btn_add_item.set_tooltip_text(Some(
+        let btn_add_item = Self::make_drag_button(
+            Some("Command"),
+            None,
             "Drag and drop. Add a new shell command below the selected entry.",
-        ));
-        let btn_add_sub = gtk::Button::with_label("Add Submenu");
-        btn_add_sub.set_tooltip_text(Some(
+        );
+        let btn_add_sub = Self::make_drag_button(
+            Some("Submenu"),
+            None,
             "Drag and drop. Add a new submenu below the selected entry.",
-        ));
-        let btn_add_hotkey = gtk::Button::with_label("Add Hotkey");
-        btn_add_hotkey.set_tooltip_text(Some(
+        );
+        let btn_add_hotkey = Self::make_drag_button(
+            Some("Hotkey"),
+            None,
             "Drag and drop. Add a new hotkey shortcut below the selected entry.",
-        ));
-        let btn_add_uri = gtk::Button::with_label("Add URI");
-        btn_add_uri.set_tooltip_text(Some(
+        );
+        let btn_add_uri = Self::make_drag_button(
+            Some("URI"),
+            None,
             "Drag and drop. Add a new URI (e.g. https://, mailto:) opener below the selected entry.",
-        ));
-        let btn_add_path = gtk::Button::with_label("Add File/Folder");
-        btn_add_path.set_tooltip_text(Some(
+        );
+        let btn_add_path = Self::make_drag_button(
+            Some("File/Folder"),
+            None,
             "Drag and drop. Add a new file or folder opener below the selected entry.",
-        ));
-        let btn_copy = gtk::Button::with_label("Copy");
-        btn_copy.set_tooltip_text(Some("Copy all properties of the selected entry."));
-        let btn_paste = gtk::Button::with_label("Paste");
-        btn_paste.set_tooltip_text(Some(
+        );
+        let btn_copy =
+            Self::make_icon_button("edit-copy-symbolic", "Copy all properties of the selected entry.");
+        let btn_paste = Self::make_drag_button(
+            None,
+            Some("edit-paste-symbolic"),
             "Drag and drop. Paste the copied entry below the selected entry.",
-        ));
+        );
         btn_paste.set_sensitive(false);
-        let btn_delete = gtk::Button::with_label("Delete");
-        btn_delete.set_tooltip_text(Some("Delete the selected entry."));
+        let btn_delete = Self::make_icon_button("user-trash-symbolic", "Delete the selected entry.");
         let btn_up = gtk::Button::with_label("▲");
         btn_up.set_tooltip_text(Some("Move the selected entry upwards."));
         let btn_down = gtk::Button::with_label("▼");
@@ -526,18 +531,16 @@ impl SettingsApp {
         btn_hbox.append(&btn_add_item);
         btn_hbox.append(&btn_add_sub);
         btn_hbox.append(&btn_add_hotkey);
+        btn_hbox.append(&btn_add_uri);
+        btn_hbox.append(&btn_add_path);
+        let actions_sep = gtk::Separator::new(gtk::Orientation::Vertical);
+        btn_hbox.append(&actions_sep);
         btn_hbox.append(&btn_copy);
         btn_hbox.append(&btn_paste);
         btn_hbox.append(&btn_delete);
         btn_hbox.append(&btn_up);
         btn_hbox.append(&btn_down);
         left_vbox.append(&btn_hbox);
-
-        let btn_hbox2 = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-        btn_hbox2.set_margin_top(5);
-        btn_hbox2.append(&btn_add_uri);
-        btn_hbox2.append(&btn_add_path);
-        left_vbox.append(&btn_hbox2);
 
         let themes = Self::get_available_themes(&config_path);
         let theme_editor = theme_editor::ThemeEditor::new(
@@ -2735,6 +2738,44 @@ icon = "terminal"
         }
 
         items
+    }
+
+    /// Builds an "Add ..." button with a drag-handle grip glyph in front of
+    /// its content (a text label, an icon, or both), hinting that the button
+    /// can be dragged onto the tree.
+    fn make_drag_button(label: Option<&str>, icon: Option<&str>, tooltip: &str) -> gtk::Button {
+        let btn = gtk::Button::new();
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        content.set_halign(gtk::Align::Center);
+        content.set_valign(gtk::Align::Center);
+        let grip = gtk::Label::new(Some("⠿"));
+        grip.add_css_class("dim-label");
+        grip.set_valign(gtk::Align::Center);
+        grip.set_margin_top(4);
+        content.append(&grip);
+        if let Some(icon_name) = icon {
+            let image = gtk::Image::from_icon_name(icon_name);
+            image.set_valign(gtk::Align::Center);
+            content.append(&image);
+        }
+        if let Some(text) = label {
+            let text_label = gtk::Label::new(Some(text));
+            text_label.set_valign(gtk::Align::Center);
+            content.append(&text_label);
+        }
+        btn.set_child(Some(&content));
+        btn.set_tooltip_text(Some(tooltip));
+        btn
+    }
+
+    /// Builds a plain icon button with a tooltip.
+    fn make_icon_button(icon: &str, tooltip: &str) -> gtk::Button {
+        let btn = gtk::Button::new();
+        let image = gtk::Image::from_icon_name(icon);
+        image.set_valign(gtk::Align::Center);
+        btn.set_child(Some(&image));
+        btn.set_tooltip_text(Some(tooltip));
+        btn
     }
 
     fn get_available_themes(config_path: &Path) -> Vec<String> {
