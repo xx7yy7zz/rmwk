@@ -21,6 +21,23 @@ const HOVER_GROW: f64 = 15.0;
 
 const MATERIAL_ICON_WEIGHT: f64 = 400.0;
 
+// Emojis render larger than text glyphs at the same point size because emoji
+// fonts fill the full em box. Shrink single-char emoji icons by this factor.
+// Adjust EMOJI_SIZE_SCALE to tune emoji icon size (1.0 = no shrink).
+const EMOJI_SIZE_SCALE: f64 = 0.775;
+
+fn is_emoji_char(c: char) -> bool {
+    matches!(c as u32,
+        0x231A..=0x231B | 0x2328 | 0x23CF | 0x23E9..=0x23FA | 0x24C2
+        | 0x25AA..=0x25AB | 0x25B6 | 0x25C0 | 0x25FB..=0x25FE
+        | 0x2934..=0x2935
+        | 0x2B05..=0x2B07 | 0x2B1B..=0x2B1C | 0x2B50 | 0x2B55
+        | 0x3030 | 0x303D | 0x3297 | 0x3299
+        | 0xFE00..=0xFE0F | 0x200D
+        | 0x1F000..=0x1FAFF | 0x1FC00..=0x1FFFD
+    )
+}
+
 // Trace a rounded rectangle from (rx0, ry0) with the given size and corner radius.
 fn rounded_rect_path(cr: &cairo::Context, rx0: f64, ry0: f64, rw: f64, rh: f64, rad: f64) {
     cr.new_path();
@@ -461,11 +478,63 @@ fn load_and_apply_theme(
     }
 }
 
+fn expand_tilde_path(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
+}
+
+/// If the command is an rmwk menu invocation (e.g. `rmwk open other`,
+/// `rmwk --menu ~/cfg/menu.toml`), return the resolved menu path so the
+/// running instance can switch menus in-process instead of spawning a
+/// whole new binary (which forces a close/reopen round-trip).
+fn resolve_self_menu_command(cmd: &str) -> Option<PathBuf> {
+    let mut tokens = cmd.split_whitespace();
+    let bin = Path::new(tokens.next()?)
+        .file_stem()?
+        .to_string_lossy()
+        .to_lowercase();
+    if bin != "rmwk" {
+        return None;
+    }
+
+    let mut menu_path: Option<PathBuf> = None;
+    let mut menu_name: Option<String> = None;
+    let mut pending_menu_arg = false;
+    let mut saw_open_subcommand = false;
+
+    for tok in tokens {
+        if pending_menu_arg {
+            menu_path = Some(expand_tilde_path(tok));
+            pending_menu_arg = false;
+        } else if let Some(val) = tok.strip_prefix("--menu=") {
+            menu_path = Some(expand_tilde_path(val));
+        } else if tok == "--menu" || tok == "-m" {
+            pending_menu_arg = true;
+        } else if tok == "open" {
+            saw_open_subcommand = true;
+        } else if !tok.starts_with('-') && saw_open_subcommand && menu_name.is_none() {
+            menu_name = Some(tok.to_string());
+        }
+    }
+
+    if let Some(p) = menu_path {
+        return Some(p);
+    }
+    menu_name.map(|name| {
+        launcher_core::paths::get_config_dir()
+            .join("menus")
+            .join(format!("{}.toml", name))
+    })
+}
 
 fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
     if let Some(prev) = state.history.pop() {
         let prev_icon = state.history_icons.pop().unwrap_or(None);
-        
+
         // Push current state to forward history
         state.forward_history.push(state.current_items.clone());
         state.forward_history_icons.push(state.current_icon.clone());
@@ -477,7 +546,7 @@ fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
         } else {
             state.current_icon = None; // fallback
         }
-        
+
         state.current_items = prev;
         state.hovered_index = None;
         if let Some(display) = gdk::Display::default() {
@@ -500,7 +569,7 @@ fn go_forward(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
         state.current_icon = next_icon;
         state.current_items = next;
         state.hovered_index = None;
-        
+
         if let Some(display) = gdk::Display::default() {
             state.preload_icons(&display);
         }
@@ -517,7 +586,8 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
         return;
     }
 
-    let is_back_button = !state.history.is_empty() && !state.hide_back_entry && index == display_items_count - 1;
+    let is_back_button =
+        !state.history.is_empty() && !state.hide_back_entry && index == display_items_count - 1;
     if is_back_button {
         debug!("Back wedge activated, popping history");
         go_back(state, area);
@@ -525,11 +595,11 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
         let selected = display_items[index].clone();
         if !selected.children.is_empty() {
             let current_items = state.current_items.clone();
-            
+
             // Clear forward history because we took a new path
             state.forward_history.clear();
             state.forward_history_icons.clear();
-            
+
             state.history.push(current_items);
             state.history_icons.push(state.current_icon.clone());
             state.current_icon = selected.icon.clone();
@@ -579,6 +649,42 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
                                 );
                             },
                         );
+                        return;
+                    }
+                }
+            }
+
+            // Fast-path: launching another rmwk menu from within this launcher.
+            // Swap the menu contents in place (same as an IPC OpenMenu while
+            // visible) instead of closing and waiting for a spawned process
+            // to boot and tell us to reopen.
+            if let launcher_core::Action::Command { cmd, .. } = &action {
+                if let Some(new_path) = resolve_self_menu_command(cmd) {
+                    if new_path.exists() {
+                        let same_menu = state.current_menu_path == new_path;
+                        state.current_menu_path = new_path.clone();
+                        if same_menu {
+                            // Matches the IPC OpenMenu toggle behaviour
+                            state.is_closing = true;
+                        } else {
+                            match launcher_core::load_menu(&new_path) {
+                                Ok(m) => {
+                                    state.root_items = m.menu.clone();
+                                    state.root_icon = m.icon.clone();
+                                    state.reset_to_root();
+                                    if let Some(display) = gdk::Display::default() {
+                                        state.preload_icons(&display);
+                                    }
+                                    area.queue_draw();
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to load menu from {:?}: {}",
+                                        new_path, e
+                                    );
+                                }
+                            }
+                        }
                         return;
                     }
                 }
@@ -1152,7 +1258,14 @@ impl LauncherApp {
                                 font_desc.set_weight(gtk::pango::Weight::Bold);
                             }
                             font_desc.set_family("Sans");
-                            font_desc.set_absolute_size(icon_size * gtk::pango::SCALE as f64);
+                            let emoji_scale = if icon_name.chars().all(is_emoji_char) {
+                                EMOJI_SIZE_SCALE
+                            } else {
+                                1.0
+                            };
+                            font_desc.set_absolute_size(
+                                icon_size * emoji_scale * gtk::pango::SCALE as f64,
+                            );
                             l.set_font_description(Some(&font_desc));
                             state_ref.text_layout_cache.insert(key, l.clone());
                             l
@@ -1316,7 +1429,14 @@ impl LauncherApp {
                                         gtk::pango::Weight::Normal
                                     };
                                     font_desc.set_weight(weight);
-                                    font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
+                                    let emoji_scale = if icon_name.chars().all(is_emoji_char) {
+                                        EMOJI_SIZE_SCALE
+                                    } else {
+                                        1.0
+                                    };
+                                    font_desc.set_size(gtk::pango::units_from_double(
+                                        64.0 * 0.75 * emoji_scale,
+                                    ));
                                     l.set_font_description(Some(&font_desc));
                                     state_ref.text_layout_cache.insert(key, l.clone());
                                     l
@@ -1953,7 +2073,14 @@ impl LauncherApp {
                                         gtk::pango::Weight::Normal
                                     };
                                     font_desc.set_weight(weight);
-                                    font_desc.set_size(gtk::pango::units_from_double(64.0 * 0.75));
+                                    let emoji_scale = if icon_name.chars().all(is_emoji_char) {
+                                        EMOJI_SIZE_SCALE
+                                    } else {
+                                        1.0
+                                    };
+                                    font_desc.set_size(gtk::pango::units_from_double(
+                                        64.0 * 0.75 * emoji_scale,
+                                    ));
                                     l.set_font_description(Some(&font_desc));
                                     state_ref.text_layout_cache.insert(key, l.clone());
                                     l
@@ -2161,6 +2288,11 @@ impl LauncherApp {
             let menu_config_tick = menu_config.clone();
 
             Rc::new(move || {
+                // Always request an immediate redraw so state changes made just
+                // before triggering (e.g. swapping menus via IPC while visible)
+                // are painted even when no hover animation ends up running.
+                area_clone_tick.queue_draw();
+
                 if is_animating.get() {
                     return;
                 }
@@ -2304,7 +2436,6 @@ impl LauncherApp {
         let click_controller = gtk::GestureClick::new();
         click_controller.set_button(0); // Any mouse button
 
-
         let click_state = state.clone();
         let area_clone_click = drawing_area.clone();
         let trigger_anim_click = trigger_anim.clone();
@@ -2315,8 +2446,6 @@ impl LauncherApp {
                 Ok(s) => s,
                 Err(_) => return,
             };
-
-
 
             if button == 3 {
                 // Right click goes back, or dismisses launcher if at root
