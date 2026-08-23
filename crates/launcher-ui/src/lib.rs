@@ -531,6 +531,19 @@ fn resolve_self_menu_command(cmd: &str) -> Option<PathBuf> {
     })
 }
 
+/// Single source of truth for the Wayland blur region radius so every code
+/// path (realize, resize, draw tick, reload) agrees on the same value.
+///
+/// Deliberately covers only the base pie circle: with the "outwards" hover
+/// cue the hovered slice expands past the blurred area, which is intended.
+fn target_blur_radius(enable_blur: bool, is_closing: bool) -> f64 {
+    if !enable_blur || is_closing {
+        0.0
+    } else {
+        BASE_R + SLICE_WIDTH
+    }
+}
+
 fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
     if let Some(prev) = state.history.pop() {
         let prev_icon = state.history_icons.pop().unwrap_or(None);
@@ -965,7 +978,8 @@ impl LauncherApp {
                 let height = w.height() as f64;
                 let cx = width / 2.0;
                 let cy = height / 2.0;
-                let radius = BASE_R + SLICE_WIDTH + HOVER_GROW;
+                let radius =
+                    target_blur_radius(state_realize.borrow().enable_blur, false);
                 blur.update_circular_region(radius, cx, cy);
                 *blur_realize.borrow_mut() = Some(blur);
             }
@@ -986,11 +1000,7 @@ impl LauncherApp {
                 let mut state = state_resize.borrow_mut();
                 state.last_cx = cx;
                 state.last_cy = cy;
-                let radius = if state.enable_blur {
-                    BASE_R + SLICE_WIDTH
-                } else {
-                    0.0
-                };
+                let radius = target_blur_radius(state.enable_blur, state.is_closing);
                 blur.update_circular_region(radius, cx, cy);
             }
         });
@@ -1008,15 +1018,8 @@ impl LauncherApp {
 
             // Update blur region based on animation progress
             if let Some(blur) = blur_draw.borrow().as_ref() {
-                let target_radius = if state_ref.enable_blur {
-                    if state_ref.is_closing {
-                        0.0
-                    } else {
-                        BASE_R + SLICE_WIDTH
-                    }
-                } else {
-                    0.0
-                };
+                let target_radius =
+                    target_blur_radius(state_ref.enable_blur, state_ref.is_closing);
 
                 // Only update Wayland region if it has actually changed to avoid IPC overhead
                 if (state_ref.last_blur_radius - target_radius).abs() > 0.01 {
@@ -2936,11 +2939,8 @@ impl LauncherApp {
                         }
 
                         if blur_needs_update {
-                            let radius = if state.enable_blur {
-                                BASE_R + SLICE_WIDTH + HOVER_GROW
-                            } else {
-                                0.0
-                            };
+                            let radius =
+                                target_blur_radius(state.enable_blur, state.is_closing);
                             // The WaylandBlur is normally created at realize time,
                             // only when blur is already enabled. If it was enabled
                             // at runtime (e.g. switching to pie mode), create it now.
