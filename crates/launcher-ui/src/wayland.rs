@@ -156,7 +156,23 @@ impl WaylandBlur {
     }
 
     pub fn update_circular_region(&self, radius: f64, center_x: f64, center_y: f64) {
-        if radius <= 0.0 {
+        self.update_sectioned_region(center_x, center_y, &[(radius, None)]);
+    }
+
+    /// Sets the blur region as a union of concentric sections around
+    /// (center_x, center_y). Each section is (outer_radius, inner_radius):
+    /// `None` inner radius yields a solid disc, `Some(r)` an annulus.
+    pub fn update_sectioned_region(
+        &self,
+        center_x: f64,
+        center_y: f64,
+        sections: &[(f64, Option<f64>)],
+    ) {
+        let max_outer = sections
+            .iter()
+            .map(|s| s.0)
+            .fold(0.0f64, f64::max);
+        if max_outer <= 0.0 {
             self.effect_surface.set_blur_region(None);
             let _ = self.conn.flush();
             tracing::debug!("Wayland: Cleared blur region");
@@ -165,56 +181,71 @@ impl WaylandBlur {
 
         let region = self.compositor.create_region(&self.qh, ());
 
-        // Shrink the blur region by 1 pixel so the jagged aliased edges
-        // hide safely behind the anti-aliased Cairo stroke
-        let r = (radius - 1.0).max(0.0) as i32;
+        // Shrink each boundary by 1 pixel so jagged aliased edges hide
+        // safely behind the anti-aliased Cairo strokes
         let cx = center_x as i32;
         let cy = center_y as i32;
 
-        let top_stretch = 1;
-        let r_top = r + top_stretch;
-
-        // Run-length merge contiguous scanlines with identical horizontal extents
-        let mut current_rect: Option<(i32, i32, i32, i32)> = None; // (x, y, w, h)
-
-        for y in -r_top..=r {
-            let x = if y < 0 {
-                // Top half: Elliptical stretch
-                let b = r_top as f64;
-                let r_f = r as f64;
-                let y_f = y as f64;
-                (r_f * (1.0 - (y_f * y_f) / (b * b)).sqrt()).round() as i32
-            } else {
-                // Bottom half: Perfect circle
-                (((r * r - y * y) as f64).sqrt().round()) as i32
+        for &(outer, inner) in sections {
+            if outer <= 0.0 {
+                continue;
+            }
+            let r = (outer - 1.0).max(0.0);
+            // Inner hole boundary grows by 1px for the same reason
+            let r_hole = match inner {
+                Some(ri) => (ri + 1.0).max(0.0),
+                None => 0.0,
             };
 
-            if x > 0 {
-                let rect_x = cx - x;
-                let rect_y = cy + y;
-                let width = x * 2;
+            // Only the largest section keeps the elliptical top stretch
+            let top_stretch = if (outer - max_outer).abs() < 0.01 { 1 } else { 0 };
+            let r_top = r + top_stretch as f64;
 
-                if let Some((px, py, pw, ph)) = current_rect {
-                    if px == rect_x && pw == width && py + ph == rect_y {
-                        current_rect = Some((px, py, pw, ph + 1));
-                    } else {
-                        region.add(px, py, pw, ph);
-                        current_rect = Some((rect_x, rect_y, width, 1));
+            for y in -r_top as i32..=r as i32 {
+                let y_f = y as f64;
+                let half_w = if y < 0 {
+                    // Top half: Elliptical stretch
+                    let b = r_top;
+                    (r * (1.0 - (y_f * y_f) / (b * b)).sqrt()).round()
+                } else {
+                    // Bottom half: Perfect circle
+                    ((r * r - y_f * y_f).sqrt()).round()
+                };
+
+                if half_w <= 0.0 {
+                    continue;
+                }
+
+                let hw = half_w as i32;
+                let row_y = cy + y;
+
+                let hole_w = if y_f.abs() < r_hole {
+                    (r_hole * r_hole - y_f * y_f).sqrt().round()
+                } else {
+                    0.0
+                };
+
+                if hole_w > 0.0 {
+                    // Annulus row: two horizontal spans flanking the hole
+                    let hole = hole_w as i32;
+                    if hole < hw {
+                        let span = hw - hole;
+                        region.add(cx - hw, row_y, span, 1);
+                        region.add(cx + hole, row_y, span, 1);
                     }
                 } else {
-                    current_rect = Some((rect_x, rect_y, width, 1));
+                    region.add(cx - hw, row_y, hw * 2, 1);
                 }
             }
-        }
-
-        if let Some((px, py, pw, ph)) = current_rect {
-            region.add(px, py, pw, ph);
         }
 
         self.effect_surface.set_blur_region(Some(&region));
         region.destroy();
         // Since we are using a foreign display, flush the connection
         let _ = self.conn.flush();
-        tracing::debug!("Wayland: Updated circular blur region to radius {}", radius);
+        tracing::debug!(
+            "Wayland: Updated sectioned blur region ({} sections)",
+            sections.len()
+        );
     }
 }

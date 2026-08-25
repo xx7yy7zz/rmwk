@@ -737,6 +737,12 @@ impl SettingsApp {
             lbl_pill_roundness.set_sensitive(false);
         }
 
+        let chk_pie_spacing = gtk::CheckButton::with_label("Enable Pie Mode spacing");
+        chk_pie_spacing.set_active(ui_config.ui.enable_pie_spacing);
+        if ui_config.ui.menu_style == "floating" {
+            chk_pie_spacing.set_sensitive(false);
+        }
+
         let chk_symbolic_icons = gtk::CheckButton::with_label("Symbolic Icons");
         chk_symbolic_icons.set_active(ui_config.ui.use_symbolic_icons);
 
@@ -801,6 +807,7 @@ impl SettingsApp {
         let chk_enable_blur_style = chk_enable_blur.clone();
         let spin_pill_roundness_style = spin_pill_roundness.clone();
         let lbl_pill_roundness_style = lbl_pill_roundness.clone();
+        let spin_pie_spacing_style = chk_pie_spacing.clone();
         combo_menu_style.connect_notify_local(Some("selected"), move |combo, _| {
             let id = if combo.selected() == 1 {
                 "floating"
@@ -812,10 +819,12 @@ impl SettingsApp {
                     chk_enable_blur_style.set_sensitive(false);
                     spin_pill_roundness_style.set_sensitive(true);
                     lbl_pill_roundness_style.set_sensitive(true);
+                    spin_pie_spacing_style.set_sensitive(false);
                 } else {
                     chk_enable_blur_style.set_sensitive(true);
                     spin_pill_roundness_style.set_sensitive(false);
                     lbl_pill_roundness_style.set_sensitive(false);
+                    spin_pie_spacing_style.set_sensitive(true);
                 }
             }
         });
@@ -830,12 +839,16 @@ impl SettingsApp {
         pill_roundness_hbox.append(&spin_pill_roundness);
         pill_roundness_hbox.append(&icon_pill_roundness);
 
+        let pie_spacing_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        pie_spacing_hbox.append(&chk_pie_spacing);
+
         let extra_radius_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         extra_radius_hbox.append(&lbl_extra_radius);
         extra_radius_hbox.append(&spin_extra_radius);
 
         settings_vbox.append(&menu_style_hbox);
         settings_vbox.append(&pill_roundness_hbox);
+        settings_vbox.append(&pie_spacing_hbox);
         settings_vbox.append(&extra_radius_hbox);
         right_vbox.append(&settings_vbox);
 
@@ -1839,6 +1852,7 @@ impl SettingsApp {
         let sys_overrides_save = sys_overrides.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
         let spin_pill_roundness_save = spin_pill_roundness.clone();
+        let chk_pie_spacing_save = chk_pie_spacing.clone();
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
@@ -1887,6 +1901,7 @@ impl SettingsApp {
                 cfg.ui.system_theme_overrides = Some(sys_overrides_save.borrow().clone());
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
                 cfg.ui.pill_roundness = spin_pill_roundness_save.value() / 100.0;
+                cfg.ui.enable_pie_spacing = chk_pie_spacing_save.is_active();
                 cfg.ui.use_symbolic_icons = chk_symbolic_icons_save.is_active();
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();

@@ -19,6 +19,11 @@ const BASE_R: f64 = 80.0;
 const SLICE_WIDTH: f64 = 110.0;
 const HOVER_GROW: f64 = 15.0;
 
+/// Circumference each pie entry is guaranteed when auto-growing the gap
+/// between hub and entry ring (mirrors floating mode's 82px per pill,
+/// gentler since pie slices carry icons only, no labels).
+const PIE_ARC_PER_ENTRY: f64 = 70.0;
+
 const MATERIAL_ICON_WEIGHT: f64 = 400.0;
 
 // Emojis render larger than text glyphs at the same point size because emoji
@@ -118,6 +123,7 @@ struct MenuState {
 
     // Extra interactivity margin beyond slices
     extra_radius: f64,
+    enable_pie_spacing: bool,
     pill_roundness: f64,
     use_symbolic_icons: bool,
     bold_single_chars: bool,
@@ -128,7 +134,7 @@ struct MenuState {
     enable_blur: bool,
     last_cx: f64,
     last_cy: f64,
-    last_blur_radius: f64,
+    last_blur_key: Option<(bool, bool, f64)>,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -242,6 +248,17 @@ impl MenuState {
         l
     }
 
+    /// Dynamic hub-to-ring gap in pie mode: when enabled, the gap auto-grows
+    /// with entry count like floating mode (gentler, icon-only slices).
+    fn effective_pie_spacing(&self, n: usize) -> f64 {
+        if !self.enable_pie_spacing {
+            return 0.0;
+        }
+        let required_r = n as f64 * PIE_ARC_PER_ENTRY / (2.0 * PI);
+        let base_mid_radius = BASE_R + SLICE_WIDTH / 2.0;
+        (required_r - base_mid_radius).max(0.0)
+    }
+
     fn hit_test(&self, x: f64, y: f64, cx: f64, cy: f64) -> Option<usize> {
         let display_items = self.get_display_items();
         let n = display_items.len();
@@ -253,6 +270,9 @@ impl MenuState {
         let my = y - cy;
         let dist = (mx * mx + my * my).sqrt();
 
+        // The whole area from the hub edge outwards is active: in pie mode
+        // the separation gap still maps by angle to the nearest slice
+        // (same as floating mode's hub-to-pill gap)
         if dist < BASE_R {
             return None;
         }
@@ -263,7 +283,11 @@ impl MenuState {
             let pill_dist = base_dist.max(required_r);
             pill_dist + SLICE_WIDTH + HOVER_GROW + self.extra_radius + 40.0
         } else {
-            BASE_R + SLICE_WIDTH + HOVER_GROW + self.extra_radius
+            BASE_R
+                + self.effective_pie_spacing(n)
+                + SLICE_WIDTH
+                + HOVER_GROW
+                + self.extra_radius
         };
 
         if dist <= max_interactive_dist {
@@ -531,16 +555,28 @@ fn resolve_self_menu_command(cmd: &str) -> Option<PathBuf> {
     })
 }
 
-/// Single source of truth for the Wayland blur region radius so every code
-/// path (realize, resize, draw tick, reload) agrees on the same value.
+/// Single source of truth for the Wayland blur region so every code
+/// path (realize, resize, draw tick, reload) agrees on the same shape.
 ///
+/// The blur is split into two sections: a disc under the hub and an
+/// annulus under the entry ring, so the pie_spacing gap stays unblurred.
+/// With no spacing it degenerates to a single disc as before.
 /// Deliberately covers only the base pie circle: with the "outwards" hover
 /// cue the hovered slice expands past the blurred area, which is intended.
-fn target_blur_radius(enable_blur: bool, is_closing: bool) -> f64 {
+fn target_blur_regions(
+    enable_blur: bool,
+    is_closing: bool,
+    pie_spacing: f64,
+) -> Vec<(f64, Option<f64>)> {
     if !enable_blur || is_closing {
-        0.0
+        Vec::new()
+    } else if pie_spacing < 0.5 {
+        vec![(BASE_R + SLICE_WIDTH, None)]
     } else {
-        BASE_R + SLICE_WIDTH
+        vec![
+            (BASE_R, None),
+            (BASE_R + pie_spacing + SLICE_WIDTH, Some(BASE_R + pie_spacing)),
+        ]
     }
 }
 
@@ -939,6 +975,7 @@ impl LauncherApp {
             material_layout_cache: HashMap::new(),
             label_layout_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
+            enable_pie_spacing: ui_config.enable_pie_spacing,
             pill_roundness: ui_config.pill_roundness,
             use_symbolic_icons: ui_config.use_symbolic_icons,
             bold_single_chars: ui_config.bold_single_chars,
@@ -949,7 +986,7 @@ impl LauncherApp {
             enable_blur: ui_config.enable_blur && ui_config.menu_style != "floating",
             last_cx: 0.0,
             last_cy: 0.0,
-            last_blur_radius: -1.0,
+            last_blur_key: None,
             codepoints,
             theme_colors: std::cell::RefCell::new(None),
             suppress_focus_loss: std::rc::Rc::new(std::cell::Cell::new(false)),
@@ -978,9 +1015,10 @@ impl LauncherApp {
                 let height = w.height() as f64;
                 let cx = width / 2.0;
                 let cy = height / 2.0;
-                let radius =
-                    target_blur_radius(state_realize.borrow().enable_blur, false);
-                blur.update_circular_region(radius, cx, cy);
+                let st = state_realize.borrow();
+                let spacing = st.effective_pie_spacing(st.get_display_items().len());
+                let regions = target_blur_regions(st.enable_blur, false, spacing);
+                blur.update_sectioned_region(cx, cy, &regions);
                 *blur_realize.borrow_mut() = Some(blur);
             }
         });
@@ -1000,8 +1038,12 @@ impl LauncherApp {
                 let mut state = state_resize.borrow_mut();
                 state.last_cx = cx;
                 state.last_cy = cy;
-                let radius = target_blur_radius(state.enable_blur, state.is_closing);
-                blur.update_circular_region(radius, cx, cy);
+                let regions = target_blur_regions(
+                    state.enable_blur,
+                    state.is_closing,
+                    state.effective_pie_spacing(state.get_display_items().len()),
+                );
+                blur.update_sectioned_region(cx, cy, &regions);
             }
         });
 
@@ -1016,26 +1058,31 @@ impl LauncherApp {
                 Err(_) => return,
             };
 
-            // Update blur region based on animation progress
-            if let Some(blur) = blur_draw.borrow().as_ref() {
-                let target_radius =
-                    target_blur_radius(state_ref.enable_blur, state_ref.is_closing);
-
-                // Only update Wayland region if it has actually changed to avoid IPC overhead
-                if (state_ref.last_blur_radius - target_radius).abs() > 0.01 {
-                    blur.update_circular_region(target_radius, cx, cy);
-                    state_ref.last_blur_radius = target_radius;
-                }
-            }
-
             let display_items = state_ref.get_display_items();
             let n = display_items.len();
+
+            // Update blur region based on animation progress
+            if let Some(blur) = blur_draw.borrow().as_ref() {
+                // Only update Wayland region if it has actually changed to avoid IPC overhead
+                let spacing = state_ref.effective_pie_spacing(n);
+                let key = (state_ref.enable_blur, state_ref.is_closing, spacing);
+                if state_ref.last_blur_key != Some(key) {
+                    let regions =
+                        target_blur_regions(state_ref.enable_blur, state_ref.is_closing, spacing);
+                    blur.update_sectioned_region(cx, cy, &regions);
+                    state_ref.last_blur_key = Some(key);
+                }
+            }
 
             let ease_progress = 1.0;
 
             // Clear surface (ensure transparent background is clean)
-            let max_interactive_dist =
-                BASE_R + SLICE_WIDTH + HOVER_GROW + state_ref.extra_radius + 80.0;
+            let max_interactive_dist = BASE_R
+                + state_ref.effective_pie_spacing(n)
+                + SLICE_WIDTH
+                + HOVER_GROW
+                + state_ref.extra_radius
+                + 80.0;
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
             cr.set_operator(cairo::Operator::Source);
             cr.rectangle(
@@ -1834,8 +1881,12 @@ impl LauncherApp {
                 draw_hub(&mut state_ref);
             } else {
                 // 1. Draw continuous base background ring if fill_color is visible
-                let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-                let base_inner_radius = BASE_R * ease_progress;
+                // The hub stays at BASE_R while the whole entry donut is pushed
+                // outwards by the effective spacing (animated with ease_progress);
+                // it auto-grows with entry count like floating mode
+                let spacing = state_ref.effective_pie_spacing(n) * ease_progress;
+                let base_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
+                let base_inner_radius = BASE_R * ease_progress + spacing;
                 if fill_color.alpha() > 0.001 {
                     cr.new_path();
                     cr.arc(cx, cy, base_outer_radius, 0.0, 2.0 * PI);
@@ -1895,8 +1946,10 @@ impl LauncherApp {
                         let mut start_angle = base_start_angle;
                         let mut end_angle = base_end_angle;
 
-                        let mut fill_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
-                        let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                        let mut fill_outer_radius =
+                            (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
+                        let mut stroke_outer_radius =
+                            (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
 
                         match state_ref.hover_visual_cue.as_str() {
                             "sides" => {
@@ -1905,16 +1958,18 @@ impl LauncherApp {
                                 end_angle += (hp_curr - hp_next) * hover_angle_grow;
                             }
                             "outwards" => {
-                                stroke_outer_radius =
-                                    (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5)
-                                        * ease_progress;
+                                stroke_outer_radius = (BASE_R + SLICE_WIDTH
+                                    + (hp_curr * HOVER_GROW)
+                                    - 0.5)
+                                    * ease_progress
+                                    + spacing;
 
                                 if is_hovered {
                                     fill_outer_radius = stroke_outer_radius;
                                 } else {
                                     // Instantly retreat the fill when unhovering so it doesn't leave an invisible trail
                                     fill_outer_radius =
-                                        (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                                        (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
                                 }
                             }
                             _ => { // "none"
@@ -1922,7 +1977,7 @@ impl LauncherApp {
                             }
                         }
 
-                        let stroke_inner_radius = BASE_R * ease_progress;
+                        let stroke_inner_radius = BASE_R * ease_progress + spacing;
 
                         // Fill wedge only if hovered, or if fill_color was transparent
                         if is_hovered || fill_color.alpha() <= 0.001 {
@@ -2160,7 +2215,8 @@ impl LauncherApp {
                 // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
                 // We draw this AFTER the wedge loop so that it completely covers the wedge strokes and prevents blur leakage
                 if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
-                    let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                    let base_outer =
+                        (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
 
                     let draw_full = || {
                         cr.new_path();
@@ -2204,6 +2260,30 @@ impl LauncherApp {
                     }
                 }
 
+                // Once the entry ring separates from the hub, stroke its inner
+                // edge with the outer ring color so the detached donut keeps a
+                // defined edge (and the jagged inner edge of the blurred
+                // annulus hides behind it). Hovering only expands slices
+                // outwards, so the inner circle is always drawn in full.
+                if spacing > 0.5 {
+                    cr.new_path();
+                    cr.arc(
+                        cx,
+                        cy,
+                        BASE_R * ease_progress + spacing,
+                        0.0,
+                        2.0 * PI,
+                    );
+                    cr.set_source_rgba(
+                        outer_border_color.red() as f64,
+                        outer_border_color.green() as f64,
+                        outer_border_color.blue() as f64,
+                        outer_border_color.alpha() as f64 * ease_progress,
+                    );
+                    cr.set_line_width(2.0);
+                    cr.stroke().unwrap();
+                }
+
                 draw_hub(&mut state_ref);
 
                 // Re-stroke the inner arc for the hovered slice to cover the hub's active border
@@ -2244,13 +2324,15 @@ impl LauncherApp {
                             end_a += (hp_curr - hp_next) * hover_angle_grow;
                         }
 
-                        let mut stroke_outer_radius = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress;
+                        let mut stroke_outer_radius =
+                            (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
                         if state_ref.hover_visual_cue == "outwards" {
                             stroke_outer_radius = (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW)
                                 - 0.5)
-                                * ease_progress;
+                                * ease_progress
+                                + spacing;
                         }
-                        let stroke_inner_radius = BASE_R * ease_progress;
+                        let stroke_inner_radius = BASE_R * ease_progress + spacing;
 
                         if hover_border_color.alpha() > 0.001 {
                             cr.new_path();
@@ -2909,6 +2991,7 @@ impl LauncherApp {
                         let mut blur_needs_update = false;
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.extra_radius = cfg.ui.extra_radius;
+                            state.enable_pie_spacing = cfg.ui.enable_pie_spacing;
                             state.pill_roundness = cfg.ui.pill_roundness;
                             state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
                             state.bold_single_chars = cfg.ui.bold_single_chars;
@@ -2939,8 +3022,11 @@ impl LauncherApp {
                         }
 
                         if blur_needs_update {
-                            let radius =
-                                target_blur_radius(state.enable_blur, state.is_closing);
+                            let regions = target_blur_regions(
+                                state.enable_blur,
+                                state.is_closing,
+                                state.effective_pie_spacing(state.get_display_items().len()),
+                            );
                             // The WaylandBlur is normally created at realize time,
                             // only when blur is already enabled. If it was enabled
                             // at runtime (e.g. switching to pie mode), create it now.
@@ -2954,7 +3040,7 @@ impl LauncherApp {
                             state.last_cx = cx;
                             state.last_cy = cy;
                             if let Some(blur) = wayland_blur.borrow().as_ref() {
-                                blur.update_circular_region(radius, cx, cy);
+                                blur.update_sectioned_region(cx, cy, &regions);
                             }
                         }
                         let current_path = { state.current_menu_path.clone() };

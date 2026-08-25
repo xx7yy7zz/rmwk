@@ -146,6 +146,10 @@ pub struct UiConfig {
     pub extra_radius: f64,
     #[serde(default = "default_pill_roundness")]
     pub pill_roundness: f64,
+    /// Dynamically grow the gap between hub and entry ring in pie mode when
+    /// there are many entries (mirrors floating mode's behavior).
+    #[serde(default = "default_enable_pie_spacing")]
+    pub enable_pie_spacing: bool,
     #[serde(default = "default_use_symbolic_icons")]
     pub use_symbolic_icons: bool,
     #[serde(default = "default_bold_single_chars")]
@@ -187,6 +191,7 @@ impl Default for UiConfig {
             menu_style: default_menu_style(),
             extra_radius: default_extra_radius(),
             pill_roundness: default_pill_roundness(),
+            enable_pie_spacing: default_enable_pie_spacing(),
             use_symbolic_icons: default_use_symbolic_icons(),
             bold_single_chars: default_bold_single_chars(),
             center_layout: default_center_layout(),
@@ -220,6 +225,11 @@ fn default_extra_radius() -> f64 {
 /// 0.0 = sharp rectangle. Applies to the pill corners and the icon tile.
 fn default_pill_roundness() -> f64 {
     1.0
+}
+
+/// Dynamic hub-to-ring spacing in pie mode, like floating mode.
+fn default_enable_pie_spacing() -> bool {
+    false
 }
 
 fn default_use_symbolic_icons() -> bool {
