@@ -158,13 +158,13 @@ pub fn save_standard_theme(theme_name: &str, overrides: &StandardThemeOverrides)
 .label:hover {{ color: rgba({}, {}, {}, {:.3}); }}
 .entry-icon {{ color: rgba({}, {}, {}, {:.3}); }}
 .entry-icon:hover {{ color: rgba({}, {}, {}, {:.3}); }}
-.floating-icon-surface {{ color: rgba({}, {}, {}, {:.3}); }}
-.floating-icon-surface:hover {{ color: rgba({}, {}, {}, {:.3}); }}
 .hub-surface {{ color: rgba({}, {}, {}, {:.3}); }}
 .hub-border {{ color: rgba({}, {}, {}, {:.3}); }}
 .hub-label {{ color: rgba({}, {}, {}, {:.3}); }}
 .hub-icon {{ color: rgba({}, {}, {}, {:.3}); }}
 .pie-outer-border {{ color: rgba({}, {}, {}, {:.3}); }}
+.floating-icon-surface {{ color: rgba({}, {}, {}, {:.3}); }}
+.floating-icon-surface:hover {{ color: rgba({}, {}, {}, {:.3}); }}
 ",
             (overrides.entry_surface.red() * 255.0) as u8,
             (overrides.entry_surface.green() * 255.0) as u8,
@@ -198,14 +198,6 @@ pub fn save_standard_theme(theme_name: &str, overrides: &StandardThemeOverrides)
             (overrides.entry_icon_hover.green() * 255.0) as u8,
             (overrides.entry_icon_hover.blue() * 255.0) as u8,
             overrides.entry_icon_hover.alpha(),
-            (overrides.floating_icon_surface.red() * 255.0) as u8,
-            (overrides.floating_icon_surface.green() * 255.0) as u8,
-            (overrides.floating_icon_surface.blue() * 255.0) as u8,
-            overrides.floating_icon_surface.alpha(),
-            (overrides.floating_icon_surface_hover.red() * 255.0) as u8,
-            (overrides.floating_icon_surface_hover.green() * 255.0) as u8,
-            (overrides.floating_icon_surface_hover.blue() * 255.0) as u8,
-            overrides.floating_icon_surface_hover.alpha(),
             (overrides.hub_surface.red() * 255.0) as u8,
             (overrides.hub_surface.green() * 255.0) as u8,
             (overrides.hub_surface.blue() * 255.0) as u8,
@@ -226,6 +218,14 @@ pub fn save_standard_theme(theme_name: &str, overrides: &StandardThemeOverrides)
             (overrides.pie_outer_border.green() * 255.0) as u8,
             (overrides.pie_outer_border.blue() * 255.0) as u8,
             overrides.pie_outer_border.alpha(),
+            (overrides.floating_icon_surface.red() * 255.0) as u8,
+            (overrides.floating_icon_surface.green() * 255.0) as u8,
+            (overrides.floating_icon_surface.blue() * 255.0) as u8,
+            overrides.floating_icon_surface.alpha(),
+            (overrides.floating_icon_surface_hover.red() * 255.0) as u8,
+            (overrides.floating_icon_surface_hover.green() * 255.0) as u8,
+            (overrides.floating_icon_surface_hover.blue() * 255.0) as u8,
+            overrides.floating_icon_surface_hover.alpha(),
         );
         let _ = std::fs::write(&theme_path, css);
     }

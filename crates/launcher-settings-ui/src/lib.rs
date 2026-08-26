@@ -732,14 +732,14 @@ impl SettingsApp {
         let lbl_pill_roundness = gtk::Label::new(Some("Pill Roundness (%):"));
         let spin_pill_roundness = gtk::SpinButton::with_range(0.0, 100.0, 5.0);
         spin_pill_roundness.set_value(ui_config.ui.pill_roundness * 100.0);
-        if ui_config.ui.menu_style != "floating" {
+        if ui_config.ui.menu_style != "floating" && ui_config.ui.menu_style != "floating-icons" {
             spin_pill_roundness.set_sensitive(false);
             lbl_pill_roundness.set_sensitive(false);
         }
 
         let chk_pie_spacing = gtk::CheckButton::with_label("Enable Pie Mode spacing");
         chk_pie_spacing.set_active(ui_config.ui.enable_pie_spacing);
-        if ui_config.ui.menu_style == "floating" {
+        if ui_config.ui.menu_style == "floating" || ui_config.ui.menu_style == "floating-icons" {
             chk_pie_spacing.set_sensitive(false);
         }
 
@@ -760,7 +760,7 @@ impl SettingsApp {
 
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
-        if ui_config.ui.menu_style == "floating" {
+        if ui_config.ui.menu_style == "floating" || ui_config.ui.menu_style == "floating-icons" {
             chk_enable_blur.set_sensitive(false);
         }
 
@@ -790,13 +790,14 @@ impl SettingsApp {
 
         let lbl_menu_style = gtk::Label::new(Some("Menu Style:"));
         lbl_menu_style.set_halign(gtk::Align::Start);
-        let combo_menu_style_model = gtk::StringList::new(&["Pie", "Floating Entries"]);
+        let combo_menu_style_model =
+            gtk::StringList::new(&["Pie", "Floating Entries", "Floating Icons"]);
         let combo_menu_style =
             gtk::DropDown::new(Some(combo_menu_style_model), gtk::Expression::NONE);
-        let selected_idx = if ui_config.ui.menu_style == "floating" {
-            1
-        } else {
-            0
+        let selected_idx = match ui_config.ui.menu_style.as_str() {
+            "floating" => 1,
+            "floating-icons" => 2,
+            _ => 0,
         };
         combo_menu_style.set_selected(selected_idx);
 
@@ -809,13 +810,13 @@ impl SettingsApp {
         let lbl_pill_roundness_style = lbl_pill_roundness.clone();
         let spin_pie_spacing_style = chk_pie_spacing.clone();
         combo_menu_style.connect_notify_local(Some("selected"), move |combo, _| {
-            let id = if combo.selected() == 1 {
-                "floating"
-            } else {
-                "pie"
+            let id = match combo.selected() {
+                1 => "floating",
+                2 => "floating-icons",
+                _ => "pie",
             };
             if true {
-                if id == "floating" {
+                if id == "floating" || id == "floating-icons" {
                     chk_enable_blur_style.set_sensitive(false);
                     spin_pill_roundness_style.set_sensitive(true);
                     lbl_pill_roundness_style.set_sensitive(true);
@@ -1912,10 +1913,10 @@ impl SettingsApp {
                     2 => "none".to_string(),
                     _ => "outwards".to_string(),
                 };
-                cfg.ui.menu_style = if combo_menu_style_save.selected() == 1 {
-                    "floating".to_string()
-                } else {
-                    "pie".to_string()
+                cfg.ui.menu_style = match combo_menu_style_save.selected() {
+                    1 => "floating".to_string(),
+                    2 => "floating-icons".to_string(),
+                    _ => "pie".to_string(),
                 };
                 cfg.ui.enable_blur = chk_enable_blur_save.is_active();
                 cfg.last_edited_menu = current_menu_path
@@ -2104,10 +2105,10 @@ impl SettingsApp {
                                     _ => 0,
                                 };
                                 combo_vis_cb.set_selected(selected_idx);
-                                let selected_idx = if cfg.ui.menu_style == "floating" {
-                                    1
-                                } else {
-                                    0
+                                let selected_idx = match cfg.ui.menu_style.as_str() {
+                                    "floating" => 1,
+                                    "floating-icons" => 2,
+                                    _ => 0,
                                 };
                                 combo_sty_cb.set_selected(selected_idx);
                                 if let Some(sys) = cfg.ui.system_theme_overrides {

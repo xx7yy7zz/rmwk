@@ -690,14 +690,6 @@ impl ThemeEditor {
                 "Entry Icon Hover",
                 overrides.borrow().entry_icon_hover.clone(),
             ),
-            (
-                "Floating Icon Surface",
-                overrides.borrow().floating_icon_surface.clone(),
-            ),
-            (
-                "Floating Icon Surface Hover",
-                overrides.borrow().floating_icon_surface_hover.clone(),
-            ),
             ("Hub Surface", overrides.borrow().hub_surface.clone()),
             ("Hub Border", overrides.borrow().hub_border.clone()),
             ("Hub Label", overrides.borrow().hub_label.clone()),
@@ -705,6 +697,14 @@ impl ThemeEditor {
             (
                 "Pie Outer Border",
                 overrides.borrow().pie_outer_border.clone(),
+            ),
+            (
+                "Floating Icon Surface",
+                overrides.borrow().floating_icon_surface.clone(),
+            ),
+            (
+                "Floating Icon Surface Hover",
+                overrides.borrow().floating_icon_surface_hover.clone(),
             ),
         ];
 
@@ -923,14 +923,6 @@ impl ThemeEditor {
                 "Entry Icon Hover",
                 overrides.borrow().entry_icon_hover.clone(),
             ),
-            (
-                "Floating Icon Surface",
-                overrides.borrow().floating_icon_surface.clone(),
-            ),
-            (
-                "Floating Icon Surface Hover",
-                overrides.borrow().floating_icon_surface_hover.clone(),
-            ),
             ("Hub Surface", overrides.borrow().hub_surface.clone()),
             ("Hub Border", overrides.borrow().hub_border.clone()),
             ("Hub Label", overrides.borrow().hub_label.clone()),
@@ -938,6 +930,14 @@ impl ThemeEditor {
             (
                 "Pie Outer Border",
                 overrides.borrow().pie_outer_border.clone(),
+            ),
+            (
+                "Floating Icon Surface",
+                overrides.borrow().floating_icon_surface.clone(),
+            ),
+            (
+                "Floating Icon Surface Hover",
+                overrides.borrow().floating_icon_surface_hover.clone(),
             ),
         ];
 

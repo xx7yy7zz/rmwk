@@ -24,12 +24,65 @@ const HOVER_GROW: f64 = 15.0;
 /// gentler since pie slices carry icons only, no labels).
 const PIE_ARC_PER_ENTRY: f64 = 70.0;
 
+/// Circumference guaranteed per floating-icons entry when auto-growing the
+/// ring radius, interpolated by pill_roundness: square tiles (roundness 0)
+/// occupy more space than circles (roundness 1). Tweak to taste.
+const FLOATING_ICONS_ARC_SQUARE: f64 = 110.0;
+const FLOATING_ICONS_ARC_ROUND: f64 = 80.0;
+
+/// Base gap (hub edge -> entry center) for floating-icons entries, used
+/// when the auto-grown radius is smaller than this floor, interpolated by
+/// pill_roundness: square tiles need more clearance than circles.
+/// Tweak to taste.
+const FLOATING_ICONS_BASE_GAP_SQUARE: f64 = 110.0;
+const FLOATING_ICONS_BASE_GAP_ROUND: f64 = 80.0;
+
+/// Padding around the icon inside a floating-icons tile (on top of
+/// icon_size / 2). Higher = chunkier tiles. Tweak to taste.
+const FLOATING_ICONS_TILE_PADDING: f64 = 14.0;
+
+/// Fixed icon size inside floating mode label pills (px).
+const FLOATING_PILL_ICON_SIZE: f64 = 40.0;
+
+/// Circumference guaranteed per floating pill entry when auto-growing the
+/// ring radius, interpolated by pill_roundness: square-ish pills (0) need
+/// more room than capsules (1). Tweak to taste.
+const FLOATING_ARC_SQUARE: f64 = 90.0;
+const FLOATING_ARC_ROUND: f64 = 50.0;
+
+/// Base gap (hub edge -> entry center) for floating pills, used when the
+/// auto-grown radius is smaller than this floor, interpolated by
+/// pill_roundness. Tweak to taste.
+const FLOATING_BASE_GAP_SQUARE: f64 = 90.0;
+const FLOATING_BASE_GAP_ROUND: f64 = 50.0;
+
 const MATERIAL_ICON_WEIGHT: f64 = 400.0;
 
 // Emojis render larger than text glyphs at the same point size because emoji
 // fonts fill the full em box. Shrink single-char emoji icons by this factor.
 // Adjust EMOJI_SIZE_SCALE to tune emoji icon size (1.0 = no shrink).
 const EMOJI_SIZE_SCALE: f64 = 0.775;
+
+/// Insert zero-width spaces into long alphanumeric runs so Pango can wrap
+/// them at those points with WORD wrapping, which never inserts the visible
+/// hyphens that mid-word (WordChar) line breaks do.
+fn soft_break_long_runs(s: &str, max_run: usize) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut run = 0usize;
+    for ch in s.chars() {
+        if ch.is_alphanumeric() {
+            run += 1;
+        } else {
+            run = 0;
+        }
+        out.push(ch);
+        if run >= max_run {
+            out.push('\u{200B}');
+            run = 0;
+        }
+    }
+    out
+}
 
 fn is_emoji_char(c: char) -> bool {
     matches!(c as u32,
@@ -248,6 +301,40 @@ impl MenuState {
         l
     }
 
+    /// Both floating variants share layout, hub, and hit-testing;
+    /// "floating-icons" renders bare icons without tiles or label pills.
+    fn is_floating(&self) -> bool {
+        self.menu_style == "floating" || self.menu_style == "floating-icons"
+    }
+
+    fn floating_icon_only(&self) -> bool {
+        self.menu_style == "floating-icons"
+    }
+
+    /// Guaranteed circumference per entry, interpolated by pill_roundness:
+    /// square shapes need more room than circles.
+    fn floating_arc_per_entry(&self) -> f64 {
+        let q = self.pill_roundness.clamp(0.0, 1.0);
+        if self.floating_icon_only() {
+            FLOATING_ICONS_ARC_SQUARE + (FLOATING_ICONS_ARC_ROUND - FLOATING_ICONS_ARC_SQUARE) * q
+        } else {
+            FLOATING_ARC_SQUARE + (FLOATING_ARC_ROUND - FLOATING_ARC_SQUARE) * q
+        }
+    }
+
+    /// Base hub-edge -> entry-center gap, interpolated by pill_roundness.
+    /// This dominates spacing for small menus (the arc formula only kicks
+    /// in past ~10 entries), so it must be roundness-aware too.
+    fn floating_base_gap(&self) -> f64 {
+        let q = self.pill_roundness.clamp(0.0, 1.0);
+        if self.floating_icon_only() {
+            FLOATING_ICONS_BASE_GAP_SQUARE
+                + (FLOATING_ICONS_BASE_GAP_ROUND - FLOATING_ICONS_BASE_GAP_SQUARE) * q
+        } else {
+            FLOATING_BASE_GAP_SQUARE + (FLOATING_BASE_GAP_ROUND - FLOATING_BASE_GAP_SQUARE) * q
+        }
+    }
+
     /// Dynamic hub-to-ring gap in pie mode: when enabled, the gap auto-grows
     /// with entry count like floating mode (gentler, icon-only slices).
     fn effective_pie_spacing(&self, n: usize) -> f64 {
@@ -277,17 +364,14 @@ impl MenuState {
             return None;
         }
 
-        let max_interactive_dist = if self.menu_style == "floating" {
-            let required_r = n as f64 * 82.0 / (2.0 * PI);
-            let base_dist = BASE_R + 60.0;
+        let max_interactive_dist = if self.is_floating() {
+            let arc_per_entry = self.floating_arc_per_entry();
+            let required_r = n as f64 * arc_per_entry / (2.0 * PI);
+            let base_dist = BASE_R + self.floating_base_gap();
             let pill_dist = base_dist.max(required_r);
             pill_dist + SLICE_WIDTH + HOVER_GROW + self.extra_radius + 40.0
         } else {
-            BASE_R
-                + self.effective_pie_spacing(n)
-                + SLICE_WIDTH
-                + HOVER_GROW
-                + self.extra_radius
+            BASE_R + self.effective_pie_spacing(n) + SLICE_WIDTH + HOVER_GROW + self.extra_radius
         };
 
         if dist <= max_interactive_dist {
@@ -421,13 +505,13 @@ fn load_and_apply_theme(
             .label:hover {{ color: alpha({}, {:.3}); }}
             .entry-icon {{ color: alpha({}, {:.3}); }}
             .entry-icon:hover {{ color: alpha({}, {:.3}); }}
-            .floating-icon-surface {{ color: alpha({}, {:.3}); }}
-            .floating-icon-surface:hover {{ color: alpha({}, {:.3}); }}
             .hub-surface {{ color: alpha({}, {:.3}); }}
             .hub-border {{ color: alpha({}, {:.3}); }}
             .hub-label {{ color: alpha({}, {:.3}); }}
             .hub-icon {{ color: alpha({}, {:.3}); }}
             .pie-outer-border {{ color: alpha({}, {:.3}); }}
+            .floating-icon-surface {{ color: alpha({}, {:.3}); }}
+            .floating-icon-surface:hover {{ color: alpha({}, {:.3}); }}
         ",
             overrides.entry_surface.variable,
             overrides.entry_surface.opacity,
@@ -445,10 +529,6 @@ fn load_and_apply_theme(
             overrides.entry_icon.opacity,
             overrides.entry_icon_hover.variable,
             overrides.entry_icon_hover.opacity,
-            overrides.floating_icon_surface.variable,
-            overrides.floating_icon_surface.opacity,
-            overrides.floating_icon_surface_hover.variable,
-            overrides.floating_icon_surface_hover.opacity,
             overrides.hub_surface.variable,
             overrides.hub_surface.opacity,
             overrides.hub_border.variable,
@@ -458,7 +538,11 @@ fn load_and_apply_theme(
             overrides.hub_icon.variable,
             overrides.hub_icon.opacity,
             overrides.pie_outer_border.variable,
-            overrides.pie_outer_border.opacity
+            overrides.pie_outer_border.opacity,
+            overrides.floating_icon_surface.variable,
+            overrides.floating_icon_surface.opacity,
+            overrides.floating_icon_surface_hover.variable,
+            overrides.floating_icon_surface_hover.opacity
         );
         theme_provider.load_from_data(&system_css);
         info!("Theme 'system' applied successfully dynamically.");
@@ -490,13 +574,13 @@ fn load_and_apply_theme(
             .label:hover { color: rgba(255, 255, 255, 1.0); }
             .entry-icon { color: rgba(205, 214, 244, 1.0); }
             .entry-icon:hover { color: rgba(255, 255, 255, 1.0); }
-            .floating-icon-surface { color: rgba(30, 30, 46, 1.0); }
-            .floating-icon-surface:hover { color: rgba(137, 180, 250, 1.0); }
             .hub-surface { color: rgba(17, 17, 27, 0.95); }
             .hub-border { color: rgba(137, 180, 250, 0.70); }
             .hub-label { color: rgba(205, 214, 244, 1.0); }
             .hub-icon { color: rgba(205, 214, 244, 1.0); }
             .pie-outer-border { color: rgba(137, 180, 250, 1.0); }
+            .floating-icon-surface { color: rgba(30, 30, 46, 1.0); }
+            .floating-icon-surface:hover { color: rgba(137, 180, 250, 1.0); }
         ";
         theme_provider.load_from_data(std::str::from_utf8(fallback).unwrap());
     }
@@ -575,7 +659,10 @@ fn target_blur_regions(
     } else {
         vec![
             (BASE_R, None),
-            (BASE_R + pie_spacing + SLICE_WIDTH, Some(BASE_R + pie_spacing)),
+            (
+                BASE_R + pie_spacing + SLICE_WIDTH,
+                Some(BASE_R + pie_spacing),
+            ),
         ]
     }
 }
@@ -727,10 +814,7 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
                                     area.queue_draw();
                                 }
                                 Err(e) => {
-                                    error!(
-                                        "Failed to load menu from {:?}: {}",
-                                        new_path, e
-                                    );
+                                    error!("Failed to load menu from {:?}: {}", new_path, e);
                                 }
                             }
                         }
@@ -983,7 +1067,9 @@ impl LauncherApp {
             center_layout: ui_config.center_layout,
             disable_hover_animation: ui_config.disable_hover_animation,
             hover_visual_cue: ui_config.hover_visual_cue.clone(),
-            enable_blur: ui_config.enable_blur && ui_config.menu_style != "floating",
+            enable_blur: ui_config.enable_blur
+                && ui_config.menu_style != "floating"
+                && ui_config.menu_style != "floating-icons",
             last_cx: 0.0,
             last_cy: 0.0,
             last_blur_key: None,
@@ -1215,6 +1301,8 @@ impl LauncherApp {
             if state_ref.menu_style == "floating" || state_ref.menu_style == "pill" {
                 center_icon = state_ref.current_icon.clone();
             } else {
+                // Pie and floating-icons: show the hovered entry's label in
+                // the hub, falling back to the current menu icon
                 if let Some(idx) = state_ref.hovered_index {
                     if idx < display_items.len() {
                         center_text = Some(display_items[idx].label.clone());
@@ -1226,13 +1314,11 @@ impl LauncherApp {
             }
 
             let draw_hub = |state_ref: &mut std::cell::RefMut<MenuState>| {
-                // Draw center hub if visible (circle in pie mode, roundness-aware in floating mode)
-                let hub_rad = if state_ref.menu_style == "floating" {
-                    60.0 * ease_progress
-                } else {
-                    BASE_R * ease_progress
-                };
-                let hub_round = if state_ref.menu_style == "floating" {
+                // Draw center hub if visible. All modes share the pie hub
+                // size (BASE_R); floating modes additionally round it via
+                // the pill_roundness setting
+                let hub_rad = BASE_R * ease_progress;
+                let hub_round = if state_ref.is_floating() {
                     hub_rad * state_ref.pill_roundness.clamp(0.0, 1.0)
                 } else {
                     hub_rad
@@ -1287,13 +1373,9 @@ impl LauncherApp {
                     let mut icon_w = 0.0;
                     let mut icon_h = 0.0;
                     let mut icon_layout = None;
-                    // Hub icon size in px (material glyph / system image / single-char).
-                    // PIE MODE: adjust the `80.0` in the else branch; floating stays at 80.0.
-                    let icon_size = if state_ref.menu_style == "floating" {
-                        80.0 * ease_progress
-                    } else {
-                        92.0 * ease_progress
-                    };
+                    // Hub icon size in px (material glyph / system image / single-char),
+                    // shared by all modes since the hub size is standardized
+                    let icon_size = 92.0 * ease_progress;
                     let mut surf_to_draw = None;
 
                     if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
@@ -1379,10 +1461,19 @@ impl LauncherApp {
                         hub_text_color.alpha() as f64 * ease_progress,
                     );
 
-                    let center_layout = if let Some(l) = state_ref.label_layout_cache.get(text) {
+                    // Threshold 10 keeps normal words intact (they wrap
+                    // whole at spaces); only longer runs get break points
+                    let soft = soft_break_long_runs(text, 10);
+                    let mut center_layout = if let Some(l) = state_ref.label_layout_cache.get(text)
+                    {
                         l.clone()
                     } else {
-                        let l = area.create_pango_layout(Some(text));
+                        // Pre-split long unbreakable runs with zero-width
+                        // spaces: Pango can then wrap them at those points
+                        // with WORD wrapping, which never inserts the visible
+                        // hyphens that mid-word (WordChar) breaks do. Normal
+                        // words stay whole and wrap at spaces.
+                        let l = area.create_pango_layout(Some(&soft));
                         let mut font_desc = gtk::pango::FontDescription::new();
                         font_desc.set_family("Sans");
                         font_desc.set_weight(gtk::pango::Weight::Bold);
@@ -1391,20 +1482,74 @@ impl LauncherApp {
                         state_ref.label_layout_cache.insert(text.clone(), l.clone());
                         l
                     };
+                    // Text box: a wide horizontal rectangle through the
+                    // hub's middle. Its width follows the hub's actual
+                    // shape: the full chord of the inscribed circle for
+                    // round hubs (pie), widening to the full square side as
+                    // pill_roundness decreases (floating-icons), using the
+                    // rounded-square corner geometry.
+                    let pad = 8.0;
+                    let line_h = 22.0; // approx line height at 16px font
+                    let box_h = 4.0 * line_h; // hard cap: at most 4 lines
+                    let corner = if state_ref.is_floating() {
+                        hub_rad * state_ref.pill_roundness.clamp(0.0, 1.0)
+                    } else {
+                        hub_rad // pie hubs are circles
+                    };
+                    let half_h = box_h * 0.5;
+                    let half_w = if corner < 0.5 || half_h <= hub_rad - corner {
+                        // Box vertical extent stays within the straight
+                        // edges: full width available
+                        hub_rad
+                    } else {
+                        // Corner region: widest width whose corner point
+                        // stays inside the corner's rounding circle
+                        let d = corner * corner - (half_h - (hub_rad - corner)).powi(2);
+                        (hub_rad - corner) + d.max(0.0).sqrt()
+                    };
+                    let box_w = (half_w * 2.0 - 2.0 * pad).max(40.0);
+                    // Word wrap (never hyphenates); the zero-width spaces
+                    // pre-inserted into the layout text handle unbreakable
+                    // runs
+                    center_layout.set_wrap(gtk::pango::WrapMode::Word);
+                    center_layout.set_alignment(gtk::pango::Alignment::Center);
+                    center_layout.set_width((box_w * gtk::pango::SCALE as f64) as i32);
 
-                    let (pango_w, pango_h) = center_layout.pixel_size();
+                    let (mut pango_w, mut pango_h) = center_layout.pixel_size();
+                    // Over 4 lines at full size? Re-layout at a reduced font
+                    // size so the text genuinely re-wraps into fewer lines
+                    // (slight overflow -> slight decrease, exaggerated
+                    // overflow -> considerable decrease)
+                    if pango_h as f64 > box_h {
+                        let font_scale = (box_h / pango_h as f64).max(0.2);
+                        let l = area.create_pango_layout(Some(&soft));
+                        let mut font_desc = gtk::pango::FontDescription::new();
+                        font_desc.set_family("Sans");
+                        font_desc.set_weight(gtk::pango::Weight::Bold);
+                        font_desc.set_absolute_size(16.0 * font_scale * gtk::pango::SCALE as f64);
+                        l.set_font_description(Some(&font_desc));
+                        l.set_wrap(gtk::pango::WrapMode::Word);
+                        l.set_alignment(gtk::pango::Alignment::Center);
+                        l.set_width((box_w * gtk::pango::SCALE as f64) as i32);
+                        center_layout = l;
+                        let (w2, h2) = center_layout.pixel_size();
+                        pango_w = w2;
+                        pango_h = h2;
+                    }
                     cr.save().unwrap();
                     cr.translate(cx, cy);
                     if ease_progress > 0.001 {
                         cr.scale(ease_progress, ease_progress);
                     }
-                    cr.move_to(-(pango_w as f64) / 2.0, -(pango_h as f64) / 2.0);
+                    // Center on the layout's allocated width (not pixel_size,
+                    // which ignores the center alignment's offset)
+                    cr.move_to(-box_w / 2.0, -(pango_h as f64) / 2.0);
                     pangocairo::functions::show_layout(&cr, &center_layout);
                     cr.restore().unwrap();
                 }
             };
 
-            if state_ref.menu_style == "floating" {
+            if state_ref.is_floating() {
                 if n > 0 {
                     let angle_per_slice = 2.0 * std::f64::consts::PI / n as f64;
                     let mut draw_order: Vec<usize> = (0..n).rev().collect();
@@ -1417,6 +1562,7 @@ impl LauncherApp {
 
                     for &i in &draw_order {
                         let item = &display_items[i];
+                        let icon_only = state_ref.floating_icon_only();
                         let hp = if i < state_ref.hover_progresses.len() {
                             state_ref.hover_progresses[i]
                         } else {
@@ -1432,9 +1578,11 @@ impl LauncherApp {
                         }
                         let mid_angle = base_start_angle + angle_per_slice / 2.0;
 
-                        // Dynamic radius scaling
-                        let required_r = n as f64 * 82.0 / (2.0 * std::f64::consts::PI);
-                        let base_dist = BASE_R + 52.5;
+                        // Dynamic radius scaling (roundness-aware: square
+                        // shapes need a roomier ring than circles)
+                        let arc_per_entry = state_ref.floating_arc_per_entry();
+                        let required_r = n as f64 * arc_per_entry / (2.0 * std::f64::consts::PI);
+                        let base_dist = BASE_R + state_ref.floating_base_gap();
                         let pill_dist =
                             base_dist.max(required_r) + (hp * HOVER_GROW) * ease_progress;
 
@@ -1443,8 +1591,10 @@ impl LauncherApp {
 
                         // Measure text
                         let text = &item.label;
-                        let text_layout = if let Some(l) = state_ref.label_layout_cache.get(text) {
-                            l.clone()
+                        let text_layout = if icon_only {
+                            None
+                        } else if let Some(l) = state_ref.label_layout_cache.get(text) {
+                            Some(l.clone())
                         } else {
                             let l = area.create_pango_layout(Some(text));
                             let mut font_desc = gtk::pango::FontDescription::new();
@@ -1452,15 +1602,25 @@ impl LauncherApp {
                             font_desc.set_size(gtk::pango::units_from_double(14.0));
                             l.set_font_description(Some(&font_desc));
                             state_ref.label_layout_cache.insert(text.clone(), l.clone());
-                            l
+                            Some(l)
                         };
-                        let (tw, th) = text_layout.pixel_size();
+                        let (tw, th) = if icon_only {
+                            (0, 0)
+                        } else {
+                            text_layout.as_ref().unwrap().pixel_size()
+                        };
                         let (tw_f, th_f) = (tw as f64 * ease_progress, th as f64 * ease_progress);
 
                         // Measure icon
                         let mut icon_w = 0.0;
                         let mut icon_h = 0.0;
-                        let icon_size = 32.0 * ease_progress; // fixed icon size for pills
+                        // Icon-only entries scale like pie slices: the icon
+                        // grows with the arc width available at its distance
+                        let icon_size = if icon_only {
+                            (pill_dist * angle_per_slice * 0.5).clamp(16.0, 64.0) * ease_progress
+                        } else {
+                            FLOATING_PILL_ICON_SIZE * ease_progress
+                        };
                         let mut icon_layout: Option<gtk::pango::Layout> = None;
 
                         if let Some(icon_name) = &item.icon {
@@ -1497,7 +1657,7 @@ impl LauncherApp {
                                 icon_h = icon_size * 0.75;
                             } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
                                 let layout =
-                                    state_ref.material_glyph_layout(&area, codepoint, 32.0);
+                                    state_ref.material_glyph_layout(&area, codepoint, icon_size);
                                 let (ink, _logical) = layout.pixel_extents();
                                 icon_w = ink.width() as f64 * ease_progress;
                                 icon_h = ink.height() as f64 * ease_progress;
@@ -1537,7 +1697,11 @@ impl LauncherApp {
                         };
 
                         let has_text = tw_f > 0.0;
-                        let r = (icon_size / 2.0 + 8.0) * ease_progress;
+                        let r = if icon_only {
+                            (icon_size / 2.0 + FLOATING_ICONS_TILE_PADDING) * ease_progress
+                        } else {
+                            (icon_size / 2.0 + 8.0) * ease_progress
+                        };
 
                         // Parameters controlling spacing between label and icon
                         let gap_between = 12.0 * ease_progress; // Horizontal gap for Left/Right entries
@@ -1700,14 +1864,27 @@ impl LauncherApp {
                         // separate keyhole-shaped union for top/bottom entries
                         let entry_outline = |cr: &cairo::Context| {
                             if !has_text || r < 0.1 {
+                                // Bare tile: shape follows pill_roundness
+                                // (circle at 1.0, rounded square below it)
                                 cr.new_path();
-                                cr.arc(
-                                    icon_center_x,
-                                    icon_center_y,
-                                    r,
-                                    0.0,
-                                    2.0 * std::f64::consts::PI,
-                                );
+                                if round >= r - 0.001 {
+                                    cr.arc(
+                                        icon_center_x,
+                                        icon_center_y,
+                                        r,
+                                        0.0,
+                                        2.0 * std::f64::consts::PI,
+                                    );
+                                } else {
+                                    rounded_rect_path(
+                                        cr,
+                                        icon_center_x - r,
+                                        icon_center_y - r,
+                                        2.0 * r,
+                                        2.0 * r,
+                                        round,
+                                    );
+                                }
                                 return;
                             }
                             match mode {
@@ -1718,6 +1895,10 @@ impl LauncherApp {
                             }
                         };
 
+                        // Icon-only entries keep a single shape (the tile,
+                        // rounded per pill_roundness) but tint it with the
+                        // slice colors: entry-surface fill + entry-border
+                        // stroke, skipping the opaque floating-icon tile
                         // 1. Fill translucent background for the whole entry
                         entry_outline(cr);
                         if is_hovered {
@@ -1737,31 +1918,33 @@ impl LauncherApp {
                         }
                         let _ = cr.fill();
 
-                        // 2. Draw Opaque Icon Tile on top (rounded square matching the corner radius)
-                        rounded_rect_path(
-                            cr,
-                            icon_center_x - r,
-                            icon_center_y - r,
-                            2.0 * r,
-                            2.0 * r,
-                            round,
-                        );
-                        if is_hovered {
-                            cr.set_source_rgba(
-                                hover_icon_tile_color.red() as f64,
-                                hover_icon_tile_color.green() as f64,
-                                hover_icon_tile_color.blue() as f64,
-                                hover_icon_tile_color.alpha() as f64 * ease_progress,
+                        if !icon_only {
+                            // 2. Draw Opaque Icon Tile on top (rounded square matching the corner radius)
+                            rounded_rect_path(
+                                cr,
+                                icon_center_x - r,
+                                icon_center_y - r,
+                                2.0 * r,
+                                2.0 * r,
+                                round,
                             );
-                        } else {
-                            cr.set_source_rgba(
-                                icon_tile_color.red() as f64,
-                                icon_tile_color.green() as f64,
-                                icon_tile_color.blue() as f64,
-                                icon_tile_color.alpha() as f64 * ease_progress,
-                            );
+                            if is_hovered {
+                                cr.set_source_rgba(
+                                    hover_icon_tile_color.red() as f64,
+                                    hover_icon_tile_color.green() as f64,
+                                    hover_icon_tile_color.blue() as f64,
+                                    hover_icon_tile_color.alpha() as f64 * ease_progress,
+                                );
+                            } else {
+                                cr.set_source_rgba(
+                                    icon_tile_color.red() as f64,
+                                    icon_tile_color.green() as f64,
+                                    icon_tile_color.blue() as f64,
+                                    icon_tile_color.alpha() as f64 * ease_progress,
+                                );
+                            }
+                            let _ = cr.fill();
                         }
-                        let _ = cr.fill();
 
                         // 3. Stroke the Outline (single unified path)
                         entry_outline(cr);
@@ -1807,7 +1990,9 @@ impl LauncherApp {
                                 cr.scale(ease_progress, ease_progress);
                             }
                             cr.move_to(0.0, 0.0);
-                            pangocairo::functions::show_layout(&cr, &text_layout);
+                            if let Some(tl) = text_layout.as_ref() {
+                                pangocairo::functions::show_layout(&cr, tl);
+                            }
                             let _ = cr.restore();
                         }
 
@@ -1833,7 +2018,11 @@ impl LauncherApp {
                                 if icon_name.chars().count() == 1 {
                                     if let Some(l) = icon_layout {
                                         let (pango_w, pango_h) = l.pixel_size();
-                                        let scale = (icon_size * 0.75) / (pango_w as f64).max(1.0);
+                                        // Em-based uniform scale (like pie
+                                        // mode): normalizing by glyph width
+                                        // made narrow letters render much
+                                        // larger than wide emojis
+                                        let scale = (icon_size * 0.90) / 64.0;
                                         let _ = cr.save();
                                         cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                         cr.scale(scale, scale);
@@ -1846,8 +2035,8 @@ impl LauncherApp {
                                     }
                                 } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name)
                                 {
-                                    let layout =
-                                        state_ref.material_glyph_layout(&area, codepoint, 32.0);
+                                    let layout = state_ref
+                                        .material_glyph_layout(&area, codepoint, icon_size);
                                     let (ink, _logical) = layout.pixel_extents();
                                     let _ = cr.save();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
@@ -1958,11 +2147,10 @@ impl LauncherApp {
                                 end_angle += (hp_curr - hp_next) * hover_angle_grow;
                             }
                             "outwards" => {
-                                stroke_outer_radius = (BASE_R + SLICE_WIDTH
-                                    + (hp_curr * HOVER_GROW)
-                                    - 0.5)
-                                    * ease_progress
-                                    + spacing;
+                                stroke_outer_radius =
+                                    (BASE_R + SLICE_WIDTH + (hp_curr * HOVER_GROW) - 0.5)
+                                        * ease_progress
+                                        + spacing;
 
                                 if is_hovered {
                                     fill_outer_radius = stroke_outer_radius;
@@ -2215,8 +2403,7 @@ impl LauncherApp {
                 // If using 'expand outwards', draw a continuous base outer ring to mask the Wayland blur edge
                 // We draw this AFTER the wedge loop so that it completely covers the wedge strokes and prevents blur leakage
                 if state_ref.enable_blur && state_ref.hover_visual_cue == "outwards" {
-                    let base_outer =
-                        (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
+                    let base_outer = (BASE_R + SLICE_WIDTH - 0.5) * ease_progress + spacing;
 
                     let draw_full = || {
                         cr.new_path();
@@ -2267,13 +2454,7 @@ impl LauncherApp {
                 // outwards, so the inner circle is always drawn in full.
                 if spacing > 0.5 {
                     cr.new_path();
-                    cr.arc(
-                        cx,
-                        cy,
-                        BASE_R * ease_progress + spacing,
-                        0.0,
-                        2.0 * PI,
-                    );
+                    cr.arc(cx, cy, BASE_R * ease_progress + spacing, 0.0, 2.0 * PI);
                     cr.set_source_rgba(
                         outer_border_color.red() as f64,
                         outer_border_color.green() as f64,
@@ -3006,7 +3187,9 @@ impl LauncherApp {
                                 state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();
                             }
                             state.hide_back_entry = cfg.ui.hide_back_entry;
-                            let new_blur = cfg.ui.enable_blur && cfg.ui.menu_style != "floating";
+                            let new_blur = cfg.ui.enable_blur
+                                && cfg.ui.menu_style != "floating"
+                                && cfg.ui.menu_style != "floating-icons";
                             if state.enable_blur != new_blur {
                                 state.enable_blur = new_blur;
                                 blur_needs_update = true;
