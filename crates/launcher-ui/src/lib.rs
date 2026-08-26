@@ -165,6 +165,10 @@ struct MenuState {
     // Cached icons to avoid loading on every frame tick
     icon_cache: HashMap<String, Option<cairo::ImageSurface>>,
 
+    // Animated image icons (GIFs), decoded once at preload; the pair carries
+    // the wall-clock start time so every redraw derives the correct frame
+    anim_cache: HashMap<String, (gtk::gdk_pixbuf::PixbufAnimation, std::time::SystemTime)>,
+
     // Cached Pango layouts for single char icons (avoids shaping every frame)
     text_layout_cache: HashMap<(String, u32), gtk::pango::Layout>,
 
@@ -251,33 +255,89 @@ impl MenuState {
             if self.codepoints.contains_key(raw_icon_name) {
                 continue;
             }
-            if !self.icon_cache.contains_key(raw_icon_name) {
-                let is_sys_forced = raw_icon_name.starts_with("sys:");
-                let icon_name = if is_sys_forced {
-                    &raw_icon_name[4..]
-                } else {
-                    raw_icon_name.as_str()
-                };
-
-                let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
-                let surface = pixbuf.and_then(|p| {
-                    let format = if p.has_alpha() {
-                        cairo::Format::ARgb32
-                    } else {
-                        cairo::Format::Rgb24
-                    };
-                    if let Ok(surf) = cairo::ImageSurface::create(format, p.width(), p.height()) {
-                        if let Ok(cr) = cairo::Context::new(&surf) {
-                            cr.set_source_pixbuf(&p, 0.0, 0.0);
-                            let _ = cr.paint();
-                            return Some(surf);
+            if !self.icon_cache.contains_key(raw_icon_name)
+                && !self.anim_cache.contains_key(raw_icon_name)
+            {
+                if let Some(path) = resolve_image_path(raw_icon_name) {
+                    if raw_icon_name.to_ascii_lowercase().ends_with(".gif") {
+                        // Animated GIFs are decoded once here; frames are
+                        // produced per redraw from the in-memory animation.
+                        // Still GIFs go through the regular static pipeline.
+                        match gtk::gdk_pixbuf::PixbufAnimation::from_file(&path) {
+                            Ok(anim) => {
+                                if anim.is_static_image() {
+                                    let surface = gtk::gdk_pixbuf::Pixbuf::from_file_at_size(
+                                        &path,
+                                        128,
+                                        128,
+                                    )
+                                    .ok()
+                                    .and_then(pixbuf_to_surface);
+                                    self.icon_cache.insert(raw_icon_name.clone(), surface);
+                                } else {
+                                    self.anim_cache.insert(
+                                        raw_icon_name.clone(),
+                                        (anim, std::time::SystemTime::now()),
+                                    );
+                                }
+                            }
+                            Err(_) => {
+                                // Corrupt file: cache as missing so we don't retry every frame
+                                self.icon_cache.insert(raw_icon_name.clone(), None);
+                            }
                         }
+                    } else {
+                        let pixbuf =
+                            gtk::gdk_pixbuf::Pixbuf::from_file_at_size(&path, 128, 128).ok();
+                        let surface = pixbuf.and_then(pixbuf_to_surface);
+                        self.icon_cache.insert(raw_icon_name.clone(), surface);
                     }
-                    None
-                });
-                self.icon_cache.insert(raw_icon_name.clone(), surface);
+                } else {
+                    let is_sys_forced = raw_icon_name.starts_with("sys:");
+                    let icon_name = if is_sys_forced {
+                        &raw_icon_name[4..]
+                    } else {
+                        raw_icon_name.as_str()
+                    };
+
+                    let pixbuf = load_icon_pixbuf(display, icon_name, 128, self.use_symbolic_icons);
+                    let surface = pixbuf.and_then(pixbuf_to_surface);
+                    self.icon_cache.insert(raw_icon_name.clone(), surface);
+                }
             }
         }
+    }
+
+    /// Current surface for an icon: the cached static surface, or for animated
+    /// icons (GIFs) a fresh small surface holding the frame due right now.
+    fn icon_frame_surface(&self, icon_name: &str) -> Option<cairo::ImageSurface> {
+        if let Some(Some(surf)) = self.icon_cache.get(icon_name) {
+            return Some(surf.clone());
+        }
+        let (anim, start) = self.anim_cache.get(icon_name)?;
+        let iter = anim.iter(Some(*start));
+        iter.advance(std::time::SystemTime::now());
+        pixbuf_to_surface(iter.pixbuf())
+    }
+
+    /// True when any icon currently displayed (hub or visible entries) is
+    /// animated, i.e. the scene needs continuous repaints to play frames.
+    fn has_visible_animation(&self) -> bool {
+        if self.anim_cache.is_empty() {
+            return false;
+        }
+        if self
+            .current_icon
+            .as_deref()
+            .map_or(false, |i| self.anim_cache.contains_key(i))
+        {
+            return true;
+        }
+        self.get_display_items().iter().any(|item| {
+            item.icon
+                .as_deref()
+                .map_or(false, |i| self.anim_cache.contains_key(i))
+        })
     }
 
     fn material_glyph_layout(
@@ -395,6 +455,34 @@ impl MenuState {
             None
         }
     }
+}
+
+/// Converts a pixbuf into a small cairo image surface for drawing.
+fn pixbuf_to_surface(p: gtk::gdk_pixbuf::Pixbuf) -> Option<cairo::ImageSurface> {
+    let format = if p.has_alpha() {
+        cairo::Format::ARgb32
+    } else {
+        cairo::Format::Rgb24
+    };
+    let surf = cairo::ImageSurface::create(format, p.width(), p.height()).ok()?;
+    let cr = cairo::Context::new(&surf).ok()?;
+    cr.set_source_pixbuf(&p, 0.0, 0.0);
+    let _ = cr.paint();
+    Some(surf)
+}
+
+/// Resolves icon strings that reference an image file on disk
+/// (absolute paths or `~/...`) into an existing filesystem path.
+/// Returns None for anything that isn't a path-shaped icon string.
+fn resolve_image_path(icon: &str) -> Option<std::path::PathBuf> {
+    let path = if let Some(rest) = icon.strip_prefix("~/") {
+        std::path::PathBuf::from(std::env::var_os("HOME")?).join(rest)
+    } else if icon.starts_with('/') {
+        std::path::PathBuf::from(icon)
+    } else {
+        return None;
+    };
+    path.is_file().then_some(path)
 }
 
 fn load_icon_pixbuf(
@@ -1055,6 +1143,7 @@ impl LauncherApp {
             is_closing: false,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
+            anim_cache: HashMap::new(),
             text_layout_cache: HashMap::new(),
             material_layout_cache: HashMap::new(),
             label_layout_cache: HashMap::new(),
@@ -1411,7 +1500,7 @@ impl LauncherApp {
                         let (ink, _logical) = layout.pixel_extents();
                         icon_w = ink.width() as f64;
                         icon_h = ink.height() as f64;
-                    } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                    } else if let Some(surf) = state_ref.icon_frame_surface(icon_name) {
                         let cw = surf.width() as f64;
                         let ch = surf.height() as f64;
                         let scale = icon_size / cw.max(ch).max(1.0);
@@ -1661,7 +1750,7 @@ impl LauncherApp {
                                 let (ink, _logical) = layout.pixel_extents();
                                 icon_w = ink.width() as f64 * ease_progress;
                                 icon_h = ink.height() as f64 * ease_progress;
-                            } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                            } else if let Some(surf) = state_ref.icon_frame_surface(icon_name) {
                                 let cw = surf.width() as f64;
                                 let ch = surf.height() as f64;
                                 let scale = icon_size / cw.max(ch).max(1.0);
@@ -2049,16 +2138,17 @@ impl LauncherApp {
                                     );
                                     let _ = pangocairo::functions::show_layout(&cr, &layout);
                                     let _ = cr.restore();
-                                } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name)
+                                } else if let Some(surf) = state_ref.icon_frame_surface(icon_name)
                                 {
                                     let _ = cr.save();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                     let scale = icon_size / surf.width().max(surf.height()) as f64;
+                                    let (sw, sh) = (surf.width() as f64, surf.height() as f64);
                                     cr.scale(scale, scale);
                                     let _ = cr.set_source_surface(
                                         surf,
-                                        -(surf.width() as f64) / 2.0,
-                                        -(surf.height() as f64) / 2.0,
+                                        -sw / 2.0,
+                                        -sh / 2.0,
                                     );
                                     let _ = cr.paint_with_alpha(ease_progress);
                                     let _ = cr.restore();
@@ -2375,7 +2465,7 @@ impl LauncherApp {
                                 }
                                 let _ = pangocairo::functions::show_layout(&cr, &layout);
                                 let _ = cr.restore();
-                            } else if let Some(Some(surf)) = state_ref.icon_cache.get(icon_name) {
+                            } else if let Some(surf) = state_ref.icon_frame_surface(icon_name) {
                                 let current_w = surf.width() as f64;
                                 let current_h = surf.height() as f64;
                                 let scale =
@@ -2633,6 +2723,13 @@ impl LauncherApp {
                             state.hover_progresses[i] = target;
                             needs_redraw = true;
                         }
+                    }
+
+                    // Animated icons (GIFs) keep the frame clock ticking and
+                    // force redraws so their frames advance while visible.
+                    if state.has_visible_animation() {
+                        still_animating = true;
+                        needs_redraw = true;
                     }
 
                     if needs_redraw {

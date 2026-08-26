@@ -514,15 +514,18 @@ impl SettingsApp {
             None,
             "Drag and drop. Add a new file or folder opener below the selected entry.",
         );
-        let btn_copy =
-            Self::make_icon_button("edit-copy-symbolic", "Copy all properties of the selected entry.");
+        let btn_copy = Self::make_icon_button(
+            "edit-copy-symbolic",
+            "Copy all properties of the selected entry.",
+        );
         let btn_paste = Self::make_drag_button(
             None,
             Some("edit-paste-symbolic"),
             "Drag and drop. Paste the copied entry below the selected entry.",
         );
         btn_paste.set_sensitive(false);
-        let btn_delete = Self::make_icon_button("user-trash-symbolic", "Delete the selected entry.");
+        let btn_delete =
+            Self::make_icon_button("user-trash-symbolic", "Delete the selected entry.");
         let btn_up = gtk::Button::with_label("▲");
         btn_up.set_tooltip_text(Some("Move the selected entry upwards."));
         let btn_down = gtk::Button::with_label("▼");
@@ -595,9 +598,15 @@ impl SettingsApp {
         let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         let entry_icon = gtk::Entry::new();
         entry_icon.set_hexpand(true);
-        let btn_pick_icon = gtk::Button::with_label("🔍 Select");
+        let btn_pick_icon = gtk::Button::from_icon_name("edit-find-symbolic");
+        btn_pick_icon.set_tooltip_text(Some(
+            "Search and pick an icon from Material Symbols or your own system icons.",
+        ));
+        let btn_pick_image = gtk::Button::from_icon_name("folder");
+        btn_pick_image.set_tooltip_text(Some("Pick an image with the system picker."));
         icon_box.append(&entry_icon);
         icon_box.append(&btn_pick_icon);
+        icon_box.append(&btn_pick_image);
 
         prop_grid.attach(&lbl_icon, 0, 2, 1, 1);
         prop_grid.attach(&icon_box, 1, 2, 1, 1);
@@ -609,8 +618,37 @@ impl SettingsApp {
             Self::show_icon_picker(&window_clone, &entry_icon_clone, config_path_clone.clone());
         });
 
+        // System image picker (FileChooserNative goes through the
+        // xdg-desktop-portal, so the compositor's default dialog is used).
+        {
+            let entry_target = entry_icon.clone();
+            let window_target = window.clone();
+            btn_pick_image.connect_clicked(move |_| {
+                let entry_for_dialog = entry_target.clone();
+                let chooser = gtk::FileChooserNative::builder()
+                    .title("Select Image")
+                    .transient_for(&window_target)
+                    .action(gtk::FileChooserAction::Open)
+                    .build();
+                let filter = gtk::FileFilter::new();
+                filter.set_name(Some("Images"));
+                filter.add_pixbuf_formats();
+                chooser.add_filter(&filter);
+                chooser.connect_response(move |chooser, resp| {
+                    if resp == gtk::ResponseType::Accept {
+                        let entry = entry_for_dialog.clone();
+                        if let Some(path) = chooser.file().and_then(|f| f.path()) {
+                            entry.set_text(&path.to_string_lossy());
+                        }
+                    }
+                });
+                chooser.show();
+            });
+        }
+
         // Icon Type Changed signal connection
         let btn_pick_icon_toggle = btn_pick_icon.clone();
+        let btn_pick_image_toggle = btn_pick_image.clone();
         let entry_icon_toggle = entry_icon.clone();
         combo_icon_type.connect_notify_local(Some("selected"), move |combo, _| {
             let active_id = if combo.selected() == 1 {
@@ -622,6 +660,7 @@ impl SettingsApp {
                 entry_icon_toggle.set_max_length(1);
                 entry_icon_toggle.set_placeholder_text(Some("e.g. A, 🚀"));
                 btn_pick_icon_toggle.set_visible(false);
+                btn_pick_image_toggle.set_visible(false);
 
                 let txt = entry_icon_toggle.text().to_string();
                 if txt.chars().count() > 1 {
@@ -633,6 +672,7 @@ impl SettingsApp {
                 entry_icon_toggle.set_max_length(0); // unlimited
                 entry_icon_toggle.set_placeholder_text(None);
                 btn_pick_icon_toggle.set_visible(true);
+                btn_pick_image_toggle.set_visible(true);
             }
         });
 
@@ -729,19 +769,12 @@ impl SettingsApp {
         let spin_extra_radius = gtk::SpinButton::with_range(0.0, 1000.0, 5.0);
         spin_extra_radius.set_value(ui_config.ui.extra_radius);
 
-        let lbl_pill_roundness = gtk::Label::new(Some("Pill Roundness (%):"));
+        let lbl_pill_roundness = gtk::Label::new(Some("Roundness (%):"));
         let spin_pill_roundness = gtk::SpinButton::with_range(0.0, 100.0, 5.0);
         spin_pill_roundness.set_value(ui_config.ui.pill_roundness * 100.0);
-        if ui_config.ui.menu_style != "floating" && ui_config.ui.menu_style != "floating-icons" {
-            spin_pill_roundness.set_sensitive(false);
-            lbl_pill_roundness.set_sensitive(false);
-        }
 
-        let chk_pie_spacing = gtk::CheckButton::with_label("Enable Pie Mode spacing");
+        let chk_pie_spacing = gtk::CheckButton::with_label("Spacing");
         chk_pie_spacing.set_active(ui_config.ui.enable_pie_spacing);
-        if ui_config.ui.menu_style == "floating" || ui_config.ui.menu_style == "floating-icons" {
-            chk_pie_spacing.set_sensitive(false);
-        }
 
         let chk_symbolic_icons = gtk::CheckButton::with_label("Symbolic Icons");
         chk_symbolic_icons.set_active(ui_config.ui.use_symbolic_icons);
@@ -760,9 +793,6 @@ impl SettingsApp {
 
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
-        if ui_config.ui.menu_style == "floating" || ui_config.ui.menu_style == "floating-icons" {
-            chk_enable_blur.set_sensitive(false);
-        }
 
         let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
         icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Pie Mode + Niri only. Hyrpland works the best with a layer rule enabling blur and ignoring alpha."));
@@ -771,7 +801,7 @@ impl SettingsApp {
         blur_hbox.append(&chk_enable_blur);
         blur_hbox.append(&icon_blur_warning);
 
-        let lbl_visual_cue = gtk::Label::new(Some("Pie Hover Cue:"));
+        let lbl_visual_cue = gtk::Label::new(Some("Hover Cue:"));
         lbl_visual_cue.set_halign(gtk::Align::Start);
         let combo_visual_cue_model =
             gtk::StringList::new(&["Expand Outwards", "Expand Sides", "None"]);
@@ -805,34 +835,9 @@ impl SettingsApp {
         menu_style_hbox.append(&lbl_menu_style);
         menu_style_hbox.append(&combo_menu_style);
 
-        let chk_enable_blur_style = chk_enable_blur.clone();
-        let spin_pill_roundness_style = spin_pill_roundness.clone();
-        let lbl_pill_roundness_style = lbl_pill_roundness.clone();
-        let spin_pie_spacing_style = chk_pie_spacing.clone();
-        combo_menu_style.connect_notify_local(Some("selected"), move |combo, _| {
-            let id = match combo.selected() {
-                1 => "floating",
-                2 => "floating-icons",
-                _ => "pie",
-            };
-            if true {
-                if id == "floating" || id == "floating-icons" {
-                    chk_enable_blur_style.set_sensitive(false);
-                    spin_pill_roundness_style.set_sensitive(true);
-                    lbl_pill_roundness_style.set_sensitive(true);
-                    spin_pie_spacing_style.set_sensitive(false);
-                } else {
-                    chk_enable_blur_style.set_sensitive(true);
-                    spin_pill_roundness_style.set_sensitive(false);
-                    lbl_pill_roundness_style.set_sensitive(false);
-                    spin_pie_spacing_style.set_sensitive(true);
-                }
-            }
-        });
-
         let icon_pill_roundness = gtk::Image::from_icon_name("dialog-information");
         icon_pill_roundness.set_tooltip_text(Some(
-            "Control the roundness of pills and hub shapes for floating mode.",
+            "Control the roundness of pills and hub shapes for floating modes.",
         ));
 
         let pill_roundness_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -843,13 +848,66 @@ impl SettingsApp {
         let pie_spacing_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         pie_spacing_hbox.append(&chk_pie_spacing);
 
+        // Style-exclusive settings: shown/hidden live as the menu style
+        // changes. Pie owns blur, hover cue and spacing; both floating
+        // styles share roundness.
+        let style_settings_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        style_settings_box.append(&visual_cue_hbox);
+        style_settings_box.append(&blur_hbox);
+        style_settings_box.append(&pie_spacing_hbox);
+        style_settings_box.append(&pill_roundness_hbox);
+
+        let apply_style_visibility = {
+            let blur_row = blur_hbox.clone();
+            let cue_row = visual_cue_hbox.clone();
+            let spacing_row = pie_spacing_hbox.clone();
+            let roundness_row = pill_roundness_hbox.clone();
+            move |style: &str| {
+                let is_pie = style == "pie";
+                blur_row.set_visible(is_pie);
+                cue_row.set_visible(is_pie);
+                spacing_row.set_visible(is_pie);
+                roundness_row.set_visible(!is_pie);
+            }
+        };
+        {
+            let style = match combo_menu_style.selected() {
+                1 => "floating",
+                2 => "floating-icons",
+                _ => "pie",
+            };
+            apply_style_visibility(style);
+        }
+        let apply_style_visibility_combo = apply_style_visibility;
+        combo_menu_style.connect_notify_local(Some("selected"), move |combo, _| {
+            let style = match combo.selected() {
+                1 => "floating",
+                2 => "floating-icons",
+                _ => "pie",
+            };
+            apply_style_visibility_combo(style);
+        });
+
         let extra_radius_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         extra_radius_hbox.append(&lbl_extra_radius);
         extra_radius_hbox.append(&spin_extra_radius);
 
-        settings_vbox.append(&menu_style_hbox);
-        settings_vbox.append(&pill_roundness_hbox);
-        settings_vbox.append(&pie_spacing_hbox);
+        // Menu Settings frame: style selector plus its exclusive settings,
+        // directly below the Properties panel
+        let menu_settings_grid = gtk::Grid::new();
+        menu_settings_grid.set_row_spacing(10);
+        menu_settings_grid.set_column_spacing(10);
+        menu_settings_grid.set_margin_start(10);
+        menu_settings_grid.set_margin_end(10);
+        menu_settings_grid.set_margin_top(10);
+        menu_settings_grid.set_margin_bottom(10);
+        menu_settings_grid.attach(&menu_style_hbox, 0, 0, 1, 1);
+        menu_settings_grid.attach(&style_settings_box, 0, 1, 1, 1);
+
+        let menu_settings_frame = gtk::Frame::new(Some("Menu Settings"));
+        menu_settings_frame.set_child(Some(&menu_settings_grid));
+        right_vbox.append(&menu_settings_frame);
+
         settings_vbox.append(&extra_radius_hbox);
         right_vbox.append(&settings_vbox);
 
@@ -864,8 +922,6 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_center_layout);
         checkboxes_vbox.append(&chk_hide_back_entry);
         checkboxes_vbox.append(&chk_disable_hover_anim);
-        checkboxes_vbox.append(&blur_hbox);
-        checkboxes_vbox.append(&visual_cue_hbox);
         right_vbox.append(&checkboxes_vbox);
 
         // Save button stays immediately below checkboxes
