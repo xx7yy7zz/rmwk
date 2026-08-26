@@ -888,6 +888,33 @@ impl SettingsApp {
             apply_style_visibility_combo(style);
         });
 
+        let lbl_scale = gtk::Label::new(Some("Scale:"));
+        let scale_adj = gtk::Adjustment::new(ui_config.ui.scale, 0.50, 2.00, 0.05, 0.10, 0.0);
+        let scale_slider = gtk::Scale::new(gtk::Orientation::Horizontal, Some(&scale_adj));
+        scale_slider.set_hexpand(true);
+        scale_slider.set_digits(2);
+        scale_slider.set_draw_value(false);
+        scale_slider.add_mark(1.00, gtk::PositionType::Bottom, Some("1.00"));
+
+        let spin_scale = gtk::SpinButton::new(Some(&scale_adj), 0.05, 2);
+        spin_scale.set_numeric(true);
+        spin_scale.set_tooltip_text(Some("Exact scale factor (1.00 = default)"));
+
+        let btn_reset_scale = gtk::Button::from_icon_name("edit-undo-symbolic");
+        btn_reset_scale.set_tooltip_text(Some("Reset scale to default (1.00)"));
+        {
+            let adj = scale_adj.clone();
+            btn_reset_scale.connect_clicked(move |_| {
+                adj.set_value(1.00);
+            });
+        }
+
+        let scale_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        scale_hbox.append(&lbl_scale);
+        scale_hbox.append(&scale_slider);
+        scale_hbox.append(&spin_scale);
+        scale_hbox.append(&btn_reset_scale);
+
         let extra_radius_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         extra_radius_hbox.append(&lbl_extra_radius);
         extra_radius_hbox.append(&spin_extra_radius);
@@ -908,6 +935,7 @@ impl SettingsApp {
         menu_settings_frame.set_child(Some(&menu_settings_grid));
         right_vbox.append(&menu_settings_frame);
 
+        settings_vbox.append(&scale_hbox);
         settings_vbox.append(&extra_radius_hbox);
         right_vbox.append(&settings_vbox);
 
@@ -1908,6 +1936,7 @@ impl SettingsApp {
         let combo_theme_save = combo_theme.clone();
         let sys_overrides_save = sys_overrides.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
+        let scale_slider_save = scale_slider.clone();
         let spin_pill_roundness_save = spin_pill_roundness.clone();
         let chk_pie_spacing_save = chk_pie_spacing.clone();
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
@@ -1956,6 +1985,7 @@ impl SettingsApp {
                 };
                 cfg.ui.theme = theme_id.to_string();
                 cfg.ui.system_theme_overrides = Some(sys_overrides_save.borrow().clone());
+                cfg.ui.scale = (scale_slider_save.value() * 100.0).round() / 100.0;
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
                 cfg.ui.pill_roundness = spin_pill_roundness_save.value() / 100.0;
                 cfg.ui.enable_pie_spacing = chk_pie_spacing_save.is_active();

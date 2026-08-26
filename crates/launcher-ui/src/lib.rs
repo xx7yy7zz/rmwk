@@ -179,6 +179,7 @@ struct MenuState {
     label_layout_cache: HashMap<String, gtk::pango::Layout>,
 
     // Extra interactivity margin beyond slices
+    scale: f64,
     extra_radius: f64,
     enable_pie_spacing: bool,
     pill_roundness: f64,
@@ -191,7 +192,7 @@ struct MenuState {
     enable_blur: bool,
     last_cx: f64,
     last_cy: f64,
-    last_blur_key: Option<(bool, bool, f64)>,
+    last_blur_key: Option<(bool, bool, f64, u64)>,
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
@@ -413,8 +414,9 @@ impl MenuState {
             return None;
         }
 
-        let mx = x - cx;
-        let my = y - cy;
+        let s = self.scale.max(0.01);
+        let mx = (x - cx) / s;
+        let my = (y - cy) / s;
         let dist = (mx * mx + my * my).sqrt();
 
         // The whole area from the hub edge outwards is active: in pie mode
@@ -739,17 +741,19 @@ fn target_blur_regions(
     enable_blur: bool,
     is_closing: bool,
     pie_spacing: f64,
+    scale: f64,
 ) -> Vec<(f64, Option<f64>)> {
+    let s = scale.max(0.01);
     if !enable_blur || is_closing {
         Vec::new()
     } else if pie_spacing < 0.5 {
-        vec![(BASE_R + SLICE_WIDTH, None)]
+        vec![((BASE_R + SLICE_WIDTH) * s, None)]
     } else {
         vec![
-            (BASE_R, None),
+            (BASE_R * s, None),
             (
-                BASE_R + pie_spacing + SLICE_WIDTH,
-                Some(BASE_R + pie_spacing),
+                (BASE_R + pie_spacing + SLICE_WIDTH) * s,
+                Some((BASE_R + pie_spacing) * s),
             ),
         ]
     }
@@ -1148,6 +1152,7 @@ impl LauncherApp {
             material_layout_cache: HashMap::new(),
             label_layout_cache: HashMap::new(),
             extra_radius: ui_config.extra_radius,
+            scale: ui_config.scale,
             enable_pie_spacing: ui_config.enable_pie_spacing,
             pill_roundness: ui_config.pill_roundness,
             use_symbolic_icons: ui_config.use_symbolic_icons,
@@ -1192,7 +1197,7 @@ impl LauncherApp {
                 let cy = height / 2.0;
                 let st = state_realize.borrow();
                 let spacing = st.effective_pie_spacing(st.get_display_items().len());
-                let regions = target_blur_regions(st.enable_blur, false, spacing);
+                let regions = target_blur_regions(st.enable_blur, false, spacing, st.scale);
                 blur.update_sectioned_region(cx, cy, &regions);
                 *blur_realize.borrow_mut() = Some(blur);
             }
@@ -1217,6 +1222,7 @@ impl LauncherApp {
                     state.enable_blur,
                     state.is_closing,
                     state.effective_pie_spacing(state.get_display_items().len()),
+                    state.scale,
                 );
                 blur.update_sectioned_region(cx, cy, &regions);
             }
@@ -1240,10 +1246,11 @@ impl LauncherApp {
             if let Some(blur) = blur_draw.borrow().as_ref() {
                 // Only update Wayland region if it has actually changed to avoid IPC overhead
                 let spacing = state_ref.effective_pie_spacing(n);
-                let key = (state_ref.enable_blur, state_ref.is_closing, spacing);
+                let scale_bits = state_ref.scale.to_bits();
+                let key = (state_ref.enable_blur, state_ref.is_closing, spacing, scale_bits);
                 if state_ref.last_blur_key != Some(key) {
                     let regions =
-                        target_blur_regions(state_ref.enable_blur, state_ref.is_closing, spacing);
+                        target_blur_regions(state_ref.enable_blur, state_ref.is_closing, spacing, state_ref.scale);
                     blur.update_sectioned_region(cx, cy, &regions);
                     state_ref.last_blur_key = Some(key);
                 }
@@ -1252,12 +1259,14 @@ impl LauncherApp {
             let ease_progress = 1.0;
 
             // Clear surface (ensure transparent background is clean)
-            let max_interactive_dist = BASE_R
+            let scale = state_ref.scale.max(0.01);
+            let max_interactive_dist = (BASE_R
                 + state_ref.effective_pie_spacing(n)
                 + SLICE_WIDTH
                 + HOVER_GROW
                 + state_ref.extra_radius
-                + 80.0;
+                + 80.0)
+                * scale;
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
             cr.set_operator(cairo::Operator::Source);
             cr.rectangle(
@@ -1268,6 +1277,11 @@ impl LauncherApp {
             );
             cr.fill().unwrap();
             cr.set_operator(cairo::Operator::Over);
+
+            let _ = cr.save();
+            cr.translate(cx, cy);
+            cr.scale(scale, scale);
+            cr.translate(-cx, -cy);
 
             // 1. Get wedge colors
             let cached = state_ref.theme_colors.borrow().clone();
@@ -2628,6 +2642,7 @@ impl LauncherApp {
                     }
                 }
             }
+            let _ = cr.restore();
         });
         window.set_child(Some(&drawing_area));
 
@@ -2831,8 +2846,9 @@ impl LauncherApp {
                 let cx = width / 2.0;
                 let cy = height / 2.0;
 
-                let mx = x - cx;
-                let my = y - cy;
+                let s = state.scale.max(0.01);
+                let mx = (x - cx) / s;
+                let my = (y - cy) / s;
                 let dist = (mx * mx + my * my).sqrt();
 
                 let mut activated = false;
@@ -3268,6 +3284,7 @@ impl LauncherApp {
                             launcher_core::load_material_codepoints(&config_path_clone);
                         let mut blur_needs_update = false;
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
+                            state.scale = cfg.ui.scale;
                             state.extra_radius = cfg.ui.extra_radius;
                             state.enable_pie_spacing = cfg.ui.enable_pie_spacing;
                             state.pill_roundness = cfg.ui.pill_roundness;
@@ -3298,7 +3315,7 @@ impl LauncherApp {
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
-                            info!("Reloaded extra_radius: {}", state.extra_radius);
+                            info!("Reloaded scale: {}, extra_radius: {}", state.scale, state.extra_radius);
                         }
 
                         if blur_needs_update {
@@ -3306,6 +3323,7 @@ impl LauncherApp {
                                 state.enable_blur,
                                 state.is_closing,
                                 state.effective_pie_spacing(state.get_display_items().len()),
+                                state.scale,
                             );
                             // The WaylandBlur is normally created at realize time,
                             // only when blur is already enabled. If it was enabled

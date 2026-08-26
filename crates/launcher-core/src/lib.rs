@@ -142,6 +142,8 @@ pub struct UiConfig {
     pub font: String,
     #[serde(default = "default_menu_style")]
     pub menu_style: String,
+    #[serde(default = "default_scale")]
+    pub scale: f64,
     #[serde(default = "default_extra_radius")]
     pub extra_radius: f64,
     #[serde(default = "default_pill_roundness")]
@@ -169,6 +171,8 @@ pub struct UiConfig {
     pub hide_back_entry: bool,
 }
 
+fn default_scale() -> f64 { 1.0 }
+
 fn default_hide_back_entry() -> bool { false }
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
@@ -189,6 +193,7 @@ impl Default for UiConfig {
             theme: default_theme(),
             font: default_font(),
             menu_style: default_menu_style(),
+            scale: default_scale(),
             extra_radius: default_extra_radius(),
             pill_roundness: default_pill_roundness(),
             enable_pie_spacing: default_enable_pie_spacing(),
@@ -604,5 +609,23 @@ action = { type = "open_path", path = "~/Documents", keep_open = true }
         let out = toml::to_string_pretty(&menu).unwrap();
         assert!(out.contains("open_uri"));
         assert!(out.contains("open_path"));
+    }
+
+    #[test]
+    fn test_ui_config_scale_roundtrip() {
+        let default_cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(default_cfg.ui.scale, 1.0);
+
+        let custom_cfg: Config = toml::from_str(
+            r#"
+[ui]
+scale = 1.35
+"#,
+        )
+        .unwrap();
+        assert_eq!(custom_cfg.ui.scale, 1.35);
+
+        let out = toml::to_string_pretty(&custom_cfg).unwrap();
+        assert!(out.contains("scale = 1.35"));
     }
 }
