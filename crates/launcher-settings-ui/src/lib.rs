@@ -17,7 +17,9 @@ fn marking_pct_from_ms(ms: u32) -> f64 {
 }
 
 fn marking_ms_from_pct(pct: f64) -> u32 {
-    (500.0 - 4.5 * pct.clamp(0.0, 100.0)).round().clamp(50.0, 500.0) as u32
+    (500.0 - 4.5 * pct.clamp(0.0, 100.0))
+        .round()
+        .clamp(50.0, 500.0) as u32
 }
 
 /// Whether the active icon theme can provide `icon_name`. Must query the
@@ -89,7 +91,11 @@ fn install_window_icon(window: &gtk::ApplicationWindow) {
     };
 
     // Icon theme (user-level hicolor).
-    let icon_dir = data.join("icons").join("hicolor").join("scalable").join("apps");
+    let icon_dir = data
+        .join("icons")
+        .join("hicolor")
+        .join("scalable")
+        .join("apps");
     if std::fs::create_dir_all(&icon_dir).is_ok() {
         let _ = std::fs::write(icon_dir.join("rmwk.svg"), LOGO_SVG);
     }
@@ -384,7 +390,7 @@ impl SettingsApp {
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .propagate_natural_height(false)
             .height_request(200)
-            .vexpand(false)
+            .vexpand(true)
             .build();
 
         // Create TreeStore:
@@ -468,7 +474,8 @@ impl SettingsApp {
         drop_indicator.set_halign(gtk::Align::Fill);
         drop_indicator.set_valign(gtk::Align::Fill);
         tree_overlay.add_overlay(&drop_indicator);
-        menu_tab_box.append(&tree_overlay);
+        // NOTE: appended to menu_tab_box further below, after the actions
+        // bar, so the tree sits between the bar and the panel bottom.
 
         // Per-level length to shrink the indicator line.
         const DROP_INDENT_STEP: f64 = 28.0;
@@ -667,6 +674,7 @@ impl SettingsApp {
         btn_hbox.append(&btn_up);
         btn_hbox.append(&btn_down);
         menu_tab_box.append(&btn_hbox);
+        menu_tab_box.append(&tree_overlay);
 
         let themes = Self::get_available_themes(&config_path);
         let theme_editor = theme_editor::ThemeEditor::new(
@@ -679,7 +687,10 @@ impl SettingsApp {
         let left_notebook = gtk::Notebook::new();
         left_notebook.set_vexpand(true);
         left_notebook.append_page(&menu_tab_box, Some(&gtk::Label::new(Some("Menu"))));
-        left_notebook.append_page(&theme_editor.container, Some(&gtk::Label::new(Some("Theme"))));
+        left_notebook.append_page(
+            &theme_editor.container,
+            Some(&gtk::Label::new(Some("Theme"))),
+        );
         left_vbox.append(&left_notebook);
         let combo_theme = theme_editor.combo_theme.clone();
         let sys_overrides = theme_editor.current_system_overrides.clone();
@@ -1039,7 +1050,8 @@ impl SettingsApp {
             // Ignore scroll-wheel so the slider only changes on click/drag,
             // not when the pointer happens to pass over it while scrolling.
             let sc = gtk::EventControllerScroll::new(
-                gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::HORIZONTAL,
+                gtk::EventControllerScrollFlags::VERTICAL
+                    | gtk::EventControllerScrollFlags::HORIZONTAL,
             );
             sc.connect_scroll(|_, _, _| gtk::glib::Propagation::Stop);
             scale_slider.add_controller(sc);
@@ -1130,13 +1142,15 @@ impl SettingsApp {
             10.0,
             0.0,
         );
-        let marking_speed_slider = gtk::Scale::new(gtk::Orientation::Horizontal, Some(&marking_speed_adj));
+        let marking_speed_slider =
+            gtk::Scale::new(gtk::Orientation::Horizontal, Some(&marking_speed_adj));
         marking_speed_slider.set_hexpand(true);
         marking_speed_slider.set_digits(0);
         marking_speed_slider.set_draw_value(false);
         {
             let sc = gtk::EventControllerScroll::new(
-                gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::HORIZONTAL,
+                gtk::EventControllerScrollFlags::VERTICAL
+                    | gtk::EventControllerScrollFlags::HORIZONTAL,
             );
             sc.connect_scroll(|_, _, _| gtk::glib::Propagation::Stop);
             marking_speed_slider.add_controller(sc);
@@ -1175,14 +1189,18 @@ impl SettingsApp {
         let btn_discard = gtk::Button::with_label("Discard");
         btn_discard.set_hexpand(true);
         btn_discard.add_css_class("destructive-action");
-        btn_discard.set_tooltip_text(Some("Revert all in-view settings to their last saved values."));
+        btn_discard.set_tooltip_text(Some(
+            "Revert all in-view settings to their last saved values.",
+        ));
         let btn_save = gtk::Button::with_label("Save & Apply");
         btn_save.set_hexpand(true);
         btn_save.add_css_class("suggested-action");
         let save_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         save_row.append(&btn_discard);
         save_row.append(&btn_save);
-        right_scroll_box.append(&save_row);
+        // Pinned below the scroll area so the actions stay visible no
+        // matter how far the settings column is scrolled.
+        right_vbox.append(&save_row);
 
         // Discard asks for confirmation, then re-reads config.toml and the
         // active menu file from disk, restoring every control and the tree.
@@ -2562,7 +2580,8 @@ impl SettingsApp {
                                 chk_hide_cb.set_active(cfg.ui.hide_back_entry);
                                 chk_spawn_cb.set_active(!cfg.ui.spawn_at_cursor);
                                 chk_marking_cb.set_active(cfg.ui.marking_mode);
-                                mark_speed_cb.set_value(marking_pct_from_ms(cfg.ui.marking_dwell_ms));
+                                mark_speed_cb
+                                    .set_value(marking_pct_from_ms(cfg.ui.marking_dwell_ms));
                                 chk_shift_cb.set_active(cfg.ui.submenu_shift);
                                 chk_bc_cb.set_active(cfg.ui.show_breadcrumbs);
                                 chk_bc_cb.set_sensitive(cfg.ui.submenu_shift);
