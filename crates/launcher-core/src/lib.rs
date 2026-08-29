@@ -169,11 +169,24 @@ pub struct UiConfig {
     pub system_theme_overrides: Option<SystemThemeOverrides>,
     #[serde(default = "default_hide_back_entry")]
     pub hide_back_entry: bool,
+    /// Anchor the menu at the pointer position when it opens, clamping it
+    /// back into the monitor so it stays fully visible.
+    #[serde(default = "default_spawn_at_cursor")]
+    pub spawn_at_cursor: bool,
+    /// Hold-and-drag selection: keep the left button pressed and sweep
+    /// across the menu; submenus open automatically when the pointer
+    /// dwells over them, and releasing activates the hovered entry.
+    #[serde(default = "default_marking_mode")]
+    pub marking_mode: bool,
 }
 
 fn default_scale() -> f64 { 1.0 }
 
 fn default_hide_back_entry() -> bool { false }
+
+fn default_spawn_at_cursor() -> bool { true }
+
+fn default_marking_mode() -> bool { false }
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
     None
@@ -206,6 +219,8 @@ impl Default for UiConfig {
             enable_blur: default_enable_blur(),
             system_theme_overrides: default_system_theme_overrides(),
             hide_back_entry: default_hide_back_entry(),
+            spawn_at_cursor: default_spawn_at_cursor(),
+            marking_mode: default_marking_mode(),
         }
     }
 }

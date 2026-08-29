@@ -58,6 +58,24 @@ const FLOATING_BASE_GAP_ROUND: f64 = 50.0;
 
 const MATERIAL_ICON_WEIGHT: f64 = 400.0;
 
+/// Minimum gap kept between the clamped menu edge and the monitor border
+/// when spawning the menu at the cursor position.
+const SCREEN_MARGIN: f64 = 8.0;
+
+/// Sentinel blur-cache key while the menu is held transparent waiting for
+/// the pointer position. The -1.0 spacing can never occur in a real key.
+const BLUR_PENDING_KEY: (bool, bool, f64, u64) = (false, false, -1.0, u64::MAX);
+
+/// Marking mode (hold & drag): distance (px, at menu scale) the pointer
+/// must travel from the press point before a click turns into a marking
+/// session, and the hold time that triggers one even without movement.
+const MARKING_TRIGGER_DIST: f64 = 16.0;
+const MARKING_TRIGGER_MS: u64 = 250;
+
+/// How long the pointer must dwell over a submenu slice during a marking
+/// session before it opens automatically.
+const MARKING_DWELL_MS: u64 = 180;
+
 // Emojis render larger than text glyphs at the same point size because emoji
 // fonts fill the full em box. Shrink single-char emoji icons by this factor.
 // Adjust EMOJI_SIZE_SCALE to tune emoji icon size (1.0 = no shrink).
@@ -157,6 +175,23 @@ struct MenuState {
     forward_history_icons: Vec<Option<String>>,
     hovered_index: Option<usize>,
     hide_back_entry: bool,
+
+    // Spawn-at-cursor: origin captured from the pointer event that arrives
+    // when the menu opens, plus the latest pointer position it can be
+    // captured from while the surface is already mapped.
+    spawn_at_cursor: bool,
+    origin: Option<(f64, f64)>,
+    pointer_pos: Option<(f64, f64)>,
+    reveal_pending: bool,
+    reveal_seq: u64,
+
+    // Marking mode (hold & drag) session state
+    marking_mode: bool,
+    marking_pressed: bool,
+    marking_active: bool,
+    marking_press_pos: Option<(f64, f64)>,
+    marking_press_time: Option<std::time::Instant>,
+    marking_dwell: Option<glib::SourceId>,
 
     // Animation state
     is_closing: bool,
@@ -405,6 +440,93 @@ impl MenuState {
         let required_r = n as f64 * PIE_ARC_PER_ENTRY / (2.0 * PI);
         let base_mid_radius = BASE_R + SLICE_WIDTH / 2.0;
         (required_r - base_mid_radius).max(0.0)
+    }
+
+    /// Approximate radius of the *painted* menu (hub, ring, entries and
+    /// hover expansion), scaled. Excludes extra_radius, which is only an
+    /// interactivity margin. Used to clamp the cursor origin back inside
+    /// the monitor so the menu stays fully visible.
+    fn visual_radius(&self, n: usize) -> f64 {
+        let s = self.scale.max(0.01);
+        let r = if self.is_floating() {
+            let arc_per_entry = self.floating_arc_per_entry();
+            let required_r = n as f64 * arc_per_entry / (2.0 * PI);
+            let base_dist = BASE_R + self.floating_base_gap();
+            base_dist.max(required_r) + SLICE_WIDTH + HOVER_GROW
+        } else {
+            BASE_R + self.effective_pie_spacing(n) + SLICE_WIDTH + HOVER_GROW
+        };
+        r * s
+    }
+
+    /// Hub center shared by the draw callback, hit-testing and blur
+    /// regions. Falls back to the monitor center when spawn-at-cursor is
+    /// disabled or the pointer position hasn't been received yet, and
+    /// clamps the captured origin so the menu fits on screen.
+    fn menu_center(&self, width: f64, height: f64, n: usize) -> (f64, f64) {
+        let cx = width / 2.0;
+        let cy = height / 2.0;
+        let Some((ox, oy)) = self.origin.filter(|_| self.spawn_at_cursor) else {
+            return (cx, cy);
+        };
+        let m = self.visual_radius(n) + SCREEN_MARGIN;
+        let x = if m * 2.0 >= width { cx } else { ox.clamp(m, width - m) };
+        let y = if m * 2.0 >= height { cy } else { oy.clamp(m, height - m) };
+        (x, y)
+    }
+
+    /// Forget the captured origin and hold the menu transparent until the
+    /// next pointer event (the compositor's enter on remap) re-anchors it
+    /// to the cursor. Returns the reveal sequence for the fallback timer.
+    fn arm_cursor_capture(&mut self) -> u64 {
+        self.origin = None;
+        self.pointer_pos = None;
+        self.reveal_pending = self.spawn_at_cursor;
+        self.reveal_seq += 1;
+        self.reveal_seq
+    }
+
+    /// Record the latest pointer position and, on the first event after
+    /// the menu opened, pin the menu to it and reveal it. Returns true
+    /// when the painted result may have changed.
+    fn note_pointer(&mut self, x: f64, y: f64) -> bool {
+        self.pointer_pos = Some((x, y));
+        let mut changed = false;
+        if self.spawn_at_cursor && self.reveal_pending && self.origin.is_none() {
+            self.origin = Some((x, y));
+            changed = true;
+        }
+        if self.reveal_pending && self.origin.is_some() {
+            self.reveal_pending = false;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Tear down any marking session: cancels the pending dwell timer
+    /// and clears the press bookkeeping.
+    fn end_marking(&mut self) {
+        if let Some(id) = self.marking_dwell.take() {
+            id.remove();
+        }
+        self.marking_pressed = false;
+        self.marking_active = false;
+        self.marking_press_pos = None;
+        self.marking_press_time = None;
+    }
+
+    /// Whether the marking dwell timer should auto-trigger over `index`:
+    /// submenu entries (non-empty children) plus the auto-generated Back
+    /// entry, which carries no children but rewinds the history.
+    fn marking_dwell_target(&self, index: usize) -> bool {
+        let items = self.get_display_items();
+        let is_back = !self.history.is_empty()
+            && !self.hide_back_entry
+            && index == items.len().saturating_sub(1);
+        items
+            .get(index)
+            .map(|it| !it.children.is_empty() || is_back)
+            .unwrap_or(false)
     }
 
     fn hit_test(&self, x: f64, y: f64, cx: f64, cy: f64) -> Option<usize> {
@@ -759,6 +881,82 @@ fn target_blur_regions(
     }
 }
 
+/// Safety net for arm_cursor_capture(): if the compositor never delivers
+/// the enter/motion event that reveals the menu, give up waiting after a
+/// short grace period and show it at the monitor center instead.
+fn schedule_reveal_fallback(
+    state: &Rc<RefCell<MenuState>>,
+    area: &gtk::DrawingArea,
+    seq: u64,
+) {
+    let st = state.clone();
+    let ar = area.clone();
+    glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+        if let Ok(mut s) = st.try_borrow_mut() {
+            if s.reveal_pending && s.reveal_seq == seq {
+                s.reveal_pending = false;
+                drop(s);
+                ar.queue_draw();
+            }
+        }
+    });
+}
+
+/// Start a marking dwell timer: if the button is still held, the pointer
+/// is still over `index` and that entry is a dwell target (a submenu or
+/// the auto-generated Back entry), it triggers automatically.
+/// Re-hovering within the fresh menu does not start a
+/// new dwell, so nested menus never chain-open while the user just holds
+/// the button: they must move away and back in deliberately.
+fn schedule_marking_dwell(
+    state: &Rc<RefCell<MenuState>>,
+    area: &gtk::DrawingArea,
+    index: usize,
+    trigger_anim: Rc<dyn Fn()>,
+) {
+    let st = state.clone();
+    let ar = area.clone();
+    let id = glib::timeout_add_local(
+        std::time::Duration::from_millis(MARKING_DWELL_MS),
+        move || {
+            if let Ok(mut s) = st.try_borrow_mut() {
+                s.marking_dwell = None;
+                let still_marking = s.marking_mode
+                    && s.marking_pressed
+                    && s.marking_active
+                    && !s.is_closing
+                    && s.hovered_index == Some(index);
+                let dwell_target = still_marking && s.marking_dwell_target(index);
+                if !dwell_target {
+                    return glib::ControlFlow::Break;
+                }
+                activate_index(&mut s, index, &ar);
+                // Keep the highlight under the pointer in the fresh submenu
+                if let Some((px, py)) = s.pointer_pos {
+                    let (cx, cy) = s.menu_center(
+                        ar.width() as f64,
+                        ar.height() as f64,
+                        s.get_display_items().len(),
+                    );
+                    s.hovered_index = s.hit_test(px, py, cx, cy);
+                }
+                drop(s);
+                // Same activation path as a click: redraw and run the
+                // hover animation tick rather than snapping.
+                trigger_anim();
+            }
+            glib::ControlFlow::Break
+        },
+    );
+    if let Ok(mut s) = state.try_borrow_mut() {
+        if let Some(old) = s.marking_dwell.replace(id) {
+            old.remove();
+        }
+    } else {
+        id.remove();
+    }
+}
+
 fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
     if let Some(prev) = state.history.pop() {
         let prev_icon = state.history_icons.pop().unwrap_or(None);
@@ -900,6 +1098,10 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
                                     state.root_items = m.menu.clone();
                                     state.root_icon = m.icon.clone();
                                     state.reset_to_root();
+                                    // Surface stays mapped, so no new enter
+                                    // event will arrive: re-anchor directly
+                                    // to the live pointer position.
+                                    state.origin = state.pointer_pos;
                                     if let Some(display) = gdk::Display::default() {
                                         state.preload_icons(&display);
                                     }
@@ -1144,6 +1346,17 @@ impl LauncherApp {
             forward_history_icons: vec![],
             hovered_index: None,
             hide_back_entry: ui_config.hide_back_entry,
+            spawn_at_cursor: ui_config.spawn_at_cursor,
+            origin: None,
+            pointer_pos: None,
+            reveal_pending: false,
+            reveal_seq: 0,
+            marking_mode: ui_config.marking_mode,
+            marking_pressed: false,
+            marking_active: false,
+            marking_press_pos: None,
+            marking_press_time: None,
+            marking_dwell: None,
             is_closing: false,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
@@ -1193,11 +1406,14 @@ impl LauncherApp {
             if let Some(blur) = wayland::WaylandBlur::new(w) {
                 let width = w.width() as f64;
                 let height = w.height() as f64;
-                let cx = width / 2.0;
-                let cy = height / 2.0;
                 let st = state_realize.borrow();
+                let (cx, cy) = st.menu_center(width, height, st.get_display_items().len());
                 let spacing = st.effective_pie_spacing(st.get_display_items().len());
-                let regions = target_blur_regions(st.enable_blur, false, spacing, st.scale);
+                let regions = if st.reveal_pending {
+                    Vec::new()
+                } else {
+                    target_blur_regions(st.enable_blur, false, spacing, st.scale)
+                };
                 blur.update_sectioned_region(cx, cy, &regions);
                 *blur_realize.borrow_mut() = Some(blur);
             }
@@ -1213,17 +1429,20 @@ impl LauncherApp {
             if let Some(blur) = blur_resize.borrow().as_ref() {
                 let win_w = window_resize.width() as f64;
                 let win_h = window_resize.height() as f64;
-                let cx = win_w / 2.0;
-                let cy = win_h / 2.0;
                 let mut state = state_resize.borrow_mut();
+                let (cx, cy) = state.menu_center(win_w, win_h, state.get_display_items().len());
                 state.last_cx = cx;
                 state.last_cy = cy;
-                let regions = target_blur_regions(
-                    state.enable_blur,
-                    state.is_closing,
-                    state.effective_pie_spacing(state.get_display_items().len()),
-                    state.scale,
-                );
+                let regions = if state.reveal_pending {
+                    Vec::new()
+                } else {
+                    target_blur_regions(
+                        state.enable_blur,
+                        state.is_closing,
+                        state.effective_pie_spacing(state.get_display_items().len()),
+                        state.scale,
+                    )
+                };
                 blur.update_sectioned_region(cx, cy, &regions);
             }
         });
@@ -1231,9 +1450,6 @@ impl LauncherApp {
         let draw_state = state.clone();
         let blur_draw = wayland_blur.clone();
         drawing_area.set_draw_func(move |area, cr, width, height| {
-            let cx = width as f64 / 2.0;
-            let cy = height as f64 / 2.0;
-
             let mut state_ref = match draw_state.try_borrow_mut() {
                 Ok(s) => s,
                 Err(_) => return,
@@ -1242,17 +1458,44 @@ impl LauncherApp {
             let display_items = state_ref.get_display_items();
             let n = display_items.len();
 
+            // Keep hover_progresses in lockstep with the slice count so the
+            // modulo lookups below can index freely: a menu swap can queue a
+            // draw before the animation tick gets a chance to resize (e.g.
+            // marking-mode auto-descend / auto-back).
+            if state_ref.hover_progresses.len() != n {
+                state_ref.hover_progresses.resize(n, 0.0);
+            }
+
+            let (cx, cy) = state_ref.menu_center(width as f64, height as f64, n);
+
+            // Hold the menu transparent until the cursor position is
+            // known, so it never appears at the monitor center and then
+            // jumps to the pointer.
+            if state_ref.reveal_pending {
+                if let Some(blur) = blur_draw.borrow().as_ref() {
+                    if state_ref.last_blur_key != Some(BLUR_PENDING_KEY) {
+                        blur.update_sectioned_region(cx, cy, &[]);
+                        state_ref.last_blur_key = Some(BLUR_PENDING_KEY);
+                    }
+                }
+                return;
+            }
+
             // Update blur region based on animation progress
             if let Some(blur) = blur_draw.borrow().as_ref() {
                 // Only update Wayland region if it has actually changed to avoid IPC overhead
                 let spacing = state_ref.effective_pie_spacing(n);
                 let scale_bits = state_ref.scale.to_bits();
                 let key = (state_ref.enable_blur, state_ref.is_closing, spacing, scale_bits);
-                if state_ref.last_blur_key != Some(key) {
+                let center_changed = (cx - state_ref.last_cx).abs() > 0.5
+                    || (cy - state_ref.last_cy).abs() > 0.5;
+                if state_ref.last_blur_key != Some(key) || center_changed {
                     let regions =
                         target_blur_regions(state_ref.enable_blur, state_ref.is_closing, spacing, state_ref.scale);
                     blur.update_sectioned_region(cx, cy, &regions);
                     state_ref.last_blur_key = Some(key);
+                    state_ref.last_cx = cx;
+                    state_ref.last_cy = cy;
                 }
             }
 
@@ -2650,7 +2893,7 @@ impl LauncherApp {
         let is_animating = Rc::new(std::cell::Cell::new(false));
         let last_frame_time = Rc::new(RefCell::new(None));
 
-        let trigger_anim = {
+        let trigger_anim: Rc<dyn Fn()> = {
             let is_animating = is_animating.clone();
             let last_frame_time = last_frame_time.clone();
             let tick_state = state.clone();
@@ -2702,6 +2945,8 @@ impl LauncherApp {
                         state.root_items = config_tick.menu.clone();
                         state.root_icon = config_tick.icon.clone();
                         state.reset_to_root();
+                        state.arm_cursor_capture();
+                        state.end_marking();
                         if let Some(display) = gdk::Display::default() {
                             state.preload_icons(&display);
                         }
@@ -2777,9 +3022,10 @@ impl LauncherApp {
 
             let width = area_clone.width() as f64;
             let height = area_clone.height() as f64;
-            let cx = width / 2.0;
-            let cy = height / 2.0;
 
+            let origin_set = state.note_pointer(x, y);
+
+            let (cx, cy) = state.menu_center(width, height, state.get_display_items().len());
             let hovered = state.hit_test(x, y, cx, cy);
             let mut hovered_changed = false;
 
@@ -2788,9 +3034,60 @@ impl LauncherApp {
                 hovered_changed = true;
             }
 
+            // Marking mode: promote a held press into a marking session
+            // once the pointer has travelled far enough (or been held long
+            // enough), then (re)arm the submenu dwell on each hover change.
+            let mut dwell_for: Option<usize> = None;
+            if state.marking_mode && state.marking_pressed && !state.is_closing {
+                if !state.marking_active {
+                    if let (Some((px, py)), Some(t0)) =
+                        (state.marking_press_pos, state.marking_press_time)
+                    {
+                        let s = state.scale.max(0.01);
+                        let dist = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
+                        if dist >= MARKING_TRIGGER_DIST * s
+                            || t0.elapsed() >= std::time::Duration::from_millis(MARKING_TRIGGER_MS)
+                        {
+                            state.marking_active = true;
+                        }
+                    }
+                }
+                if state.marking_active && hovered_changed {
+                    if let Some(id) = state.marking_dwell.take() {
+                        id.remove();
+                    }
+                    if let Some(i) = hovered {
+                        if state.marking_dwell_target(i) {
+                            dwell_for = Some(i);
+                        }
+                    }
+                }
+            }
+
             drop(state);
-            if hovered_changed {
+            if let Some(i) = dwell_for {
+                schedule_marking_dwell(&motion_state, &area_clone, i, trigger_anim_motion.clone());
+            }
+            if hovered_changed || origin_set {
                 trigger_anim_motion();
+            }
+        });
+
+        // The wl_pointer.enter delivered when the overlay maps carries the
+        // cursor position at the exact moment the menu was launched.
+        let enter_state = state.clone();
+        let area_clone_enter = drawing_area.clone();
+        motion_controller.connect_enter(move |_ctrl, x, y| {
+            let mut state = match enter_state.try_borrow_mut() {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            if state.is_closing {
+                return;
+            }
+            if state.note_pointer(x, y) {
+                drop(state);
+                area_clone_enter.queue_draw();
             }
         });
 
@@ -2799,6 +3096,7 @@ impl LauncherApp {
         motion_controller.connect_leave(move |_ctrl| {
             let mut hovered_changed = false;
             if let Ok(mut state) = leave_state.try_borrow_mut() {
+                state.end_marking();
                 if state.hovered_index.is_some() {
                     state.hovered_index = None;
                     hovered_changed = true;
@@ -2817,6 +3115,26 @@ impl LauncherApp {
         let click_state = state.clone();
         let area_clone_click = drawing_area.clone();
         let trigger_anim_click = trigger_anim.clone();
+
+        let press_state = state.clone();
+        click_controller.connect_pressed(move |gesture, _n_press, x, y| {
+            if gesture.current_button() != 1 {
+                return;
+            }
+            if let Ok(mut state) = press_state.try_borrow_mut() {
+                if !state.marking_mode || state.is_closing {
+                    return;
+                }
+                // Start tracking a potential marking session; it only
+                // becomes one once the pointer travels MARKING_TRIGGER_DIST
+                // or the button has been held long enough (motion handler).
+                state.end_marking();
+                state.marking_pressed = true;
+                state.marking_press_pos = Some((x, y));
+                state.marking_press_time = Some(std::time::Instant::now());
+            }
+        });
+
         click_controller.connect_released(move |gesture, _n_press, x, y| {
             let button = gesture.current_button();
 
@@ -2827,6 +3145,7 @@ impl LauncherApp {
 
             if button == 3 {
                 // Right click goes back, or dismisses launcher if at root
+                state.end_marking();
                 if !go_back(&mut state, &area_clone_click) {
                     state.is_closing = true;
                 }
@@ -2841,10 +3160,15 @@ impl LauncherApp {
                     return;
                 }
 
+                // Ending a marking session: the commit-at-release logic
+                // below is exactly what marking wants (hovered slice at
+                // the release point is activated, hub = back, outside =
+                // close), so nothing else changes.
+                state.end_marking();
+
                 let width = area_clone_click.width() as f64;
                 let height = area_clone_click.height() as f64;
-                let cx = width / 2.0;
-                let cy = height / 2.0;
+                let (cx, cy) = state.menu_center(width, height, state.get_display_items().len());
 
                 let s = state.scale.max(0.01);
                 let mx = (x - cx) / s;
@@ -3135,6 +3459,7 @@ impl LauncherApp {
         }
 
         let ipc_state = state.clone();
+        let ipc_area = drawing_area.clone();
         let theme_provider_clone = theme_provider.clone();
         let user_provider_clone = user_provider.clone();
         let config_path_clone = config_path.clone();
@@ -3163,8 +3488,10 @@ impl LauncherApp {
                                 state.preload_icons(&display);
                             }
                             state.is_closing = false;
+                            let reveal_seq = state.arm_cursor_capture();
                             *state.theme_colors.borrow_mut() = None;
                             drop(state);
+                            schedule_reveal_fallback(&ipc_state, &ipc_area, reveal_seq);
 
                             load_and_apply_theme(
                                 &config_path_clone,
@@ -3219,8 +3546,10 @@ impl LauncherApp {
 
                         if !is_visible || state.is_closing {
                             state.is_closing = false;
+                            let reveal_seq = state.arm_cursor_capture();
                             *state.theme_colors.borrow_mut() = None;
                             drop(state);
+                            schedule_reveal_fallback(&ipc_state, &ipc_area, reveal_seq);
 
                             load_and_apply_theme(
                                 &config_path_clone,
@@ -3230,6 +3559,9 @@ impl LauncherApp {
                             window_clone_ipc.present();
                             trigger_anim_ipc();
                         } else if !same_menu {
+                            // Swapping menus while visible: the surface never
+                            // unmapped, so re-anchor to the live cursor.
+                            state.origin = state.pointer_pos;
                             drop(state);
                             trigger_anim_ipc();
                         } else {
@@ -3248,13 +3580,18 @@ impl LauncherApp {
                             .unwrap_or(false);
                         if !is_visible || is_closing {
                             tracing::info!("Showing window via IPC Open");
+                            let mut reveal_seq = None;
                             if let Ok(mut state) = ipc_state.try_borrow_mut() {
                                 state.reset_to_root();
                                 if let Some(display) = gdk::Display::default() {
                                     state.preload_icons(&display);
                                 }
                                 state.is_closing = false;
+                                reveal_seq = Some(state.arm_cursor_capture());
                                 *state.theme_colors.borrow_mut() = None;
+                            }
+                            if let Some(seq) = reveal_seq {
+                                schedule_reveal_fallback(&ipc_state, &ipc_area, seq);
                             }
 
                             load_and_apply_theme(
@@ -3301,6 +3638,11 @@ impl LauncherApp {
                                 state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();
                             }
                             state.hide_back_entry = cfg.ui.hide_back_entry;
+                            state.spawn_at_cursor = cfg.ui.spawn_at_cursor;
+                            if state.marking_mode != cfg.ui.marking_mode {
+                                state.marking_mode = cfg.ui.marking_mode;
+                                state.end_marking();
+                            }
                             let new_blur = cfg.ui.enable_blur
                                 && cfg.ui.menu_style != "floating"
                                 && cfg.ui.menu_style != "floating-icons";
@@ -3333,8 +3675,11 @@ impl LauncherApp {
                                     *wayland_blur.borrow_mut() = Some(blur);
                                 }
                             }
-                            let cx = window_clone_ipc.width() as f64 / 2.0;
-                            let cy = window_clone_ipc.height() as f64 / 2.0;
+                            let (cx, cy) = state.menu_center(
+                                window_clone_ipc.width() as f64,
+                                window_clone_ipc.height() as f64,
+                                state.get_display_items().len(),
+                            );
                             state.last_cx = cx;
                             state.last_cy = cy;
                             if let Some(blur) = wayland_blur.borrow().as_ref() {
@@ -3379,8 +3724,13 @@ impl LauncherApp {
         });
 
         if !start_hidden {
+            let mut reveal_seq = None;
             if let Ok(mut state_mut) = state.try_borrow_mut() {
                 state_mut.is_closing = false;
+                reveal_seq = Some(state_mut.arm_cursor_capture());
+            }
+            if let Some(seq) = reveal_seq {
+                schedule_reveal_fallback(&state, &drawing_area, seq);
             }
             window.present();
             trigger_anim();

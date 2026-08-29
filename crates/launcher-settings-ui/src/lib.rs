@@ -788,6 +788,12 @@ impl SettingsApp {
         let chk_hide_back_entry = gtk::CheckButton::with_label("Hide 'Back' Entry");
         chk_hide_back_entry.set_active(ui_config.ui.hide_back_entry);
 
+        let chk_open_at_center = gtk::CheckButton::with_label("Open At Center");
+        chk_open_at_center.set_active(!ui_config.ui.spawn_at_cursor);
+
+        let chk_marking_mode = gtk::CheckButton::with_label("Marking (Hold & Drag)");
+        chk_marking_mode.set_active(ui_config.ui.marking_mode);
+
         let chk_disable_hover_anim = gtk::CheckButton::with_label("Disable Hover Animation");
         chk_disable_hover_anim.set_active(ui_config.ui.disable_hover_animation);
 
@@ -949,6 +955,18 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_bold_chars);
         checkboxes_vbox.append(&chk_center_layout);
         checkboxes_vbox.append(&chk_hide_back_entry);
+        let open_at_center_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let icon_open_at_center = gtk::Image::from_icon_name("dialog-information");
+        icon_open_at_center.set_tooltip_text(Some("By default the menu opens right next to your mouse pointer. Turn this on to always open it in the middle of the screen instead."));
+        open_at_center_hbox.append(&chk_open_at_center);
+        open_at_center_hbox.append(&icon_open_at_center);
+        checkboxes_vbox.append(&open_at_center_hbox);
+        let marking_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let icon_marking = gtk::Image::from_icon_name("dialog-information");
+        icon_marking.set_tooltip_text(Some("Hold the left mouse button and sweep across the menu: submenus open automatically once you pause over one, and releasing the button activates whatever you are pointing at. Quick clicks keep working as before."));
+        marking_hbox.append(&chk_marking_mode);
+        marking_hbox.append(&icon_marking);
+        checkboxes_vbox.append(&marking_hbox);
         checkboxes_vbox.append(&chk_disable_hover_anim);
         right_vbox.append(&checkboxes_vbox);
 
@@ -1943,6 +1961,8 @@ impl SettingsApp {
         let chk_bold_chars_save = chk_bold_chars.clone();
         let chk_center_layout_save = chk_center_layout.clone();
         let chk_hide_back_entry_save = chk_hide_back_entry.clone();
+        let chk_open_at_center_save = chk_open_at_center.clone();
+        let chk_marking_mode_save = chk_marking_mode.clone();
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
@@ -1993,6 +2013,8 @@ impl SettingsApp {
                 cfg.ui.bold_single_chars = chk_bold_chars_save.is_active();
                 cfg.ui.center_layout = chk_center_layout_save.is_active();
                 cfg.ui.hide_back_entry = chk_hide_back_entry_save.is_active();
+                cfg.ui.spawn_at_cursor = !chk_open_at_center_save.is_active();
+                cfg.ui.marking_mode = chk_marking_mode_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = match combo_visual_cue_save.selected() {
                     1 => "sides".to_string(),
@@ -2113,6 +2135,8 @@ impl SettingsApp {
         let chk_bold_chars_watch = chk_bold_chars.clone();
         let chk_center_layout_watch = chk_center_layout.clone();
         let chk_hide_back_entry_watch = chk_hide_back_entry.clone();
+        let chk_open_at_center_watch = chk_open_at_center.clone();
+        let chk_marking_mode_watch = chk_marking_mode.clone();
         let chk_disable_hover_anim_watch = chk_disable_hover_anim.clone();
         let combo_visual_cue_watch = combo_visual_cue.clone();
         let combo_menu_style_watch = combo_menu_style.clone();
@@ -2134,6 +2158,8 @@ impl SettingsApp {
             let chk_bold = chk_bold_chars_watch.clone();
             let chk_cnt = chk_center_layout_watch.clone();
             let chk_hide = chk_hide_back_entry_watch.clone();
+            let chk_spawn = chk_open_at_center_watch.clone();
+            let chk_marking = chk_marking_mode_watch.clone();
             let chk_dis = chk_disable_hover_anim_watch.clone();
             let chk_blr = chk_enable_blur_watch.clone();
             let combo_vis = combo_visual_cue_watch.clone();
@@ -2159,6 +2185,8 @@ impl SettingsApp {
                     let chk_bold_cb = chk_bold.clone();
                     let chk_cnt_cb = chk_cnt.clone();
                     let chk_hide_cb = chk_hide.clone();
+                    let chk_spawn_cb = chk_spawn.clone();
+                    let chk_marking_cb = chk_marking.clone();
                     let chk_dis_cb = chk_dis.clone();
                     let chk_blr_cb = chk_blr.clone();
                     let combo_vis_cb = combo_vis.clone();
@@ -2183,6 +2211,8 @@ impl SettingsApp {
                                 chk_bold_cb.set_active(cfg.ui.bold_single_chars);
                                 chk_cnt_cb.set_active(cfg.ui.center_layout);
                                 chk_hide_cb.set_active(cfg.ui.hide_back_entry);
+                                chk_spawn_cb.set_active(!cfg.ui.spawn_at_cursor);
+                                chk_marking_cb.set_active(cfg.ui.marking_mode);
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
                                 let selected_idx = match cfg.ui.hover_visual_cue.as_str() {
