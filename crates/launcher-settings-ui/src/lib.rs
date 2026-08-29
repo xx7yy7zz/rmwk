@@ -10,6 +10,63 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use tracing::{error, info};
 
+/// Marking Speed (0 = careful, 100 = instant) <-> dwell milliseconds.
+/// Linear between 500ms (aggressiveness 0) and 50ms (aggressiveness 100).
+fn marking_pct_from_ms(ms: u32) -> f64 {
+    ((500.0 - ms as f64) / 4.5).clamp(0.0, 100.0)
+}
+
+fn marking_ms_from_pct(pct: f64) -> u32 {
+    (500.0 - 4.5 * pct.clamp(0.0, 100.0)).round().clamp(50.0, 500.0) as u32
+}
+
+/// Whether the active icon theme can provide `icon_name`.
+fn icon_theme_has(icon_name: &str) -> bool {
+    gtk::IconTheme::default().has_icon(icon_name)
+}
+
+/// Plain-text glyphs used when the active icon theme lacks an icon
+/// (common on bare Wayland sessions with no full icon theme installed).
+fn icon_fallback_glyph(icon_name: &str) -> &'static str {
+    match icon_name {
+        "document-new-symbolic" => "✚",
+        "document-edit-symbolic" => "✎",
+        "user-trash-symbolic" => "✕",
+        "edit-copy-symbolic" => "⧉",
+        "edit-paste-symbolic" => "📋",
+        "edit-find-symbolic" => "🔍",
+        "document-open" => "📂",
+        "folder" => "📁",
+        "edit-undo-symbolic" => "↺",
+        "help-about-symbolic" => "?",
+        "media-record" => "⏺",
+        "dialog-information" => "ⓘ",
+        "dialog-warning" => "⚠",
+        _ => "•",
+    }
+}
+
+/// An icon widget that degrades to a text glyph when the icon theme
+/// cannot resolve the requested name.
+fn icon_or_fallback(icon_name: &str) -> gtk::Widget {
+    if icon_theme_has(icon_name) {
+        let img = gtk::Image::from_icon_name(icon_name);
+        img.set_valign(gtk::Align::Center);
+        img.upcast()
+    } else {
+        let lbl = gtk::Label::new(Some(icon_fallback_glyph(icon_name)));
+        lbl.set_valign(gtk::Align::Center);
+        lbl.upcast()
+    }
+}
+
+/// Icon button with the same glyph fallback as `icon_or_fallback`.
+fn icon_button(icon_name: &str) -> gtk::Button {
+    let btn = gtk::Button::new();
+    btn.set_child(Some(&icon_or_fallback(icon_name)));
+    btn
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CopiedNode {
     label: String,
@@ -212,6 +269,11 @@ impl SettingsApp {
         let left_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
         left_vbox.set_vexpand(true);
 
+        // Menu tree and theme editor share the left column as notebook
+        // tabs so neither feels crowded.
+        let menu_tab_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        menu_tab_box.set_vexpand(true);
+
         let active_menu_path = Rc::new(RefCell::new(menu_path.clone()));
         let is_saving = Rc::new(std::cell::Cell::new(false));
 
@@ -220,11 +282,11 @@ impl SettingsApp {
         let lbl_menu = gtk::Label::new(Some("Menu:"));
         let combo_menu_files = crate::dropdown_utils::create_dropdown();
         let is_rebuilding_combo = Rc::new(std::cell::Cell::new(false));
-        let btn_new_menu = gtk::Button::from_icon_name("document-new-symbolic");
+        let btn_new_menu = icon_button("document-new-symbolic");
         btn_new_menu.set_tooltip_text(Some("Create a new menu."));
-        let btn_edit_menu = gtk::Button::from_icon_name("document-edit-symbolic");
+        let btn_edit_menu = icon_button("document-edit-symbolic");
         btn_edit_menu.set_tooltip_text(Some("Rename the current menu."));
-        let btn_delete_menu = gtk::Button::from_icon_name("user-trash-symbolic");
+        let btn_delete_menu = icon_button("user-trash-symbolic");
         btn_delete_menu.set_tooltip_text(Some("Delete the current menu."));
 
         let available_menus = Self::get_available_menus(&config_path);
@@ -255,7 +317,7 @@ impl SettingsApp {
         menu_selector_hbox.append(&btn_new_menu);
         menu_selector_hbox.append(&btn_edit_menu);
         menu_selector_hbox.append(&btn_delete_menu);
-        left_vbox.append(&menu_selector_hbox);
+        menu_tab_box.append(&menu_selector_hbox);
 
         // Scrollable window for TreeView
         let scroll_win = gtk::ScrolledWindow::builder()
@@ -345,7 +407,7 @@ impl SettingsApp {
         drop_indicator.set_halign(gtk::Align::Fill);
         drop_indicator.set_valign(gtk::Align::Fill);
         tree_overlay.add_overlay(&drop_indicator);
-        left_vbox.append(&tree_overlay);
+        menu_tab_box.append(&tree_overlay);
 
         // Per-level length to shrink the indicator line.
         const DROP_INDENT_STEP: f64 = 28.0;
@@ -543,7 +605,7 @@ impl SettingsApp {
         btn_hbox.append(&btn_delete);
         btn_hbox.append(&btn_up);
         btn_hbox.append(&btn_down);
-        left_vbox.append(&btn_hbox);
+        menu_tab_box.append(&btn_hbox);
 
         let themes = Self::get_available_themes(&config_path);
         let theme_editor = theme_editor::ThemeEditor::new(
@@ -553,7 +615,11 @@ impl SettingsApp {
             &themes,
             is_saving.clone(),
         );
-        left_vbox.append(&theme_editor.container);
+        let left_notebook = gtk::Notebook::new();
+        left_notebook.set_vexpand(true);
+        left_notebook.append_page(&menu_tab_box, Some(&gtk::Label::new(Some("Menu"))));
+        left_notebook.append_page(&theme_editor.container, Some(&gtk::Label::new(Some("Theme"))));
+        left_vbox.append(&left_notebook);
         let combo_theme = theme_editor.combo_theme.clone();
         let sys_overrides = theme_editor.current_system_overrides.clone();
 
@@ -598,11 +664,11 @@ impl SettingsApp {
         let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         let entry_icon = gtk::Entry::new();
         entry_icon.set_hexpand(true);
-        let btn_pick_icon = gtk::Button::from_icon_name("edit-find-symbolic");
+        let btn_pick_icon = icon_button("edit-find-symbolic");
         btn_pick_icon.set_tooltip_text(Some(
             "Search and pick an icon from Material Symbols or your own system icons.",
         ));
-        let btn_pick_image = gtk::Button::from_icon_name("folder");
+        let btn_pick_image = icon_button("folder");
         btn_pick_image.set_tooltip_text(Some("Pick an image with the system picker."));
         icon_box.append(&entry_icon);
         icon_box.append(&btn_pick_icon);
@@ -681,11 +747,11 @@ impl SettingsApp {
         let entry_cmd = gtk::Entry::new();
         entry_cmd.set_hexpand(true);
         let btn_record_hotkey = gtk::ToggleButton::new();
-        btn_record_hotkey.set_icon_name("media-record");
+        btn_record_hotkey.set_child(Some(&icon_or_fallback("media-record")));
         btn_record_hotkey.set_tooltip_text(Some("Record a keystroke."));
-        let btn_pick_file = gtk::Button::from_icon_name("document-open");
+        let btn_pick_file = icon_button("document-open");
         btn_pick_file.set_tooltip_text(Some("Pick a file with the system picker."));
-        let btn_pick_dir = gtk::Button::from_icon_name("folder");
+        let btn_pick_dir = icon_button("folder");
         btn_pick_dir.set_tooltip_text(Some("Pick a folder with the system picker."));
         btn_pick_file.set_visible(false);
         btn_pick_dir.set_visible(false);
@@ -791,8 +857,11 @@ impl SettingsApp {
         let chk_open_at_center = gtk::CheckButton::with_label("Open At Center");
         chk_open_at_center.set_active(!ui_config.ui.spawn_at_cursor);
 
-        let chk_marking_mode = gtk::CheckButton::with_label("Marking (Hold & Drag)");
+        let chk_marking_mode = gtk::CheckButton::with_label("Marking Mode");
         chk_marking_mode.set_active(ui_config.ui.marking_mode);
+
+        let chk_submenu_shift = gtk::CheckButton::with_label("Non-Anchored Submenus");
+        chk_submenu_shift.set_active(ui_config.ui.submenu_shift);
 
         let chk_disable_hover_anim = gtk::CheckButton::with_label("Disable Hover Animation");
         chk_disable_hover_anim.set_active(ui_config.ui.disable_hover_animation);
@@ -800,7 +869,7 @@ impl SettingsApp {
         let chk_enable_blur = gtk::CheckButton::with_label("Enable Blur");
         chk_enable_blur.set_active(ui_config.ui.enable_blur);
 
-        let icon_blur_warning = gtk::Image::from_icon_name("dialog-warning");
+        let icon_blur_warning = icon_or_fallback("dialog-warning");
         icon_blur_warning.set_tooltip_text(Some("Warning: This effect uses the ext-background-effect-v1 protocol. Pie Mode + Niri only. Hyrpland works the best with a layer rule enabling blur and ignoring alpha."));
 
         let blur_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
@@ -841,7 +910,7 @@ impl SettingsApp {
         menu_style_hbox.append(&lbl_menu_style);
         menu_style_hbox.append(&combo_menu_style);
 
-        let icon_pill_roundness = gtk::Image::from_icon_name("dialog-information");
+        let icon_pill_roundness = icon_or_fallback("dialog-information");
         icon_pill_roundness.set_tooltip_text(Some(
             "Control the roundness of pills and hub shapes for floating modes.",
         ));
@@ -906,7 +975,7 @@ impl SettingsApp {
         spin_scale.set_numeric(true);
         spin_scale.set_tooltip_text(Some("Exact scale factor (1.00 = default)"));
 
-        let btn_reset_scale = gtk::Button::from_icon_name("edit-undo-symbolic");
+        let btn_reset_scale = icon_button("edit-undo-symbolic");
         btn_reset_scale.set_tooltip_text(Some("Reset scale to default (1.00)"));
         {
             let adj = scale_adj.clone();
@@ -946,7 +1015,7 @@ impl SettingsApp {
         right_vbox.append(&settings_vbox);
 
         let checkboxes_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        let icon_symbolic_icons = gtk::Image::from_icon_name("dialog-information");
+        let icon_symbolic_icons = icon_or_fallback("dialog-information");
         icon_symbolic_icons.set_tooltip_text(Some("Several system icons have symbolic, more simple versions. Turn on this setting to use those instead."));
         let symbolic_icons_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
         symbolic_icons_hbox.append(&chk_symbolic_icons);
@@ -956,17 +1025,49 @@ impl SettingsApp {
         checkboxes_vbox.append(&chk_center_layout);
         checkboxes_vbox.append(&chk_hide_back_entry);
         let open_at_center_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-        let icon_open_at_center = gtk::Image::from_icon_name("dialog-information");
+        let icon_open_at_center = icon_or_fallback("dialog-information");
         icon_open_at_center.set_tooltip_text(Some("By default the menu opens right next to your mouse pointer. Turn this on to always open it in the middle of the screen instead."));
         open_at_center_hbox.append(&chk_open_at_center);
         open_at_center_hbox.append(&icon_open_at_center);
         checkboxes_vbox.append(&open_at_center_hbox);
         let marking_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-        let icon_marking = gtk::Image::from_icon_name("dialog-information");
-        icon_marking.set_tooltip_text(Some("Hold the left mouse button and sweep across the menu: submenus open automatically once you pause over one, and releasing the button activates whatever you are pointing at. Quick clicks keep working as before."));
+        let icon_marking = icon_or_fallback("dialog-information");
+        icon_marking.set_tooltip_text(Some("Press and hold the left mouse button, slide over the menu, and let go to pick what you are pointing at. Submenus open on their own when you pause over one, and a quick click still works like always."));
         marking_hbox.append(&chk_marking_mode);
         marking_hbox.append(&icon_marking);
         checkboxes_vbox.append(&marking_hbox);
+        let lbl_marking_speed = gtk::Label::new(Some("Marking Speed:"));
+        let marking_speed_adj = gtk::Adjustment::new(
+            marking_pct_from_ms(ui_config.ui.marking_dwell_ms),
+            0.0,
+            100.0,
+            5.0,
+            10.0,
+            0.0,
+        );
+        let marking_speed_slider = gtk::Scale::new(gtk::Orientation::Horizontal, Some(&marking_speed_adj));
+        marking_speed_slider.set_hexpand(true);
+        marking_speed_slider.set_digits(0);
+        marking_speed_slider.set_draw_value(false);
+        marking_speed_slider.add_mark(
+            marking_pct_from_ms(180),
+            gtk::PositionType::Bottom,
+            Some("Default"),
+        );
+        let spin_marking_speed = gtk::SpinButton::new(Some(&marking_speed_adj), 5.0, 0);
+        spin_marking_speed.set_numeric(true);
+        spin_marking_speed.set_tooltip_text(Some("How fast a held hover fires submenus and the Back entry. Higher is snappier: 0 waits about half a second, 100 is almost instant."));
+        let marking_speed_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        marking_speed_hbox.append(&lbl_marking_speed);
+        marking_speed_hbox.append(&marking_speed_slider);
+        marking_speed_hbox.append(&spin_marking_speed);
+        checkboxes_vbox.append(&marking_speed_hbox);
+        let submenu_shift_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        let icon_submenu_shift = icon_or_fallback("dialog-information");
+        icon_submenu_shift.set_tooltip_text(Some("When you open a submenu, it drifts a little in the direction you clicked instead of staying put. A breadcrumb trail of badges shows every menu you walked through, pointing back the way you came. Click a badge to jump back to that level."));
+        submenu_shift_hbox.append(&chk_submenu_shift);
+        submenu_shift_hbox.append(&icon_submenu_shift);
+        checkboxes_vbox.append(&submenu_shift_hbox);
         checkboxes_vbox.append(&chk_disable_hover_anim);
         right_vbox.append(&checkboxes_vbox);
 
@@ -982,7 +1083,7 @@ impl SettingsApp {
         right_vbox.append(&spacer);
 
         // Help Button
-        let btn_help = gtk::Button::from_icon_name("help-about-symbolic");
+        let btn_help = icon_button("help-about-symbolic");
         btn_help.set_tooltip_text(Some("Navigation Shortcuts"));
         let help_popover = gtk::Popover::new();
         let help_label = gtk::Label::new(None);
@@ -1963,6 +2064,8 @@ impl SettingsApp {
         let chk_hide_back_entry_save = chk_hide_back_entry.clone();
         let chk_open_at_center_save = chk_open_at_center.clone();
         let chk_marking_mode_save = chk_marking_mode.clone();
+        let marking_speed_slider_save = marking_speed_slider.clone();
+        let chk_submenu_shift_save = chk_submenu_shift.clone();
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
@@ -2015,6 +2118,8 @@ impl SettingsApp {
                 cfg.ui.hide_back_entry = chk_hide_back_entry_save.is_active();
                 cfg.ui.spawn_at_cursor = !chk_open_at_center_save.is_active();
                 cfg.ui.marking_mode = chk_marking_mode_save.is_active();
+                cfg.ui.marking_dwell_ms = marking_ms_from_pct(marking_speed_slider_save.value());
+                cfg.ui.submenu_shift = chk_submenu_shift_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = match combo_visual_cue_save.selected() {
                     1 => "sides".to_string(),
@@ -2137,6 +2242,8 @@ impl SettingsApp {
         let chk_hide_back_entry_watch = chk_hide_back_entry.clone();
         let chk_open_at_center_watch = chk_open_at_center.clone();
         let chk_marking_mode_watch = chk_marking_mode.clone();
+        let marking_speed_adj_watch = marking_speed_adj.clone();
+        let chk_submenu_shift_watch = chk_submenu_shift.clone();
         let chk_disable_hover_anim_watch = chk_disable_hover_anim.clone();
         let combo_visual_cue_watch = combo_visual_cue.clone();
         let combo_menu_style_watch = combo_menu_style.clone();
@@ -2160,6 +2267,8 @@ impl SettingsApp {
             let chk_hide = chk_hide_back_entry_watch.clone();
             let chk_spawn = chk_open_at_center_watch.clone();
             let chk_marking = chk_marking_mode_watch.clone();
+            let mark_speed = marking_speed_adj_watch.clone();
+            let chk_shift = chk_submenu_shift_watch.clone();
             let chk_dis = chk_disable_hover_anim_watch.clone();
             let chk_blr = chk_enable_blur_watch.clone();
             let combo_vis = combo_visual_cue_watch.clone();
@@ -2187,6 +2296,8 @@ impl SettingsApp {
                     let chk_hide_cb = chk_hide.clone();
                     let chk_spawn_cb = chk_spawn.clone();
                     let chk_marking_cb = chk_marking.clone();
+                    let mark_speed_cb = mark_speed.clone();
+                    let chk_shift_cb = chk_shift.clone();
                     let chk_dis_cb = chk_dis.clone();
                     let chk_blr_cb = chk_blr.clone();
                     let combo_vis_cb = combo_vis.clone();
@@ -2213,6 +2324,8 @@ impl SettingsApp {
                                 chk_hide_cb.set_active(cfg.ui.hide_back_entry);
                                 chk_spawn_cb.set_active(!cfg.ui.spawn_at_cursor);
                                 chk_marking_cb.set_active(cfg.ui.marking_mode);
+                                mark_speed_cb.set_value(marking_pct_from_ms(cfg.ui.marking_dwell_ms));
+                                chk_shift_cb.set_active(cfg.ui.submenu_shift);
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
                                 let selected_idx = match cfg.ui.hover_visual_cue.as_str() {
@@ -2886,9 +2999,7 @@ icon = "terminal"
         grip.set_margin_top(4);
         content.append(&grip);
         if let Some(icon_name) = icon {
-            let image = gtk::Image::from_icon_name(icon_name);
-            image.set_valign(gtk::Align::Center);
-            content.append(&image);
+            content.append(&icon_or_fallback(icon_name));
         }
         if let Some(text) = label {
             let text_label = gtk::Label::new(Some(text));
@@ -2902,10 +3013,7 @@ icon = "terminal"
 
     /// Builds a plain icon button with a tooltip.
     fn make_icon_button(icon: &str, tooltip: &str) -> gtk::Button {
-        let btn = gtk::Button::new();
-        let image = gtk::Image::from_icon_name(icon);
-        image.set_valign(gtk::Align::Center);
-        btn.set_child(Some(&image));
+        let btn = icon_button(icon);
         btn.set_tooltip_text(Some(tooltip));
         btn
     }

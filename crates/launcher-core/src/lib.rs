@@ -178,6 +178,15 @@ pub struct UiConfig {
     /// dwells over them, and releasing activates the hovered entry.
     #[serde(default = "default_marking_mode")]
     pub marking_mode: bool,
+    /// Milliseconds the pointer must dwell over a submenu or Back entry
+    /// during a marking session before it triggers. Lower = snappier.
+    #[serde(default = "default_marking_dwell_ms")]
+    pub marking_dwell_ms: u32,
+    /// Non-anchored navigation: submenus shift away from their parent in
+    /// the direction of the entry that opened them, with a small badge
+    /// pointing back to where the current menu came from.
+    #[serde(default = "default_submenu_shift")]
+    pub submenu_shift: bool,
 }
 
 fn default_scale() -> f64 { 1.0 }
@@ -187,6 +196,10 @@ fn default_hide_back_entry() -> bool { false }
 fn default_spawn_at_cursor() -> bool { true }
 
 fn default_marking_mode() -> bool { false }
+
+fn default_marking_dwell_ms() -> u32 { 180 }
+
+fn default_submenu_shift() -> bool { false }
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
     None
@@ -221,6 +234,8 @@ impl Default for UiConfig {
             hide_back_entry: default_hide_back_entry(),
             spawn_at_cursor: default_spawn_at_cursor(),
             marking_mode: default_marking_mode(),
+            marking_dwell_ms: default_marking_dwell_ms(),
+            submenu_shift: default_submenu_shift(),
         }
     }
 }

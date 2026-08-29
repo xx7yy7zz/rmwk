@@ -72,9 +72,23 @@ const BLUR_PENDING_KEY: (bool, bool, f64, u64) = (false, false, -1.0, u64::MAX);
 const MARKING_TRIGGER_DIST: f64 = 16.0;
 const MARKING_TRIGGER_MS: u64 = 250;
 
-/// How long the pointer must dwell over a submenu slice during a marking
-/// session before it opens automatically.
-const MARKING_DWELL_MS: u64 = 180;
+/// Fallback dwell (ms) when the setting can't be read; the effective
+/// value comes from `ui.marking_dwell_ms` (Marking Speed slider).
+const MARKING_DWELL_MS: u32 = 180;
+
+/// Non-anchored mode: fraction of the parent menu's visual radius that a
+/// submenu shifts away from it, along the direction of the entry that
+/// opened it.
+const SUBMENU_SHIFT_FACTOR: f64 = 0.75;
+
+/// Radius (base px) of the little "came from" badge and its gap from the
+/// entry ring in non-anchored mode. Deeper ancestors shrink and fade by
+/// these factors and are linked with BREADCRUMB_LINK_GAP px of space.
+const BREADCRUMB_R: f64 = 26.0;
+const BREADCRUMB_GAP: f64 = 14.0;
+const BREADCRUMB_SHRINK: f64 = 0.82;
+const BREADCRUMB_FADE: f64 = 0.7;
+const BREADCRUMB_LINK_GAP: f64 = 8.0;
 
 // Emojis render larger than text glyphs at the same point size because emoji
 // fonts fill the full em box. Shrink single-char emoji icons by this factor.
@@ -192,6 +206,15 @@ struct MenuState {
     marking_press_pos: Option<(f64, f64)>,
     marking_press_time: Option<std::time::Instant>,
     marking_dwell: Option<glib::SourceId>,
+    marking_dwell_ms: u32,
+
+    // Non-anchored mode: cumulative shift (base px) of the current menu
+    // from its spawn anchor, plus the parallel stacks of parent/forward
+    // offsets kept alongside the history vectors.
+    submenu_shift: bool,
+    nav_offset: (f64, f64),
+    history_offsets: Vec<(f64, f64)>,
+    forward_history_offsets: Vec<(f64, f64)>,
 
     // Animation state
     is_closing: bool,
@@ -251,6 +274,9 @@ impl MenuState {
         self.forward_history.clear();
         self.history_icons.clear();
         self.forward_history_icons.clear();
+        self.history_offsets.clear();
+        self.forward_history_offsets.clear();
+        self.nav_offset = (0.0, 0.0);
         self.hovered_index = None;
     }
 
@@ -302,13 +328,10 @@ impl MenuState {
                         match gtk::gdk_pixbuf::PixbufAnimation::from_file(&path) {
                             Ok(anim) => {
                                 if anim.is_static_image() {
-                                    let surface = gtk::gdk_pixbuf::Pixbuf::from_file_at_size(
-                                        &path,
-                                        128,
-                                        128,
-                                    )
-                                    .ok()
-                                    .and_then(pixbuf_to_surface);
+                                    let surface =
+                                        gtk::gdk_pixbuf::Pixbuf::from_file_at_size(&path, 128, 128)
+                                            .ok()
+                                            .and_then(pixbuf_to_surface);
                                     self.icon_cache.insert(raw_icon_name.clone(), surface);
                                 } else {
                                     self.anim_cache.insert(
@@ -443,36 +466,133 @@ impl MenuState {
     }
 
     /// Approximate radius of the *painted* menu (hub, ring, entries and
-    /// hover expansion), scaled. Excludes extra_radius, which is only an
-    /// interactivity margin. Used to clamp the cursor origin back inside
-    /// the monitor so the menu stays fully visible.
-    fn visual_radius(&self, n: usize) -> f64 {
-        let s = self.scale.max(0.01);
-        let r = if self.is_floating() {
+    /// hover expansion) in base (unscaled) px. Excludes extra_radius,
+    /// which is only an interactivity margin. Used to clamp the cursor
+    /// origin back inside the monitor so the menu stays fully visible,
+    /// and to position the non-anchored mode badge.
+    fn visual_radius_base(&self, n: usize) -> f64 {
+        if self.is_floating() {
             let arc_per_entry = self.floating_arc_per_entry();
             let required_r = n as f64 * arc_per_entry / (2.0 * PI);
             let base_dist = BASE_R + self.floating_base_gap();
             base_dist.max(required_r) + SLICE_WIDTH + HOVER_GROW
         } else {
             BASE_R + self.effective_pie_spacing(n) + SLICE_WIDTH + HOVER_GROW
-        };
-        r * s
+        }
     }
 
-    /// Hub center shared by the draw callback, hit-testing and blur
-    /// regions. Falls back to the monitor center when spawn-at-cursor is
-    /// disabled or the pointer position hasn't been received yet, and
-    /// clamps the captured origin so the menu fits on screen.
-    fn menu_center(&self, width: f64, height: f64, n: usize) -> (f64, f64) {
+    fn visual_radius(&self, n: usize) -> f64 {
+        self.visual_radius_base(n) * self.scale.max(0.01)
+    }
+
+    /// Hub center for one navigation level: the spawn anchor (cursor or
+    /// monitor center) shifted by `offset` (base px) and clamped so the
+    /// menu fits on screen. Shared by the draw callback, hit-testing and
+    /// blur regions.
+    fn center_for(&self, width: f64, height: f64, n: usize, offset: (f64, f64)) -> (f64, f64) {
         let cx = width / 2.0;
         let cy = height / 2.0;
-        let Some((ox, oy)) = self.origin.filter(|_| self.spawn_at_cursor) else {
-            return (cx, cy);
+        let s = self.scale.max(0.01);
+        let (ox, oy) = match self.origin.filter(|_| self.spawn_at_cursor) {
+            Some((ox, oy)) => (ox, oy),
+            None => (cx, cy),
         };
-        let m = self.visual_radius(n) + SCREEN_MARGIN;
-        let x = if m * 2.0 >= width { cx } else { ox.clamp(m, width - m) };
-        let y = if m * 2.0 >= height { cy } else { oy.clamp(m, height - m) };
-        (x, y)
+        let mut m = self.visual_radius(n) + SCREEN_MARGIN;
+        // Reserve room for the "came from" badge so it can't hang off
+        // the monitor edge (conservative: applied in all directions).
+        if self.submenu_shift && !self.history_offsets.is_empty() {
+            m += (BREADCRUMB_GAP + 2.0 * BREADCRUMB_R) * s;
+        }
+        let x = ox + offset.0 * s;
+        let y = oy + offset.1 * s;
+        (
+            if m * 2.0 >= width {
+                cx
+            } else {
+                x.clamp(m, width - m)
+            },
+            if m * 2.0 >= height {
+                cy
+            } else {
+                y.clamp(m, height - m)
+            },
+        )
+    }
+
+    fn menu_center(&self, width: f64, height: f64, n: usize) -> (f64, f64) {
+        self.center_for(width, height, n, self.nav_offset)
+    }
+
+    /// Breadcrumb trail for non-anchored mode: one disc per ancestor,
+    /// starting at the entry ring in the direction of the immediate
+    /// parent, then walking each level's real displacement direction
+    /// towards its own parent (so the trail respects the angles actually
+    /// travelled). Returns (offset from hub center in base px, radius),
+    /// ordered parent, grandparent, ..., root.
+    fn breadcrumb_layout(&self, n: usize) -> Vec<((f64, f64), f64)> {
+        let mut out = Vec::new();
+        if self.history_offsets.is_empty() {
+            return out;
+        }
+        let mut cur = (0.0, 0.0);
+        let mut prev_offset = self.nav_offset;
+        let mut prev_r = 0.0;
+        for k in (0..self.history_offsets.len()).rev() {
+            let po = self.history_offsets[k];
+            let depth = (self.history_offsets.len() - 1 - k) as f64;
+            let r = BREADCRUMB_R * BREADCRUMB_SHRINK.powf(depth);
+            let mut vx = po.0 - prev_offset.0;
+            let mut vy = po.1 - prev_offset.1;
+            let vl = (vx * vx + vy * vy).sqrt();
+            if vl > 1e-6 {
+                vx /= vl;
+                vy /= vl;
+            }
+            let lead = if out.is_empty() {
+                self.visual_radius_base(n) + BREADCRUMB_GAP + r
+            } else {
+                prev_r + BREADCRUMB_LINK_GAP + r
+            };
+            cur = (cur.0 + vx * lead, cur.1 + vy * lead);
+            out.push((cur, r));
+            prev_offset = po;
+            prev_r = r;
+        }
+        out
+    }
+
+    /// Which breadcrumb disc (if any) covers the given screen point;
+    /// 0 = immediate parent. Clicking one jumps back that many levels.
+    fn breadcrumb_hit(&self, x: f64, y: f64, cx: f64, cy: f64, n: usize) -> Option<usize> {
+        if !self.submenu_shift || self.history_offsets.is_empty() {
+            return None;
+        }
+        let s = self.scale.max(0.01);
+        let mx = (x - cx) / s;
+        let my = (y - cy) / s;
+        for (j, ((dx, dy), r)) in self.breadcrumb_layout(n).iter().enumerate() {
+            let ddx = mx - dx;
+            let ddy = my - dy;
+            if (ddx * ddx + ddy * ddy).sqrt() <= r + 6.0 {
+                return Some(j);
+            }
+        }
+        None
+    }
+
+    /// Unit vector pointing at the middle of slice `index`, matching the
+    /// angle convention used by the renderer.
+    fn slice_direction(&self, index: usize, n: usize) -> (f64, f64) {
+        if n == 0 {
+            return (0.0, 0.0);
+        }
+        let angle_per_slice = 2.0 * PI / n as f64;
+        let mut base_start = index as f64 * angle_per_slice - PI / 2.0;
+        if self.center_layout {
+            base_start -= angle_per_slice / 2.0;
+        }
+        let mid = base_start + angle_per_slice / 2.0;
+        (mid.cos(), mid.sin())
     }
 
     /// Forget the captured origin and hold the menu transparent until the
@@ -545,6 +665,13 @@ impl MenuState {
         // the separation gap still maps by angle to the nearest slice
         // (same as floating mode's hub-to-pill gap)
         if dist < BASE_R {
+            return None;
+        }
+
+        // Breadcrumb discs live outside the ring and are resolved by
+        // breadcrumb_hit() in the event handlers; ignore them here so a
+        // disc never steals a wedge hover, and vice versa.
+        if self.breadcrumb_hit(x, y, cx, cy, n).is_some() {
             return None;
         }
 
@@ -884,11 +1011,7 @@ fn target_blur_regions(
 /// Safety net for arm_cursor_capture(): if the compositor never delivers
 /// the enter/motion event that reveals the menu, give up waiting after a
 /// short grace period and show it at the monitor center instead.
-fn schedule_reveal_fallback(
-    state: &Rc<RefCell<MenuState>>,
-    area: &gtk::DrawingArea,
-    seq: u64,
-) {
+fn schedule_reveal_fallback(state: &Rc<RefCell<MenuState>>, area: &gtk::DrawingArea, seq: u64) {
     let st = state.clone();
     let ar = area.clone();
     glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
@@ -916,8 +1039,12 @@ fn schedule_marking_dwell(
 ) {
     let st = state.clone();
     let ar = area.clone();
+    let dwell_ms = state
+        .try_borrow()
+        .map(|s| s.marking_dwell_ms.max(30))
+        .unwrap_or(MARKING_DWELL_MS);
     let id = glib::timeout_add_local(
-        std::time::Duration::from_millis(MARKING_DWELL_MS),
+        std::time::Duration::from_millis(dwell_ms as u64),
         move || {
             if let Ok(mut s) = st.try_borrow_mut() {
                 s.marking_dwell = None;
@@ -957,13 +1084,107 @@ fn schedule_marking_dwell(
     }
 }
 
+/// Compact replica of the hub icon renderer (single char/emoji, Material
+/// glyph, or cached image surface) for arbitrary centers and sizes. Used
+/// by the non-anchored mode "came from" badge.
+fn draw_small_icon(
+    state_ref: &mut MenuState,
+    area: &gtk::DrawingArea,
+    cr: &cairo::Context,
+    icon_name: &str,
+    icon_size: f64,
+    cx: f64,
+    cy: f64,
+) {
+    if icon_name.chars().count() == 1 && !icon_name.starts_with('/') {
+        let font_size = icon_size.round().max(1.0) as u32;
+        let key = (icon_name.to_string(), font_size);
+        let l = if let Some(l) = state_ref.text_layout_cache.get(&key) {
+            l.clone()
+        } else {
+            let l = area.create_pango_layout(Some(icon_name));
+            let mut font_desc = gtk::pango::FontDescription::new();
+            if state_ref.bold_single_chars {
+                font_desc.set_weight(gtk::pango::Weight::Bold);
+            }
+            font_desc.set_family("Sans");
+            let emoji_scale = if icon_name.chars().all(is_emoji_char) {
+                EMOJI_SIZE_SCALE
+            } else {
+                1.0
+            };
+            font_desc.set_absolute_size(icon_size * emoji_scale * gtk::pango::SCALE as f64);
+            l.set_font_description(Some(&font_desc));
+            state_ref.text_layout_cache.insert(key, l.clone());
+            l
+        };
+        let (iw, ih) = l.pixel_size();
+        let _ = cr.save();
+        cr.translate(cx, cy);
+        cr.move_to(-(iw as f64 / 2.0), -(ih as f64 / 2.0));
+        pangocairo::functions::show_layout(cr, &l);
+        let _ = cr.restore();
+    } else if let Some(&codepoint) = state_ref.codepoints.get(icon_name) {
+        let layout = state_ref.material_glyph_layout(area, codepoint, icon_size);
+        let (ink, _logical) = layout.pixel_extents();
+        let _ = cr.save();
+        cr.translate(cx, cy);
+        cr.move_to(
+            -(ink.x() as f64 + ink.width() as f64 / 2.0),
+            -(ink.y() as f64 + ink.height() as f64 / 2.0),
+        );
+        let _ = pangocairo::functions::show_layout(cr, &layout);
+        let _ = cr.restore();
+    } else if let Some(surf) = state_ref.icon_frame_surface(icon_name) {
+        let cw = surf.width() as f64;
+        let ch = surf.height() as f64;
+        let scale = icon_size / cw.max(ch).max(1.0);
+        let _ = cr.save();
+        cr.translate(cx - cw * scale / 2.0, cy - ch * scale / 2.0);
+        cr.scale(scale, scale);
+        let _ = cr.set_source_surface(&surf, 0.0, 0.0);
+        let _ = cr.paint();
+        let _ = cr.restore();
+    }
+}
+
+/// Completes the close sequence: hides the window and rewinds to the root
+/// menu. Must run synchronously (from both the animation tick and the
+/// trigger): a tick callback scheduled while the widget is unmapped never
+/// fires, which would strand `is_closing`/`is_animating` and desync the
+/// app's notion of window visibility from the compositor forever.
+fn complete_close(
+    state: &Rc<RefCell<MenuState>>,
+    win: &gtk::ApplicationWindow,
+    root_menu: &launcher_core::MenuConfig,
+    anim_flag: &std::cell::Cell<bool>,
+) {
+    if let Ok(mut s) = state.try_borrow_mut() {
+        s.is_closing = false;
+        win.hide();
+
+        // Reset to root menu
+        s.root_items = root_menu.menu.clone();
+        s.root_icon = root_menu.icon.clone();
+        s.reset_to_root();
+        s.arm_cursor_capture();
+        s.end_marking();
+        if let Some(display) = gdk::Display::default() {
+            s.preload_icons(&display);
+        }
+    }
+    anim_flag.set(false);
+}
+
 fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
     if let Some(prev) = state.history.pop() {
         let prev_icon = state.history_icons.pop().unwrap_or(None);
+        let parent_offset = state.history_offsets.pop().unwrap_or((0.0, 0.0));
 
         // Push current state to forward history
         state.forward_history.push(state.current_items.clone());
         state.forward_history_icons.push(state.current_icon.clone());
+        state.forward_history_offsets.push(state.nav_offset);
 
         if let Some(icon) = prev_icon.clone() {
             state.current_icon = Some(icon);
@@ -973,6 +1194,7 @@ fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
             state.current_icon = None; // fallback
         }
 
+        state.nav_offset = parent_offset;
         state.current_items = prev;
         state.hovered_index = None;
         if let Some(display) = gdk::Display::default() {
@@ -987,12 +1209,15 @@ fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
 fn go_forward(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
     if let Some(next) = state.forward_history.pop() {
         let next_icon = state.forward_history_icons.pop().flatten();
+        let next_offset = state.forward_history_offsets.pop().unwrap_or((0.0, 0.0));
 
         // Push current state to history
         state.history.push(state.current_items.clone());
         state.history_icons.push(state.current_icon.clone());
+        state.history_offsets.push(state.nav_offset);
 
         state.current_icon = next_icon;
+        state.nav_offset = next_offset;
         state.current_items = next;
         state.hovered_index = None;
 
@@ -1025,9 +1250,23 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
             // Clear forward history because we took a new path
             state.forward_history.clear();
             state.forward_history_icons.clear();
+            state.forward_history_offsets.clear();
 
             state.history.push(current_items);
             state.history_icons.push(state.current_icon.clone());
+            state.history_offsets.push(state.nav_offset);
+
+            // Non-anchored mode: drift the submenu away from the parent
+            // along the direction of the wedge that opened it.
+            if state.submenu_shift {
+                let (dx, dy) = state.slice_direction(index, display_items_count);
+                let dist = state.visual_radius_base(display_items_count) * SUBMENU_SHIFT_FACTOR;
+                state.nav_offset = (
+                    state.nav_offset.0 + dx * dist,
+                    state.nav_offset.1 + dy * dist,
+                );
+            }
+
             state.current_icon = selected.icon.clone();
             state.current_items = selected.children;
             state.hovered_index = None;
@@ -1357,6 +1596,11 @@ impl LauncherApp {
             marking_press_pos: None,
             marking_press_time: None,
             marking_dwell: None,
+            marking_dwell_ms: ui_config.marking_dwell_ms.max(30),
+            submenu_shift: ui_config.submenu_shift,
+            nav_offset: (0.0, 0.0),
+            history_offsets: vec![],
+            forward_history_offsets: vec![],
             is_closing: false,
             hover_progresses: vec![],
             icon_cache: HashMap::new(),
@@ -1486,12 +1730,21 @@ impl LauncherApp {
                 // Only update Wayland region if it has actually changed to avoid IPC overhead
                 let spacing = state_ref.effective_pie_spacing(n);
                 let scale_bits = state_ref.scale.to_bits();
-                let key = (state_ref.enable_blur, state_ref.is_closing, spacing, scale_bits);
-                let center_changed = (cx - state_ref.last_cx).abs() > 0.5
-                    || (cy - state_ref.last_cy).abs() > 0.5;
+                let key = (
+                    state_ref.enable_blur,
+                    state_ref.is_closing,
+                    spacing,
+                    scale_bits,
+                );
+                let center_changed =
+                    (cx - state_ref.last_cx).abs() > 0.5 || (cy - state_ref.last_cy).abs() > 0.5;
                 if state_ref.last_blur_key != Some(key) || center_changed {
-                    let regions =
-                        target_blur_regions(state_ref.enable_blur, state_ref.is_closing, spacing, state_ref.scale);
+                    let regions = target_blur_regions(
+                        state_ref.enable_blur,
+                        state_ref.is_closing,
+                        spacing,
+                        state_ref.scale,
+                    );
                     blur.update_sectioned_region(cx, cy, &regions);
                     state_ref.last_blur_key = Some(key);
                     state_ref.last_cx = cx;
@@ -2395,18 +2648,13 @@ impl LauncherApp {
                                     );
                                     let _ = pangocairo::functions::show_layout(&cr, &layout);
                                     let _ = cr.restore();
-                                } else if let Some(surf) = state_ref.icon_frame_surface(icon_name)
-                                {
+                                } else if let Some(surf) = state_ref.icon_frame_surface(icon_name) {
                                     let _ = cr.save();
                                     cr.translate(icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
                                     let scale = icon_size / surf.width().max(surf.height()) as f64;
                                     let (sw, sh) = (surf.width() as f64, surf.height() as f64);
                                     cr.scale(scale, scale);
-                                    let _ = cr.set_source_surface(
-                                        surf,
-                                        -sw / 2.0,
-                                        -sh / 2.0,
-                                    );
+                                    let _ = cr.set_source_surface(surf, -sw / 2.0, -sh / 2.0);
                                     let _ = cr.paint_with_alpha(ease_progress);
                                     let _ = cr.restore();
                                 }
@@ -2885,6 +3133,109 @@ impl LauncherApp {
                     }
                 }
             }
+            // Non-anchored mode: breadcrumb trail of ancestor badges, each
+            // showing that level's hub icon and pointing back along the
+            // direction it was reached from. hit_test() keeps them out of
+            // the wedge logic; the event handlers use breadcrumb_hit().
+            if state_ref.submenu_shift && !state_ref.history_offsets.is_empty() {
+                let layout = state_ref.breadcrumb_layout(n);
+                if !layout.is_empty() {
+                    let ring_r = state_ref.visual_radius_base(n);
+                    let ((fx, fy), _) = layout[0];
+                    let fl = (fx * fx + fy * fy).sqrt();
+                    if fl > 1e-6 && hub_border.alpha() > 0.001 {
+                        // Dashed guide from the ring edge through the discs
+                        let _ = cr.save();
+                        cr.set_dash(&[6.0, 6.0], 0.0);
+                        cr.set_line_width(2.0);
+                        cr.set_source_rgba(
+                            hub_border.red() as f64,
+                            hub_border.green() as f64,
+                            hub_border.blue() as f64,
+                            hub_border.alpha() as f64 * 0.5,
+                        );
+                        cr.move_to(cx + fx / fl * (ring_r + 4.0), cy + fy / fl * (ring_r + 4.0));
+                        for &((dx, dy), _) in layout.iter() {
+                            cr.line_to(cx + dx, cy + dy);
+                        }
+                        let _ = cr.stroke();
+                        let _ = cr.restore();
+                    }
+
+                    // Discs farthest-first, so the immediate parent ends up
+                    // on top. Shape mirrors the hub: circles in pie mode,
+                    // pill_roundness-rounded squares in the floating modes.
+                    for (depth, &((dx, dy), r)) in layout.iter().enumerate().rev() {
+                        let fade = BREADCRUMB_FADE.powf(depth as f64);
+                        let bx = cx + dx;
+                        let by = cy + dy;
+                        let badge_round = if state_ref.is_floating() {
+                            r * state_ref.pill_roundness.clamp(0.0, 1.0)
+                        } else {
+                            r
+                        };
+                        let badge_path = |cr: &cairo::Context| {
+                            cr.new_path();
+                            if badge_round >= r - 0.001 {
+                                cr.arc(bx, by, r, 0.0, 2.0 * std::f64::consts::PI);
+                            } else {
+                                rounded_rect_path(
+                                    cr,
+                                    bx - r,
+                                    by - r,
+                                    2.0 * r,
+                                    2.0 * r,
+                                    badge_round,
+                                );
+                            }
+                        };
+                        if hub_fill.alpha() > 0.001 {
+                            badge_path(cr);
+                            cr.set_source_rgba(
+                                hub_fill.red() as f64,
+                                hub_fill.green() as f64,
+                                hub_fill.blue() as f64,
+                                hub_fill.alpha() as f64 * fade,
+                            );
+                            let _ = cr.fill();
+                        }
+                        if hub_border.alpha() > 0.001 {
+                            badge_path(cr);
+                            cr.set_source_rgba(
+                                hub_border.red() as f64,
+                                hub_border.green() as f64,
+                                hub_border.blue() as f64,
+                                hub_border.alpha() as f64 * fade,
+                            );
+                            cr.set_line_width(2.0);
+                            let _ = cr.stroke();
+                        }
+
+                        let icon_idx = state_ref.history_icons.len().saturating_sub(depth + 1);
+                        let badge_icon = state_ref
+                            .history_icons
+                            .get(icon_idx)
+                            .cloned()
+                            .flatten()
+                            .or_else(|| {
+                                if depth == 0 {
+                                    Some("go-previous".to_string())
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(ref icon_name) = badge_icon {
+                            cr.set_source_rgba(
+                                hub_icon_color.red() as f64,
+                                hub_icon_color.green() as f64,
+                                hub_icon_color.blue() as f64,
+                                hub_icon_color.alpha() as f64 * fade,
+                            );
+                            draw_small_icon(&mut state_ref, area, cr, icon_name, r * 1.3, bx, by);
+                        }
+                    }
+                }
+            }
             let _ = cr.restore();
         });
         window.set_child(Some(&drawing_area));
@@ -2892,9 +3243,11 @@ impl LauncherApp {
         // Pausable frame clock controller: ensures 0.0% CPU when stationary/closed
         let is_animating = Rc::new(std::cell::Cell::new(false));
         let last_frame_time = Rc::new(RefCell::new(None));
+        let anim_gen = Rc::new(std::cell::Cell::new(0u64));
 
         let trigger_anim: Rc<dyn Fn()> = {
             let is_animating = is_animating.clone();
+            let anim_gen = anim_gen.clone();
             let last_frame_time = last_frame_time.clone();
             let tick_state = state.clone();
             let area_clone_tick = drawing_area.clone();
@@ -2907,21 +3260,46 @@ impl LauncherApp {
                 // are painted even when no hover animation ends up running.
                 area_clone_tick.queue_draw();
 
-                if is_animating.get() {
+                // A pending close must not wait on the paint-clock tick: if
+                // that tick was scheduled while the widget was unmapped it
+                // never fires, leaving is_closing and is_animating stranded
+                // forever (and every later open toggling the wrong way).
+                if tick_state.try_borrow().map(|s| s.is_closing).unwrap_or(false) {
+                    complete_close(
+                        &tick_state,
+                        &window_clone_tick,
+                        &menu_config_tick,
+                        &is_animating,
+                    );
                     return;
                 }
 
+                if is_animating.get() {
+                    return;
+                }
                 is_animating.set(true);
                 *last_frame_time.borrow_mut() = None;
+                let my_gen = {
+                    let g = anim_gen.get() + 1;
+                    anim_gen.set(g);
+                    g
+                };
 
                 let state_tick = tick_state.clone();
                 let area_tick = area_clone_tick.clone();
                 let win_tick = window_clone_tick.clone();
                 let config_tick = menu_config_tick.clone();
                 let anim_flag = is_animating.clone();
+                let gen_flag = anim_gen.clone();
                 let lft = last_frame_time.clone();
 
                 area_clone_tick.add_tick_callback(move |_widget, frame_clock| {
+                    // A newer trigger owns the animation now: retire
+                    // silently without touching the shared flag.
+                    if gen_flag.get() != my_gen {
+                        return glib::ControlFlow::Break;
+                    }
+
                     let mut state = match state_tick.try_borrow_mut() {
                         Ok(s) => s,
                         Err(_) => return glib::ControlFlow::Continue,
@@ -2938,19 +3316,8 @@ impl LauncherApp {
 
                     // Close instantly
                     if state.is_closing {
-                        state.is_closing = false;
-                        win_tick.hide();
-
-                        // Reset to root menu
-                        state.root_items = config_tick.menu.clone();
-                        state.root_icon = config_tick.icon.clone();
-                        state.reset_to_root();
-                        state.arm_cursor_capture();
-                        state.end_marking();
-                        if let Some(display) = gdk::Display::default() {
-                            state.preload_icons(&display);
-                        }
-                        anim_flag.set(false);
+                        drop(state);
+                        complete_close(&state_tick, &win_tick, &config_tick, &anim_flag);
                         return glib::ControlFlow::Break;
                     }
 
@@ -3025,8 +3392,16 @@ impl LauncherApp {
 
             let origin_set = state.note_pointer(x, y);
 
-            let (cx, cy) = state.menu_center(width, height, state.get_display_items().len());
-            let hovered = state.hit_test(x, y, cx, cy);
+            let n_disp = state.get_display_items().len();
+            let (cx, cy) = state.menu_center(width, height, n_disp);
+            let hovered = match state.breadcrumb_hit(x, y, cx, cy, n_disp) {
+                // Hovering a breadcrumb disc cues the Back wedge (it also
+                // backs up one step via the marking dwell); with the Back
+                // entry hidden there is nothing to cue, just suppress.
+                Some(_) if !state.hide_back_entry && n_disp > 0 => Some(n_disp - 1),
+                Some(_) => None,
+                None => state.hit_test(x, y, cx, cy),
+            };
             let mut hovered_changed = false;
 
             if state.hovered_index != hovered {
@@ -3177,8 +3552,18 @@ impl LauncherApp {
 
                 let mut activated = false;
 
-                // Center hub click - goes back in history if not at root
-                if dist < BASE_R {
+                // Breadcrumb disc: jump straight back that many levels
+                if let Some(depth) =
+                    state.breadcrumb_hit(x, y, cx, cy, state.get_display_items().len())
+                {
+                    for _ in 0..=depth {
+                        if !go_back(&mut state, &area_clone_click) {
+                            break;
+                        }
+                    }
+                    activated = true;
+                } else if dist < BASE_R {
+                    // Center hub click - goes back in history if not at root
                     if !state.history.is_empty() {
                         go_back(&mut state, &area_clone_click);
                         activated = true;
@@ -3643,6 +4028,8 @@ impl LauncherApp {
                                 state.marking_mode = cfg.ui.marking_mode;
                                 state.end_marking();
                             }
+                            state.marking_dwell_ms = cfg.ui.marking_dwell_ms.max(30);
+                            state.submenu_shift = cfg.ui.submenu_shift;
                             let new_blur = cfg.ui.enable_blur
                                 && cfg.ui.menu_style != "floating"
                                 && cfg.ui.menu_style != "floating-icons";
@@ -3657,7 +4044,10 @@ impl LauncherApp {
                             if let Some(display) = gdk::Display::default() {
                                 state.preload_icons(&display);
                             }
-                            info!("Reloaded scale: {}, extra_radius: {}", state.scale, state.extra_radius);
+                            info!(
+                                "Reloaded scale: {}, extra_radius: {}",
+                                state.scale, state.extra_radius
+                            );
                         }
 
                         if blur_needs_update {

@@ -115,6 +115,7 @@ impl ThemeEditor {
         is_saving: Rc<std::cell::Cell<bool>>,
     ) -> Self {
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
+        container.set_vexpand(true);
 
         let header_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
         let lbl_theme = gtk4::Label::new(Some("Theme:"));
@@ -131,11 +132,11 @@ impl ThemeEditor {
         scroll_ctrl_theme.connect_scroll(|_, _, _| glib::Propagation::Stop);
         combo_theme.add_controller(scroll_ctrl_theme);
 
-        let btn_new_theme = gtk4::Button::from_icon_name("document-new-symbolic");
+        let btn_new_theme = crate::icon_button("document-new-symbolic");
         btn_new_theme.set_tooltip_text(Some("Create a new theme with default values."));
-        let btn_rename_theme = gtk4::Button::from_icon_name("document-edit-symbolic");
+        let btn_rename_theme = crate::icon_button("document-edit-symbolic");
         btn_rename_theme.set_tooltip_text(Some("Rename the current theme."));
-        let btn_delete_theme = gtk4::Button::from_icon_name("user-trash-symbolic");
+        let btn_delete_theme = crate::icon_button("user-trash-symbolic");
         btn_delete_theme.set_tooltip_text(Some("Delete the current theme."));
 
         header_hbox.append(&lbl_theme);
