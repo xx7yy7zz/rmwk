@@ -187,6 +187,10 @@ pub struct UiConfig {
     /// pointing back to where the current menu came from.
     #[serde(default = "default_submenu_shift")]
     pub submenu_shift: bool,
+    /// Draw the breadcrumb trail of ancestor badges in non-anchored mode.
+    /// Only meaningful when `submenu_shift` is enabled.
+    #[serde(default = "default_show_breadcrumbs")]
+    pub show_breadcrumbs: bool,
 }
 
 fn default_scale() -> f64 { 1.0 }
@@ -200,6 +204,8 @@ fn default_marking_mode() -> bool { false }
 fn default_marking_dwell_ms() -> u32 { 180 }
 
 fn default_submenu_shift() -> bool { false }
+
+fn default_show_breadcrumbs() -> bool { true }
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
     None
@@ -236,6 +242,7 @@ impl Default for UiConfig {
             marking_mode: default_marking_mode(),
             marking_dwell_ms: default_marking_dwell_ms(),
             submenu_shift: default_submenu_shift(),
+            show_breadcrumbs: default_show_breadcrumbs(),
         }
     }
 }
@@ -506,7 +513,7 @@ fn spawn_xdg_open(target: String) -> Result<()> {
 pub fn load_material_codepoints<P: AsRef<Path>>(
     config_path: P,
 ) -> std::collections::HashMap<String, char> {
-    let mut map = std::collections::HashMap::new();
+    // Optional override: a user-supplied file in the config dir wins.
     let path = config_path
         .as_ref()
         .parent()
@@ -520,14 +527,31 @@ pub fn load_material_codepoints<P: AsRef<Path>>(
     };
 
     if let Ok(content) = fs::read_to_string(&resolved_path) {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() == 2 {
-                let name = parts[0].to_string();
-                if let Ok(code_val) = u32::from_str_radix(parts[1], 16) {
-                    if let Some(c) = char::from_u32(code_val) {
-                        map.insert(name, c);
-                    }
+        let map = parse_codepoints(&content);
+        if !map.is_empty() {
+            return map;
+        }
+    }
+    // Fall back to the copy embedded in the binary (parsed once per process).
+    embedded_codepoints().clone()
+}
+
+/// Parses the embedded codepoints exactly once per process.
+fn embedded_codepoints() -> &'static std::collections::HashMap<String, char> {
+    static CACHE: std::sync::OnceLock<std::collections::HashMap<String, char>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| parse_codepoints(MATERIAL_CODEPOINTS))
+}
+
+fn parse_codepoints(content: &str) -> std::collections::HashMap<String, char> {
+    let mut map = std::collections::HashMap::new();
+    for line in content.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() == 2 {
+            let name = parts[0].to_string();
+            if let Ok(code_val) = u32::from_str_radix(parts[1], 16) {
+                if let Some(c) = char::from_u32(code_val) {
+                    map.insert(name, c);
                 }
             }
         }
@@ -538,7 +562,7 @@ pub fn load_material_codepoints<P: AsRef<Path>>(
 pub fn load_material_tags<P: AsRef<Path>>(
     config_path: P,
 ) -> std::collections::HashMap<String, Vec<String>> {
-    let mut map = std::collections::HashMap::new();
+    // Optional override: a user-supplied file in the config dir wins.
     let path = config_path
         .as_ref()
         .parent()
@@ -552,24 +576,82 @@ pub fn load_material_tags<P: AsRef<Path>>(
     };
 
     if let Ok(content) = fs::read_to_string(&resolved_path) {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some(colon_idx) = line.find(':') {
-                let name = line[..colon_idx].trim().to_string();
-                let tags_str = &line[colon_idx + 1..];
-                let tags: Vec<String> = tags_str
-                    .split(',')
-                    .map(|s| s.trim().to_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                map.entry(name).or_insert_with(Vec::new).extend(tags);
-            }
+        let map = parse_tags(&content);
+        if !map.is_empty() {
+            return map;
+        }
+    }
+    // Parsed once per process: the tags file is ~2MB, so re-parsing it on
+    // every icon-picker open was the dominant cost.
+    embedded_tags().clone()
+}
+
+/// Parses the embedded tags exactly once per process.
+fn embedded_tags() -> &'static std::collections::HashMap<String, Vec<String>> {
+    static CACHE: std::sync::OnceLock<std::collections::HashMap<String, Vec<String>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| parse_tags(MATERIAL_TAGS))
+}
+
+fn parse_tags(content: &str) -> std::collections::HashMap<String, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(colon_idx) = line.find(':') {
+            let name = line[..colon_idx].trim().to_string();
+            let tags_str = &line[colon_idx + 1..];
+            let tags: Vec<String> = tags_str
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            map.entry(name).or_insert_with(Vec::new).extend(tags);
         }
     }
     map
+}
+
+/// Material Symbols data embedded in the binary so the launcher and settings
+/// app work without any files in the config directory.
+const MATERIAL_CODEPOINTS: &str = include_str!("../assets/MaterialSymbolsRounded.codepoints");
+const MATERIAL_TAGS: &str = include_str!("../assets/MaterialSymbolsRounded.tags");
+const MATERIAL_FONT_TTF: &[u8] = include_bytes!("../assets/MaterialSymbolsRounded.ttf");
+
+#[link(name = "fontconfig")]
+extern "C" {
+    fn FcConfigAppFontAddFile(config: *mut std::ffi::c_void, file: *const i8) -> i32;
+}
+
+/// Makes the embedded Material Symbols font available to Pango/GTK without
+/// requiring it to be installed system-wide or shipped in the config dir.
+/// The font bytes are materialized into the cache dir once and registered
+/// with fontconfig's current config. Safe to call multiple times and on
+/// systems where the font is already installed (fontconfig de-duplicates).
+pub fn register_embedded_font() {
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("rmwk")
+        .join("fonts");
+    if std::fs::create_dir_all(&cache_dir).is_err() {
+        return;
+    }
+    let font_file = cache_dir.join("MaterialSymbolsRounded.ttf");
+    // Rewrite only when missing or a different size (i.e. updated build).
+    let needs_write = fs::metadata(&font_file)
+        .map(|m| m.len() != MATERIAL_FONT_TTF.len() as u64)
+        .unwrap_or(true);
+    if needs_write && fs::write(&font_file, MATERIAL_FONT_TTF).is_err() {
+        return;
+    }
+    if let Some(c_path) = font_file.to_str().and_then(|s| std::ffi::CString::new(s).ok()) {
+        // NULL config => FcConfigGetCurrent(); applies to Pango's font map.
+        unsafe {
+            FcConfigAppFontAddFile(std::ptr::null_mut(), c_path.as_ptr());
+        }
+    }
 }
 
 #[cfg(test)]

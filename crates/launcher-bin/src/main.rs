@@ -78,6 +78,9 @@ font = "Sans 11"
 fn main() -> anyhow::Result<()> {
     launcher_core::init_process_reaper();
     init_logging();
+    // Register the embedded Material Symbols font before any text is laid
+    // out, so glyphs render without a system/config-dir font install.
+    launcher_core::register_embedded_font();
 
     let cli = Cli::parse();
     let command = cli.command.clone().unwrap_or(Commands::Open { menu_name: None });

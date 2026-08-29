@@ -212,6 +212,7 @@ struct MenuState {
     // from its spawn anchor, plus the parallel stacks of parent/forward
     // offsets kept alongside the history vectors.
     submenu_shift: bool,
+    show_breadcrumbs: bool,
     nav_offset: (f64, f64),
     history_offsets: Vec<(f64, f64)>,
     forward_history_offsets: Vec<(f64, f64)>,
@@ -231,7 +232,7 @@ struct MenuState {
     text_layout_cache: HashMap<(String, u32), gtk::pango::Layout>,
 
     // Cached Pango layouts for Material Symbols glyphs (avoids shaping every frame)
-    material_layout_cache: HashMap<(String, u32), gtk::pango::Layout>,
+    material_layout_cache: HashMap<(char, u32), gtk::pango::Layout>,
 
     // Cached Pango layouts for slice labels
     label_layout_cache: HashMap<String, gtk::pango::Layout>,
@@ -285,7 +286,10 @@ impl MenuState {
         if !self.history.is_empty() && !self.hide_back_entry {
             items.push(launcher_core::MenuItem {
                 label: "Back".to_string(),
-                icon: Some("go-previous".to_string()),
+                // Material glyph (not the "go-previous" system icon) so it
+                // renders through the colored-glyph path and picks up the
+                // entry icon / entry icon hover theme colors.
+                icon: Some("arrow_back".to_string()),
                 action: None,
                 quick_select_key: Some('B'), // Added quick select for "Back"
                 children: vec![],
@@ -406,7 +410,9 @@ impl MenuState {
         size: f64,
     ) -> gtk::pango::Layout {
         let font_size = size.round().max(1.0) as u32;
-        let key = (codepoint.to_string(), font_size);
+        // Keyed by char (not String) to avoid a per-frame heap allocation:
+        // this runs for every material glyph on every animated frame.
+        let key = (codepoint, font_size);
         if let Some(l) = self.material_layout_cache.get(&key) {
             return l.clone();
         }
@@ -500,7 +506,7 @@ impl MenuState {
         let mut m = self.visual_radius(n) + SCREEN_MARGIN;
         // Reserve room for the "came from" badge so it can't hang off
         // the monitor edge (conservative: applied in all directions).
-        if self.submenu_shift && !self.history_offsets.is_empty() {
+        if self.submenu_shift && self.show_breadcrumbs && !self.history_offsets.is_empty() {
             m += (BREADCRUMB_GAP + 2.0 * BREADCRUMB_R) * s;
         }
         let x = ox + offset.0 * s;
@@ -564,7 +570,7 @@ impl MenuState {
     /// Which breadcrumb disc (if any) covers the given screen point;
     /// 0 = immediate parent. Clicking one jumps back that many levels.
     fn breadcrumb_hit(&self, x: f64, y: f64, cx: f64, cy: f64, n: usize) -> Option<usize> {
-        if !self.submenu_shift || self.history_offsets.is_empty() {
+        if !self.submenu_shift || !self.show_breadcrumbs || self.history_offsets.is_empty() {
             return None;
         }
         let s = self.scale.max(0.01);
@@ -1376,7 +1382,7 @@ pub struct LauncherApp {
 impl LauncherApp {
     pub fn new(menu_path: PathBuf, config_path: PathBuf, start_hidden: bool) -> Self {
         let app = gtk::Application::builder()
-            .application_id("org.rmwk.launcher")
+            .application_id("rmwk.launcher")
             .build();
 
         Self {
@@ -1598,6 +1604,7 @@ impl LauncherApp {
             marking_dwell: None,
             marking_dwell_ms: ui_config.marking_dwell_ms.max(30),
             submenu_shift: ui_config.submenu_shift,
+            show_breadcrumbs: ui_config.show_breadcrumbs,
             nav_offset: (0.0, 0.0),
             history_offsets: vec![],
             forward_history_offsets: vec![],
@@ -3137,31 +3144,9 @@ impl LauncherApp {
             // showing that level's hub icon and pointing back along the
             // direction it was reached from. hit_test() keeps them out of
             // the wedge logic; the event handlers use breadcrumb_hit().
-            if state_ref.submenu_shift && !state_ref.history_offsets.is_empty() {
+            if state_ref.submenu_shift && state_ref.show_breadcrumbs && !state_ref.history_offsets.is_empty() {
                 let layout = state_ref.breadcrumb_layout(n);
                 if !layout.is_empty() {
-                    let ring_r = state_ref.visual_radius_base(n);
-                    let ((fx, fy), _) = layout[0];
-                    let fl = (fx * fx + fy * fy).sqrt();
-                    if fl > 1e-6 && hub_border.alpha() > 0.001 {
-                        // Dashed guide from the ring edge through the discs
-                        let _ = cr.save();
-                        cr.set_dash(&[6.0, 6.0], 0.0);
-                        cr.set_line_width(2.0);
-                        cr.set_source_rgba(
-                            hub_border.red() as f64,
-                            hub_border.green() as f64,
-                            hub_border.blue() as f64,
-                            hub_border.alpha() as f64 * 0.5,
-                        );
-                        cr.move_to(cx + fx / fl * (ring_r + 4.0), cy + fy / fl * (ring_r + 4.0));
-                        for &((dx, dy), _) in layout.iter() {
-                            cr.line_to(cx + dx, cy + dy);
-                        }
-                        let _ = cr.stroke();
-                        let _ = cr.restore();
-                    }
-
                     // Discs farthest-first, so the immediate parent ends up
                     // on top. Shape mirrors the hub: circles in pie mode,
                     // pill_roundness-rounded squares in the floating modes.
@@ -3219,7 +3204,7 @@ impl LauncherApp {
                             .flatten()
                             .or_else(|| {
                                 if depth == 0 {
-                                    Some("go-previous".to_string())
+                                    Some("arrow_back".to_string())
                                 } else {
                                     None
                                 }
@@ -4030,6 +4015,7 @@ impl LauncherApp {
                             }
                             state.marking_dwell_ms = cfg.ui.marking_dwell_ms.max(30);
                             state.submenu_shift = cfg.ui.submenu_shift;
+                            state.show_breadcrumbs = cfg.ui.show_breadcrumbs;
                             let new_blur = cfg.ui.enable_blur
                                 && cfg.ui.menu_style != "floating"
                                 && cfg.ui.menu_style != "floating-icons";

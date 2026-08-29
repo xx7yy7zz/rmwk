@@ -72,6 +72,55 @@ fn icon_button(icon_name: &str) -> gtk::Button {
     btn
 }
 
+/// Installs the embedded logo so it shows as the window/taskbar icon.
+///
+/// On Wayland the compositor resolves a window's icon from its app-id via a
+/// matching `.desktop` file, *not* from GTK's `set_icon_name`, so we install
+/// into the standard user locations (no root required):
+///   - `~/.local/share/icons/hicolor/scalable/apps/rmwk.svg`
+///   - `~/.local/share/applications/rmwk.settings.desktop` (Icon=rmwk)
+/// The desktop file's basename matches the GApplication id (`rmwk.settings`)
+/// so compositors/bars map the window to the icon. `set_icon_name` is still
+/// called for X11/XWayland and in-app lookups.
+fn install_window_icon(window: &gtk::ApplicationWindow) {
+    const LOGO_SVG: &str = include_str!("../../../logo.svg");
+    let Some(data) = dirs::data_dir() else {
+        return;
+    };
+
+    // Icon theme (user-level hicolor).
+    let icon_dir = data.join("icons").join("hicolor").join("scalable").join("apps");
+    if std::fs::create_dir_all(&icon_dir).is_ok() {
+        let _ = std::fs::write(icon_dir.join("rmwk.svg"), LOGO_SVG);
+    }
+
+    // Desktop entry whose basename matches the GApplication id so Wayland
+    // compositors/bars map this window to the icon.
+    let apps_dir = data.join("applications");
+    if std::fs::create_dir_all(&apps_dir).is_ok() {
+        let desktop = "\
+[Desktop Entry]
+Type=Application
+Name=rmwk Settings
+Comment=Configure the rmwk radial launcher
+Exec=rmwk settings
+Icon=rmwk
+Terminal=false
+Categories=Settings;GTK;
+StartupWMClass=rmwk.settings
+";
+        let _ = std::fs::write(apps_dir.join("rmwk.settings.desktop"), desktop);
+    }
+
+    // Keep the icon resolvable inside our own process too.
+    if let Some(display) = gdk::Display::default() {
+        if let Some(p) = data.join("icons").to_str() {
+            gtk::IconTheme::for_display(&display).add_search_path(p);
+        }
+    }
+    window.set_icon_name(Some("rmwk"));
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CopiedNode {
     label: String,
@@ -124,7 +173,7 @@ pub struct SettingsApp {
 impl SettingsApp {
     pub fn new(menu_path: PathBuf, config_path: PathBuf) -> Self {
         let app = gtk::Application::builder()
-            .application_id("org.rmwk.settings")
+            .application_id("rmwk.settings")
             .build();
 
         Self {
@@ -230,6 +279,7 @@ impl SettingsApp {
         let window = gtk::ApplicationWindow::new(app);
         window.set_title(Some("rmwk Settings"));
         window.set_default_size(800, 500);
+        install_window_icon(&window);
 
         let font_provider = gtk::CssProvider::new();
         let font_css = "
@@ -874,6 +924,11 @@ impl SettingsApp {
         let chk_submenu_shift = gtk::CheckButton::with_label("Non-Anchored Submenus");
         chk_submenu_shift.set_active(ui_config.ui.submenu_shift);
 
+        let chk_show_breadcrumbs = gtk::CheckButton::with_label("Show Breadcrumbs");
+        chk_show_breadcrumbs.set_active(ui_config.ui.show_breadcrumbs);
+        chk_show_breadcrumbs.set_sensitive(ui_config.ui.submenu_shift);
+        chk_show_breadcrumbs.set_tooltip_text(Some("Show the breadcrumb badges that mark the menus you walked through. Only applies when Non-Anchored Submenus is on."));
+
         let chk_disable_hover_anim = gtk::CheckButton::with_label("Disable Hover Animation");
         chk_disable_hover_anim.set_active(ui_config.ui.disable_hover_animation);
 
@@ -980,6 +1035,15 @@ impl SettingsApp {
         scale_slider.set_hexpand(true);
         scale_slider.set_digits(2);
         scale_slider.set_draw_value(false);
+        {
+            // Ignore scroll-wheel so the slider only changes on click/drag,
+            // not when the pointer happens to pass over it while scrolling.
+            let sc = gtk::EventControllerScroll::new(
+                gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::HORIZONTAL,
+            );
+            sc.connect_scroll(|_, _, _| gtk::glib::Propagation::Stop);
+            scale_slider.add_controller(sc);
+        }
         scale_slider.add_mark(1.00, gtk::PositionType::Bottom, Some("1.00"));
 
         let spin_scale = gtk::SpinButton::new(Some(&scale_adj), 0.05, 2);
@@ -1070,6 +1134,13 @@ impl SettingsApp {
         marking_speed_slider.set_hexpand(true);
         marking_speed_slider.set_digits(0);
         marking_speed_slider.set_draw_value(false);
+        {
+            let sc = gtk::EventControllerScroll::new(
+                gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::HORIZONTAL,
+            );
+            sc.connect_scroll(|_, _, _| gtk::glib::Propagation::Stop);
+            marking_speed_slider.add_controller(sc);
+        }
         marking_speed_slider.add_mark(
             marking_pct_from_ms(180),
             gtk::PositionType::Bottom,
@@ -1089,14 +1160,155 @@ impl SettingsApp {
         submenu_shift_hbox.append(&chk_submenu_shift);
         submenu_shift_hbox.append(&icon_submenu_shift);
         checkboxes_vbox.append(&submenu_shift_hbox);
+        chk_show_breadcrumbs.set_margin_start(24);
+        checkboxes_vbox.append(&chk_show_breadcrumbs);
+        {
+            let chk_bc = chk_show_breadcrumbs.clone();
+            chk_submenu_shift.connect_toggled(move |cb| {
+                chk_bc.set_sensitive(cb.is_active());
+            });
+        }
         checkboxes_vbox.append(&chk_disable_hover_anim);
         right_scroll_box.append(&checkboxes_vbox);
 
-        // Save button stays immediately below checkboxes
-        let btn_save = gtk::Button::with_label("Save & Apply Settings");
+        // Save / Discard row sits immediately below the checkboxes
+        let btn_discard = gtk::Button::with_label("Discard");
+        btn_discard.set_hexpand(true);
+        btn_discard.add_css_class("destructive-action");
+        btn_discard.set_tooltip_text(Some("Revert all in-view settings to their last saved values."));
+        let btn_save = gtk::Button::with_label("Save & Apply");
         btn_save.set_hexpand(true);
         btn_save.add_css_class("suggested-action");
-        right_scroll_box.append(&btn_save);
+        let save_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        save_row.append(&btn_discard);
+        save_row.append(&btn_save);
+        right_scroll_box.append(&save_row);
+
+        // Discard asks for confirmation, then re-reads config.toml and the
+        // active menu file from disk, restoring every control and the tree.
+        {
+            let cp = config_path.clone();
+            let win = window.clone();
+            let store = store.clone();
+            let tree_view = tree_view.clone();
+            let amp = active_menu_path.clone();
+            let scale_adj = scale_adj.clone();
+            let spin_r = spin_extra_radius.clone();
+            let spin_pill = spin_pill_roundness.clone();
+            let chk_pie = chk_pie_spacing.clone();
+            let chk_sym = chk_symbolic_icons.clone();
+            let chk_bold = chk_bold_chars.clone();
+            let chk_cnt = chk_center_layout.clone();
+            let chk_hide = chk_hide_back_entry.clone();
+            let chk_spawn = chk_open_at_center.clone();
+            let chk_mark = chk_marking_mode.clone();
+            let mark_adj = marking_speed_adj.clone();
+            let chk_shift = chk_submenu_shift.clone();
+            let chk_bc = chk_show_breadcrumbs.clone();
+            let chk_dis = chk_disable_hover_anim.clone();
+            let chk_blr = chk_enable_blur.clone();
+            let combo_vis = combo_visual_cue.clone();
+            let combo_sty = combo_menu_style.clone();
+            let combo_th = combo_theme.clone();
+            btn_discard.connect_clicked(move |_| {
+                let dialog = gtk::MessageDialog::builder()
+                    .text("Discard Changes?")
+                    .secondary_text(
+                        "Revert all unsaved settings and menu edits back to their last saved values?",
+                    )
+                    .buttons(gtk::ButtonsType::OkCancel)
+                    .modal(true)
+                    .transient_for(&win)
+                    .build();
+
+                let cp = cp.clone();
+                let store = store.clone();
+                let tree_view = tree_view.clone();
+                let amp = amp.clone();
+                let scale_adj = scale_adj.clone();
+                let spin_r = spin_r.clone();
+                let spin_pill = spin_pill.clone();
+                let chk_pie = chk_pie.clone();
+                let chk_sym = chk_sym.clone();
+                let chk_bold = chk_bold.clone();
+                let chk_cnt = chk_cnt.clone();
+                let chk_hide = chk_hide.clone();
+                let chk_spawn = chk_spawn.clone();
+                let chk_mark = chk_mark.clone();
+                let mark_adj = mark_adj.clone();
+                let chk_shift = chk_shift.clone();
+                let chk_bc = chk_bc.clone();
+                let chk_dis = chk_dis.clone();
+                let chk_blr = chk_blr.clone();
+                let combo_vis = combo_vis.clone();
+                let combo_sty = combo_sty.clone();
+                let combo_th = combo_th.clone();
+                dialog.connect_response(move |d, response| {
+                    if response == gtk::ResponseType::Ok {
+                        if let Ok(cfg) = launcher_core::load_config(&cp) {
+                            scale_adj.set_value(cfg.ui.scale);
+                            spin_r.set_value(cfg.ui.extra_radius);
+                            spin_pill.set_value(cfg.ui.pill_roundness * 100.0);
+                            chk_pie.set_active(cfg.ui.enable_pie_spacing);
+                            chk_sym.set_active(cfg.ui.use_symbolic_icons);
+                            chk_bold.set_active(cfg.ui.bold_single_chars);
+                            chk_cnt.set_active(cfg.ui.center_layout);
+                            chk_hide.set_active(cfg.ui.hide_back_entry);
+                            chk_spawn.set_active(!cfg.ui.spawn_at_cursor);
+                            chk_mark.set_active(cfg.ui.marking_mode);
+                            mark_adj.set_value(marking_pct_from_ms(cfg.ui.marking_dwell_ms));
+                            chk_shift.set_active(cfg.ui.submenu_shift);
+                            chk_bc.set_active(cfg.ui.show_breadcrumbs);
+                            chk_bc.set_sensitive(cfg.ui.submenu_shift);
+                            chk_dis.set_active(cfg.ui.disable_hover_animation);
+                            chk_blr.set_active(cfg.ui.enable_blur);
+                            combo_vis.set_selected(match cfg.ui.hover_visual_cue.as_str() {
+                                "sides" => 1,
+                                "none" => 2,
+                                _ => 0,
+                            });
+                            combo_sty.set_selected(match cfg.ui.menu_style.as_str() {
+                                "floating" => 1,
+                                "floating-icons" => 2,
+                                _ => 0,
+                            });
+                            crate::dropdown_utils::dropdown_set_active_id(&combo_th, &cfg.ui.theme);
+                        }
+
+                        // Reload the active menu tree from disk, discarding
+                        // any unsaved edits made in the tree view.
+                        let path = amp.borrow().clone();
+                        let name = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("menu")
+                            .to_string();
+                        if let Ok(m) = launcher_core::load_menu(&path) {
+                            store.clear();
+                            let root_icon = m.icon.clone().unwrap_or_else(|| "menu".to_string());
+                            let root_iter = store.insert_with_values(
+                                None,
+                                None,
+                                &[
+                                    (0, &root_icon.to_value()),
+                                    (1, &format!("{} (Root)", name).to_value()),
+                                    (2, &"root".to_value()),
+                                    (3, &"".to_value()),
+                                    (4, &false.to_value()),
+                                    (5, &"".to_value()),
+                                ],
+                            );
+                            Self::populate_store(&store, Some(&root_iter), &m.menu);
+                            let root_path = store.path(&root_iter);
+                            tree_view.expand_row(&root_path, false);
+                            tree_view.selection().select_iter(&root_iter);
+                        }
+                    }
+                    d.destroy();
+                });
+                dialog.present();
+            });
+        }
 
         // Spacer to push everything else down
         let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2087,6 +2299,7 @@ impl SettingsApp {
         let chk_marking_mode_save = chk_marking_mode.clone();
         let marking_speed_slider_save = marking_speed_slider.clone();
         let chk_submenu_shift_save = chk_submenu_shift.clone();
+        let chk_show_breadcrumbs_save = chk_show_breadcrumbs.clone();
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
@@ -2141,6 +2354,7 @@ impl SettingsApp {
                 cfg.ui.marking_mode = chk_marking_mode_save.is_active();
                 cfg.ui.marking_dwell_ms = marking_ms_from_pct(marking_speed_slider_save.value());
                 cfg.ui.submenu_shift = chk_submenu_shift_save.is_active();
+                cfg.ui.show_breadcrumbs = chk_show_breadcrumbs_save.is_active();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = match combo_visual_cue_save.selected() {
                     1 => "sides".to_string(),
@@ -2265,6 +2479,7 @@ impl SettingsApp {
         let chk_marking_mode_watch = chk_marking_mode.clone();
         let marking_speed_adj_watch = marking_speed_adj.clone();
         let chk_submenu_shift_watch = chk_submenu_shift.clone();
+        let chk_show_breadcrumbs_watch = chk_show_breadcrumbs.clone();
         let chk_disable_hover_anim_watch = chk_disable_hover_anim.clone();
         let combo_visual_cue_watch = combo_visual_cue.clone();
         let combo_menu_style_watch = combo_menu_style.clone();
@@ -2290,6 +2505,7 @@ impl SettingsApp {
             let chk_marking = chk_marking_mode_watch.clone();
             let mark_speed = marking_speed_adj_watch.clone();
             let chk_shift = chk_submenu_shift_watch.clone();
+            let chk_bc = chk_show_breadcrumbs_watch.clone();
             let chk_dis = chk_disable_hover_anim_watch.clone();
             let chk_blr = chk_enable_blur_watch.clone();
             let combo_vis = combo_visual_cue_watch.clone();
@@ -2319,6 +2535,7 @@ impl SettingsApp {
                     let chk_marking_cb = chk_marking.clone();
                     let mark_speed_cb = mark_speed.clone();
                     let chk_shift_cb = chk_shift.clone();
+                    let chk_bc_cb = chk_bc.clone();
                     let chk_dis_cb = chk_dis.clone();
                     let chk_blr_cb = chk_blr.clone();
                     let combo_vis_cb = combo_vis.clone();
@@ -2347,6 +2564,8 @@ impl SettingsApp {
                                 chk_marking_cb.set_active(cfg.ui.marking_mode);
                                 mark_speed_cb.set_value(marking_pct_from_ms(cfg.ui.marking_dwell_ms));
                                 chk_shift_cb.set_active(cfg.ui.submenu_shift);
+                                chk_bc_cb.set_active(cfg.ui.show_breadcrumbs);
+                                chk_bc_cb.set_sensitive(cfg.ui.submenu_shift);
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
                                 let selected_idx = match cfg.ui.hover_visual_cue.as_str() {
