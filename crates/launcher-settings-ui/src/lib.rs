@@ -20,9 +20,14 @@ fn marking_ms_from_pct(pct: f64) -> u32 {
     (500.0 - 4.5 * pct.clamp(0.0, 100.0)).round().clamp(50.0, 500.0) as u32
 }
 
-/// Whether the active icon theme can provide `icon_name`.
+/// Whether the active icon theme can provide `icon_name`. Must query the
+/// display's configured theme: `IconTheme::default()` returns a detached
+/// theme with no search paths, which reports everything as missing.
 fn icon_theme_has(icon_name: &str) -> bool {
-    gtk::IconTheme::default().has_icon(icon_name)
+    match gdk::Display::default() {
+        Some(display) => gtk::IconTheme::for_display(&display).has_icon(icon_name),
+        None => true,
+    }
 }
 
 /// Plain-text glyphs used when the active icon theme lacks an icon
@@ -273,6 +278,10 @@ impl SettingsApp {
         // tabs so neither feels crowded.
         let menu_tab_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
         menu_tab_box.set_vexpand(true);
+        menu_tab_box.set_margin_start(6);
+        menu_tab_box.set_margin_end(6);
+        menu_tab_box.set_margin_top(6);
+        menu_tab_box.set_margin_bottom(6);
 
         let active_menu_path = Rc::new(RefCell::new(menu_path.clone()));
         let is_saving = Rc::new(std::cell::Cell::new(false));
@@ -401,6 +410,8 @@ impl SettingsApp {
             std::rc::Rc::new(std::cell::RefCell::new(None));
 
         let tree_overlay = gtk::Overlay::new();
+        tree_overlay.set_vexpand(true);
+        tree_overlay.set_hexpand(true);
         tree_overlay.set_child(Some(&scroll_win));
         let drop_indicator = gtk::DrawingArea::new();
         drop_indicator.set_can_target(false);
@@ -1010,9 +1021,19 @@ impl SettingsApp {
         menu_settings_frame.set_child(Some(&menu_settings_grid));
         right_vbox.append(&menu_settings_frame);
 
+        // Properties and Menu Settings stay pinned; everything below
+        // them (sliders, checkboxes, save, help) scrolls together.
+        let right_scroll_box = gtk::Box::new(gtk::Orientation::Vertical, 15);
+        right_scroll_box.set_hexpand(true);
+        let right_scroll = gtk::ScrolledWindow::new();
+        right_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        right_scroll.set_vexpand(true);
+        right_scroll.set_child(Some(&right_scroll_box));
+        right_vbox.append(&right_scroll);
+
         settings_vbox.append(&scale_hbox);
         settings_vbox.append(&extra_radius_hbox);
-        right_vbox.append(&settings_vbox);
+        right_scroll_box.append(&settings_vbox);
 
         let checkboxes_vbox = gtk::Box::new(gtk::Orientation::Vertical, 10);
         let icon_symbolic_icons = icon_or_fallback("dialog-information");
@@ -1069,18 +1090,18 @@ impl SettingsApp {
         submenu_shift_hbox.append(&icon_submenu_shift);
         checkboxes_vbox.append(&submenu_shift_hbox);
         checkboxes_vbox.append(&chk_disable_hover_anim);
-        right_vbox.append(&checkboxes_vbox);
+        right_scroll_box.append(&checkboxes_vbox);
 
         // Save button stays immediately below checkboxes
         let btn_save = gtk::Button::with_label("Save & Apply Settings");
         btn_save.set_hexpand(true);
         btn_save.add_css_class("suggested-action");
-        right_vbox.append(&btn_save);
+        right_scroll_box.append(&btn_save);
 
         // Spacer to push everything else down
         let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         spacer.set_vexpand(true);
-        right_vbox.append(&spacer);
+        right_scroll_box.append(&spacer);
 
         // Help Button
         let btn_help = icon_button("help-about-symbolic");
@@ -1118,7 +1139,7 @@ impl SettingsApp {
         help_hbox.set_halign(gtk::Align::End);
         help_hbox.append(&btn_help);
 
-        right_vbox.append(&help_hbox);
+        right_scroll_box.append(&help_hbox);
         main_box.append(&right_vbox);
 
         window.set_child(Some(&main_box));

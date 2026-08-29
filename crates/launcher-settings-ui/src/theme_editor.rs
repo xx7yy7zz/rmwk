@@ -116,6 +116,10 @@ impl ThemeEditor {
     ) -> Self {
         let container = gtk4::Box::new(gtk4::Orientation::Vertical, 10);
         container.set_vexpand(true);
+        container.set_margin_start(6);
+        container.set_margin_end(6);
+        container.set_margin_top(6);
+        container.set_margin_bottom(6);
 
         let header_hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
         let lbl_theme = gtk4::Label::new(Some("Theme:"));
@@ -177,6 +181,13 @@ impl ThemeEditor {
         let active_monitor = Rc::new(RefCell::new(None::<gio::FileMonitor>));
         let active_monitor_c = active_monitor.clone();
         let is_saving_mon = is_saving.clone();
+        let config_path_notify = config_path.clone();
+        let is_saving_notify = is_saving.clone();
+        // The dropdown fires "selected" once during construction (the manual
+        // notify below); skip persisting that initial value so opening the
+        // settings app never rewrites config.toml or reloads the launcher.
+        let persist_init = Rc::new(std::cell::Cell::new(false));
+        let persist_init_c = persist_init.clone();
 
         combo_theme.connect_notify_local(Some("selected"), move |combo, _| {
             if let Some(m) = active_monitor_c.borrow_mut().take() {
@@ -255,6 +266,38 @@ impl ThemeEditor {
                         });
                         *active_monitor_c.borrow_mut() = Some(monitor);
                     }
+                }
+
+                // Selecting a theme applies it immediately: persist the
+                // active theme to config.toml and hot-reload the launcher
+                // rather than waiting for Save & Apply Settings.
+                if persist_init_c.get() {
+                    if let Ok(mut cfg) = launcher_core::load_config(&config_path_notify) {
+                        if cfg.ui.theme != id {
+                            cfg.ui.theme = id.to_string();
+                            is_saving_notify.set(true);
+                            if let Ok(content) = toml::to_string_pretty(&cfg) {
+                                let _ = std::fs::write(&config_path_notify, content);
+                            }
+                            let is_sav = is_saving_notify.clone();
+                            gtk4::glib::timeout_add_local(
+                                std::time::Duration::from_millis(300),
+                                move || {
+                                    is_sav.set(false);
+                                    gtk4::glib::ControlFlow::Break
+                                },
+                            );
+                        }
+                    }
+                    let socket_path = launcher_ipc::get_socket_path();
+                    if socket_path.exists() {
+                        let _ = launcher_ipc::send_message_sync(
+                            &socket_path,
+                            &launcher_ipc::IpcMessage::ReloadConfig,
+                        );
+                    }
+                } else {
+                    persist_init_c.set(true);
                 }
             }
         });
