@@ -2,6 +2,7 @@ use gdk::prelude::*;
 use gdk4 as gdk;
 use gtk::prelude::*;
 use gtk4 as gtk;
+pub mod tray;
 pub mod wayland;
 
 use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
@@ -3861,6 +3862,12 @@ impl LauncherApp {
         let server_handle_wrapper = Arc::new(Mutex::new(Some(server_handle)));
         let server_handle_clone = server_handle_wrapper.clone();
 
+        // System tray (StatusNotifierItem). Lifetime tied to this process:
+        // while the daemon runs the icon shows; on exit the bus name drops
+        // and the host removes it. Left-click opens settings; the menu has
+        // Open Settings / Exit.
+        tray::spawn_tray(ipc_tx.clone());
+
         // Monitor config and menu files using exact same logic as theme_editor.
         // Both share one debounce window: a settings save touches the menu
         // file *and* config.toml and each write emits several monitor events;
@@ -3938,6 +3945,8 @@ impl LauncherApp {
         let trigger_anim_ipc = trigger_anim.clone();
 
         let window_clone_ipc = window.clone();
+        let app_clone_ipc = app.clone();
+        let server_handle_ipc = server_handle_wrapper.clone();
         glib::MainContext::default().spawn_local(async move {
             while let Some(msg) = ipc_rx.recv().await {
                 debug!("Received IPC message in UI thread: {:?}", msg);
@@ -3985,6 +3994,16 @@ impl LauncherApp {
                             drop(state);
                             trigger_anim_ipc();
                         }
+                    }
+                    IpcMessage::Quit => {
+                        info!("Quitting via IPC (tray Exit)");
+                        window_clone_ipc.hide();
+                        // Release the socket first so a fresh instance can
+                        // bind immediately even if teardown lags.
+                        if let Some(handle) = server_handle_ipc.lock().unwrap().take() {
+                            handle.shutdown();
+                        }
+                        app_clone_ipc.quit();
                     }
                     IpcMessage::OpenMenu {
                         menu_path: new_menu_path,

@@ -85,20 +85,12 @@ fn icon_button(icon_name: &str) -> gtk::Button {
 /// so compositors/bars map the window to the icon. `set_icon_name` is still
 /// called for X11/XWayland and in-app lookups.
 fn install_window_icon(window: &gtk::ApplicationWindow) {
-    const LOGO_SVG: &str = include_str!("../../../logo.svg");
     let Some(data) = dirs::data_dir() else {
         return;
     };
 
-    // Icon theme (user-level hicolor).
-    let icon_dir = data
-        .join("icons")
-        .join("hicolor")
-        .join("scalable")
-        .join("apps");
-    if std::fs::create_dir_all(&icon_dir).is_ok() {
-        let _ = std::fs::write(icon_dir.join("rmwk.svg"), LOGO_SVG);
-    }
+    // Icon theme (user-level hicolor), shared with the launcher tray icon.
+    launcher_core::install_user_icon();
 
     // Desktop entry whose basename matches the GApplication id so Wayland
     // compositors/bars map this window to the icon.

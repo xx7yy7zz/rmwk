@@ -662,6 +662,23 @@ pub fn register_embedded_font() {
     }
 }
 
+/// The rmwk logo, embedded so both the launcher (tray icon) and the
+/// settings app can install it without shipping data files.
+pub const LOGO_SVG: &str = include_str!("../../../logo.svg");
+
+/// Writes the embedded logo to the user icon theme so any icon-theme-aware
+/// consumer (panels, trays, the window manager) can resolve "rmwk" by
+/// name. Returns the theme root path for use as an IconThemePath.
+pub fn install_user_icon() -> Option<std::path::PathBuf> {
+    let data = dirs::data_dir()?;
+    let theme_root = data.join("icons");
+    let apps = theme_root.join("hicolor").join("scalable").join("apps");
+    if std::fs::create_dir_all(&apps).is_ok() {
+        let _ = std::fs::write(apps.join("rmwk.svg"), LOGO_SVG);
+    }
+    Some(theme_root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

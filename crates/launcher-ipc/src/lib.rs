@@ -16,6 +16,8 @@ pub enum IpcMessage {
     Toggle,
     ReloadConfig,
     OpenMenu { menu_path: PathBuf },
+    /// Cleanly shut down the running instance (used by the tray menu).
+    Quit,
 }
 
 pub fn get_socket_path() -> PathBuf {
