@@ -1183,6 +1183,26 @@ impl SettingsApp {
             });
         }
         checkboxes_vbox.append(&chk_disable_hover_anim);
+
+        let lbl_hotspot = gtk::Label::new(Some("Settings Hotspot:"));
+        lbl_hotspot.set_halign(gtk::Align::Start);
+        let combo_hotspot_model =
+            gtk::StringList::new(&["None", "Top Left", "Top Right", "Bottom Left", "Bottom Right"]);
+        let combo_hotspot = gtk::DropDown::new(Some(combo_hotspot_model), gtk::Expression::NONE);
+        combo_hotspot.set_selected(match ui_config.ui.settings_hotspot_corner.as_str() {
+            "top-left" => 1,
+            "top-right" => 2,
+            "bottom-left" => 3,
+            "bottom-right" => 4,
+            _ => 0,
+        });
+        let icon_hotspot = icon_or_fallback("dialog-information");
+        icon_hotspot.set_tooltip_text(Some("Adds an invisible button in the chosen screen corner that opens this settings window when clicked. Only active while the launcher menu is on screen."));
+        let hotspot_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        hotspot_hbox.append(&lbl_hotspot);
+        hotspot_hbox.append(&combo_hotspot);
+        hotspot_hbox.append(&icon_hotspot);
+        checkboxes_vbox.append(&hotspot_hbox);
         right_scroll_box.append(&checkboxes_vbox);
 
         // Save / Discard row sits immediately below the checkboxes
@@ -1223,6 +1243,7 @@ impl SettingsApp {
             let mark_adj = marking_speed_adj.clone();
             let chk_shift = chk_submenu_shift.clone();
             let chk_bc = chk_show_breadcrumbs.clone();
+            let combo_hs = combo_hotspot.clone();
             let chk_dis = chk_disable_hover_anim.clone();
             let chk_blr = chk_enable_blur.clone();
             let combo_vis = combo_visual_cue.clone();
@@ -1256,6 +1277,7 @@ impl SettingsApp {
                 let mark_adj = mark_adj.clone();
                 let chk_shift = chk_shift.clone();
                 let chk_bc = chk_bc.clone();
+                let combo_hs = combo_hs.clone();
                 let chk_dis = chk_dis.clone();
                 let chk_blr = chk_blr.clone();
                 let combo_vis = combo_vis.clone();
@@ -1278,6 +1300,13 @@ impl SettingsApp {
                             chk_shift.set_active(cfg.ui.submenu_shift);
                             chk_bc.set_active(cfg.ui.show_breadcrumbs);
                             chk_bc.set_sensitive(cfg.ui.submenu_shift);
+                            combo_hs.set_selected(match cfg.ui.settings_hotspot_corner.as_str() {
+                                "top-left" => 1,
+                                "top-right" => 2,
+                                "bottom-left" => 3,
+                                "bottom-right" => 4,
+                                _ => 0,
+                            });
                             chk_dis.set_active(cfg.ui.disable_hover_animation);
                             chk_blr.set_active(cfg.ui.enable_blur);
                             combo_vis.set_selected(match cfg.ui.hover_visual_cue.as_str() {
@@ -2318,6 +2347,7 @@ impl SettingsApp {
         let marking_speed_slider_save = marking_speed_slider.clone();
         let chk_submenu_shift_save = chk_submenu_shift.clone();
         let chk_show_breadcrumbs_save = chk_show_breadcrumbs.clone();
+        let combo_hotspot_save = combo_hotspot.clone();
         let chk_disable_hover_anim_save = chk_disable_hover_anim.clone();
         let combo_visual_cue_save = combo_visual_cue.clone();
         let chk_enable_blur_save = chk_enable_blur.clone();
@@ -2373,6 +2403,14 @@ impl SettingsApp {
                 cfg.ui.marking_dwell_ms = marking_ms_from_pct(marking_speed_slider_save.value());
                 cfg.ui.submenu_shift = chk_submenu_shift_save.is_active();
                 cfg.ui.show_breadcrumbs = chk_show_breadcrumbs_save.is_active();
+                cfg.ui.settings_hotspot_corner = match combo_hotspot_save.selected() {
+                    1 => "top-left",
+                    2 => "top-right",
+                    3 => "bottom-left",
+                    4 => "bottom-right",
+                    _ => "none",
+                }
+                .to_string();
                 cfg.ui.disable_hover_animation = chk_disable_hover_anim_save.is_active();
                 cfg.ui.hover_visual_cue = match combo_visual_cue_save.selected() {
                     1 => "sides".to_string(),
@@ -2498,6 +2536,7 @@ impl SettingsApp {
         let marking_speed_adj_watch = marking_speed_adj.clone();
         let chk_submenu_shift_watch = chk_submenu_shift.clone();
         let chk_show_breadcrumbs_watch = chk_show_breadcrumbs.clone();
+        let combo_hotspot_watch = combo_hotspot.clone();
         let chk_disable_hover_anim_watch = chk_disable_hover_anim.clone();
         let combo_visual_cue_watch = combo_visual_cue.clone();
         let combo_menu_style_watch = combo_menu_style.clone();
@@ -2524,6 +2563,7 @@ impl SettingsApp {
             let mark_speed = marking_speed_adj_watch.clone();
             let chk_shift = chk_submenu_shift_watch.clone();
             let chk_bc = chk_show_breadcrumbs_watch.clone();
+            let combo_hs = combo_hotspot_watch.clone();
             let chk_dis = chk_disable_hover_anim_watch.clone();
             let chk_blr = chk_enable_blur_watch.clone();
             let combo_vis = combo_visual_cue_watch.clone();
@@ -2554,6 +2594,7 @@ impl SettingsApp {
                     let mark_speed_cb = mark_speed.clone();
                     let chk_shift_cb = chk_shift.clone();
                     let chk_bc_cb = chk_bc.clone();
+                    let combo_hs_cb = combo_hs.clone();
                     let chk_dis_cb = chk_dis.clone();
                     let chk_blr_cb = chk_blr.clone();
                     let combo_vis_cb = combo_vis.clone();
@@ -2585,6 +2626,13 @@ impl SettingsApp {
                                 chk_shift_cb.set_active(cfg.ui.submenu_shift);
                                 chk_bc_cb.set_active(cfg.ui.show_breadcrumbs);
                                 chk_bc_cb.set_sensitive(cfg.ui.submenu_shift);
+                                combo_hs_cb.set_selected(match cfg.ui.settings_hotspot_corner.as_str() {
+                                    "top-left" => 1,
+                                    "top-right" => 2,
+                                    "bottom-left" => 3,
+                                    "bottom-right" => 4,
+                                    _ => 0,
+                                });
                                 chk_dis_cb.set_active(cfg.ui.disable_hover_animation);
                                 chk_blr_cb.set_active(cfg.ui.enable_blur);
                                 let selected_idx = match cfg.ui.hover_visual_cue.as_str() {

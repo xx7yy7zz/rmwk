@@ -191,6 +191,11 @@ pub struct UiConfig {
     /// Only meaningful when `submenu_shift` is enabled.
     #[serde(default = "default_show_breadcrumbs")]
     pub show_breadcrumbs: bool,
+    /// Invisible corner zone that opens the settings app when the launcher
+    /// overlay is visible: "none", "top-left", "top-right", "bottom-left"
+    /// or "bottom-right".
+    #[serde(default = "default_settings_hotspot_corner")]
+    pub settings_hotspot_corner: String,
 }
 
 fn default_scale() -> f64 { 1.0 }
@@ -206,6 +211,8 @@ fn default_marking_dwell_ms() -> u32 { 180 }
 fn default_submenu_shift() -> bool { false }
 
 fn default_show_breadcrumbs() -> bool { true }
+
+fn default_settings_hotspot_corner() -> String { "none".to_string() }
 
 fn default_system_theme_overrides() -> Option<SystemThemeOverrides> {
     None
@@ -243,6 +250,7 @@ impl Default for UiConfig {
             marking_dwell_ms: default_marking_dwell_ms(),
             submenu_shift: default_submenu_shift(),
             show_breadcrumbs: default_show_breadcrumbs(),
+            settings_hotspot_corner: default_settings_hotspot_corner(),
         }
     }
 }

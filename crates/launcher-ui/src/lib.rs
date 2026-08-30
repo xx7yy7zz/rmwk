@@ -90,6 +90,10 @@ const BREADCRUMB_SHRINK: f64 = 0.82;
 const BREADCRUMB_FADE: f64 = 0.7;
 const BREADCRUMB_LINK_GAP: f64 = 8.0;
 
+/// Size (px) of the invisible settings-hotspot square in the chosen
+/// screen corner while the overlay is visible.
+const SETTINGS_HOTSPOT: f64 = 32.0;
+
 // Emojis render larger than text glyphs at the same point size because emoji
 // fonts fill the full em box. Shrink single-char emoji icons by this factor.
 // Adjust EMOJI_SIZE_SCALE to tune emoji icon size (1.0 = no shrink).
@@ -213,6 +217,8 @@ struct MenuState {
     // offsets kept alongside the history vectors.
     submenu_shift: bool,
     show_breadcrumbs: bool,
+    settings_hotspot_corner: String,
+    hotspot_hovered: bool,
     nav_offset: (f64, f64),
     history_offsets: Vec<(f64, f64)>,
     forward_history_offsets: Vec<(f64, f64)>,
@@ -586,6 +592,19 @@ impl MenuState {
         None
     }
 
+    /// True when the given screen point falls inside the invisible
+    /// settings-hotspot square anchored to the configured screen corner.
+    fn settings_hotspot_hit(&self, x: f64, y: f64, width: f64, height: f64) -> bool {
+        let (hx, hy) = match self.settings_hotspot_corner.as_str() {
+            "top-left" => (0.0, 0.0),
+            "top-right" => (width - SETTINGS_HOTSPOT, 0.0),
+            "bottom-left" => (0.0, height - SETTINGS_HOTSPOT),
+            "bottom-right" => (width - SETTINGS_HOTSPOT, height - SETTINGS_HOTSPOT),
+            _ => return false,
+        };
+        x >= hx && x <= hx + SETTINGS_HOTSPOT && y >= hy && y <= hy + SETTINGS_HOTSPOT
+    }
+
     /// Unit vector pointing at the middle of slice `index`, matching the
     /// angle convention used by the renderer.
     fn slice_direction(&self, index: usize, n: usize) -> (f64, f64) {
@@ -608,6 +627,7 @@ impl MenuState {
         self.origin = None;
         self.pointer_pos = None;
         self.reveal_pending = self.spawn_at_cursor;
+        self.hotspot_hovered = false;
         self.reveal_seq += 1;
         self.reveal_seq
     }
@@ -1168,6 +1188,9 @@ fn complete_close(
     if let Ok(mut s) = state.try_borrow_mut() {
         s.is_closing = false;
         win.hide();
+        // Drop any hotspot hand cursor so the next open starts clean even
+        // if the pointer never leaves the surface between sessions.
+        win.set_cursor_from_name(Some("default"));
 
         // Reset to root menu
         s.root_items = root_menu.menu.clone();
@@ -1605,6 +1628,8 @@ impl LauncherApp {
             marking_dwell_ms: ui_config.marking_dwell_ms.max(30),
             submenu_shift: ui_config.submenu_shift,
             show_breadcrumbs: ui_config.show_breadcrumbs,
+            settings_hotspot_corner: ui_config.settings_hotspot_corner.clone(),
+            hotspot_hovered: false,
             nav_offset: (0.0, 0.0),
             history_offsets: vec![],
             forward_history_offsets: vec![],
@@ -3362,6 +3387,7 @@ impl LauncherApp {
         let motion_controller = gtk::EventControllerMotion::new();
         let motion_state = state.clone();
         let area_clone = drawing_area.clone();
+        let motion_window = window.clone();
         let trigger_anim_motion = trigger_anim.clone();
         motion_controller.connect_motion(move |_ctrl, x, y| {
             let mut state = match motion_state.try_borrow_mut() {
@@ -3374,6 +3400,12 @@ impl LauncherApp {
 
             let width = area_clone.width() as f64;
             let height = area_clone.height() as f64;
+
+            // Settings-hotspot hover feedback: swap to the "hand" cursor
+            // while the pointer sits in the invisible corner zone.
+            let over_hotspot = state.settings_hotspot_hit(x, y, width, height);
+            let cursor_changed = over_hotspot != state.hotspot_hovered;
+            state.hotspot_hovered = over_hotspot;
 
             let origin_set = state.note_pointer(x, y);
 
@@ -3425,6 +3457,10 @@ impl LauncherApp {
             }
 
             drop(state);
+            if cursor_changed {
+                motion_window
+                    .set_cursor_from_name(if over_hotspot { Some("pointer") } else { Some("default") });
+            }
             if let Some(i) = dwell_for {
                 schedule_marking_dwell(&motion_state, &area_clone, i, trigger_anim_motion.clone());
             }
@@ -3437,6 +3473,7 @@ impl LauncherApp {
         // cursor position at the exact moment the menu was launched.
         let enter_state = state.clone();
         let area_clone_enter = drawing_area.clone();
+        let enter_window = window.clone();
         motion_controller.connect_enter(move |_ctrl, x, y| {
             let mut state = match enter_state.try_borrow_mut() {
                 Ok(s) => s,
@@ -3445,22 +3482,46 @@ impl LauncherApp {
             if state.is_closing {
                 return;
             }
-            if state.note_pointer(x, y) {
-                drop(state);
+            let over_hotspot = state.settings_hotspot_hit(
+                x,
+                y,
+                area_clone_enter.width() as f64,
+                area_clone_enter.height() as f64,
+            );
+            state.hotspot_hovered = over_hotspot;
+            let reveal = state.note_pointer(x, y);
+            drop(state);
+            // Always apply, not just on hover: the hand cursor may have
+            // survived a hide/show cycle from a previous session.
+            enter_window.set_cursor_from_name(if over_hotspot {
+                Some("pointer")
+            } else {
+                Some("default")
+            });
+            if reveal {
                 area_clone_enter.queue_draw();
             }
         });
 
         let leave_state = state.clone();
+        let leave_window = window.clone();
         let trigger_anim_leave = trigger_anim.clone();
         motion_controller.connect_leave(move |_ctrl| {
             let mut hovered_changed = false;
+            let mut cursor_reset = false;
             if let Ok(mut state) = leave_state.try_borrow_mut() {
                 state.end_marking();
+                if state.hotspot_hovered {
+                    state.hotspot_hovered = false;
+                    cursor_reset = true;
+                }
                 if state.hovered_index.is_some() {
                     state.hovered_index = None;
                     hovered_changed = true;
                 }
+            }
+            if cursor_reset {
+                leave_window.set_cursor_from_name(Some("default"));
             }
             if hovered_changed {
                 trigger_anim_leave();
@@ -3537,10 +3598,25 @@ impl LauncherApp {
 
                 let mut activated = false;
 
-                // Breadcrumb disc: jump straight back that many levels
-                if let Some(depth) =
+                // Invisible corner hotspot: re-executes this same binary
+                // with the `settings` subcommand (no path assumptions; the
+                // settings GApplication id keeps it single-instance) and
+                // closes the overlay.
+                if state.settings_hotspot_hit(x, y, width, height) {
+                    match std::env::current_exe() {
+                        Ok(exe) => {
+                            let _ = std::process::Command::new(exe).arg("settings").spawn();
+                        }
+                        Err(e) => {
+                            warn!("Could not resolve own executable path for settings: {}", e);
+                        }
+                    }
+                    state.is_closing = true;
+                    activated = true;
+                } else if let Some(depth) =
                     state.breadcrumb_hit(x, y, cx, cy, state.get_display_items().len())
                 {
+                    // Breadcrumb disc: jump straight back that many levels
                     for _ in 0..=depth {
                         if !go_back(&mut state, &area_clone_click) {
                             break;
@@ -4052,6 +4128,8 @@ impl LauncherApp {
                             state.marking_dwell_ms = cfg.ui.marking_dwell_ms.max(30);
                             state.submenu_shift = cfg.ui.submenu_shift;
                             state.show_breadcrumbs = cfg.ui.show_breadcrumbs;
+                            state.settings_hotspot_corner =
+                                cfg.ui.settings_hotspot_corner.clone();
                             let new_blur = cfg.ui.enable_blur
                                 && cfg.ui.menu_style != "floating"
                                 && cfg.ui.menu_style != "floating-icons";
