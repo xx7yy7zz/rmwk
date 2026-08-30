@@ -3785,9 +3785,16 @@ impl LauncherApp {
         let server_handle_wrapper = Arc::new(Mutex::new(Some(server_handle)));
         let server_handle_clone = server_handle_wrapper.clone();
 
-        // Monitor config and menu files using exact same logic as theme_editor
+        // Monitor config and menu files using exact same logic as theme_editor.
+        // Both share one debounce window: a settings save touches the menu
+        // file *and* config.toml and each write emits several monitor events;
+        // without this the daemon ran the (expensive) full reload once per
+        // event, re-decoding every icon back-to-back.
+        let pending_file_reload = Rc::new(std::cell::Cell::new(false));
+
         let config_file = gtk::gio::File::for_path(&config_path);
         let ipc_tx_config = ipc_tx.clone();
+        let pending_cfg = pending_file_reload.clone();
         if let Ok(monitor) = config_file.monitor_file(
             gtk::gio::FileMonitorFlags::NONE,
             gtk::gio::Cancellable::NONE,
@@ -3796,10 +3803,19 @@ impl LauncherApp {
                 if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
                     || event == gtk::gio::FileMonitorEvent::Created
                 {
-                    let tx = ipc_tx_config.clone();
-                    gtk::glib::MainContext::default().invoke(move || {
-                        let _ = tx.send(IpcMessage::ReloadConfig);
-                    });
+                    if !pending_cfg.get() {
+                        pending_cfg.set(true);
+                        let tx = ipc_tx_config.clone();
+                        let pending = pending_cfg.clone();
+                        gtk::glib::timeout_add_local(
+                            std::time::Duration::from_millis(150),
+                            move || {
+                                pending.set(false);
+                                let _ = tx.send(IpcMessage::ReloadConfig);
+                                glib::ControlFlow::Break
+                            },
+                        );
+                    }
                 }
             });
             if let Ok(mut s) = state.try_borrow_mut() {
@@ -3809,6 +3825,7 @@ impl LauncherApp {
 
         let menu_file = gtk::gio::File::for_path(&menu_path);
         let ipc_tx_menu = ipc_tx.clone();
+        let pending_menu = pending_file_reload.clone();
         if let Ok(monitor) = menu_file.monitor_file(
             gtk::gio::FileMonitorFlags::NONE,
             gtk::gio::Cancellable::NONE,
@@ -3817,10 +3834,19 @@ impl LauncherApp {
                 if event == gtk::gio::FileMonitorEvent::ChangesDoneHint
                     || event == gtk::gio::FileMonitorEvent::Created
                 {
-                    let tx = ipc_tx_menu.clone();
-                    gtk::glib::MainContext::default().invoke(move || {
-                        let _ = tx.send(IpcMessage::ReloadConfig);
-                    });
+                    if !pending_menu.get() {
+                        pending_menu.set(true);
+                        let tx = ipc_tx_menu.clone();
+                        let pending = pending_menu.clone();
+                        gtk::glib::timeout_add_local(
+                            std::time::Duration::from_millis(150),
+                            move || {
+                                pending.set(false);
+                                let _ = tx.send(IpcMessage::ReloadConfig);
+                                glib::ControlFlow::Break
+                            },
+                        );
+                    }
                 }
             });
             if let Ok(mut s) = state.try_borrow_mut() {
@@ -3995,8 +4021,18 @@ impl LauncherApp {
                             state.extra_radius = cfg.ui.extra_radius;
                             state.enable_pie_spacing = cfg.ui.enable_pie_spacing;
                             state.pill_roundness = cfg.ui.pill_roundness;
-                            state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
-                            state.bold_single_chars = cfg.ui.bold_single_chars;
+                            // Only drop caches that the changed setting can
+                            // actually invalidate. Wiping icon_cache on every
+                            // reload forced a synchronous re-decode of every
+                            // image icon (very slow on image-heavy menus).
+                            if state.use_symbolic_icons != cfg.ui.use_symbolic_icons {
+                                state.use_symbolic_icons = cfg.ui.use_symbolic_icons;
+                                state.icon_cache.clear();
+                            }
+                            if state.bold_single_chars != cfg.ui.bold_single_chars {
+                                state.bold_single_chars = cfg.ui.bold_single_chars;
+                                state.text_layout_cache.clear();
+                            }
                             state.center_layout = cfg.ui.center_layout;
                             if state.disable_hover_animation != cfg.ui.disable_hover_animation {
                                 state.disable_hover_animation = cfg.ui.disable_hover_animation;
@@ -4023,13 +4059,11 @@ impl LauncherApp {
                                 state.enable_blur = new_blur;
                                 blur_needs_update = true;
                             }
-                            state.icon_cache.clear();
-                            state.text_layout_cache.clear();
-                            state.label_layout_cache.clear();
+                            // CSS colors may have changed; text/label layout
+                            // caches are keyed by content+size and survive.
+                            // Icon surfaces are re-preloaded below, after the
+                            // menu file itself has been re-read.
                             *state.theme_colors.borrow_mut() = None;
-                            if let Some(display) = gdk::Display::default() {
-                                state.preload_icons(&display);
-                            }
                             info!(
                                 "Reloaded scale: {}, extra_radius: {}",
                                 state.scale, state.extra_radius
