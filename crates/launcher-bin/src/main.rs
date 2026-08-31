@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 #[command(name = "rmwk")]
 #[command(version)]
 #[command(about = "A fast, native radial launcher for Wayland (rmwk)", long_about = None)]
+#[command(after_help = "With no subcommand, rmwk starts the daemon hidden in the background.\nPass --menu <file> with no subcommand to open that menu instead.")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -16,15 +17,11 @@ struct Cli {
     /// Path to the menu configuration TOML file
     #[arg(long, global = true)]
     menu: Option<PathBuf>,
-
-    /// Path to the UI configuration TOML file
-    #[arg(long, global = true)]
-    config: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Clone)]
 enum Commands {
-    /// Open the rmwk menu (default)
+    /// Open or toggle a menu (needs a menu name or --menu <file>)
     Open {
         menu_name: Option<String>,
     },
@@ -32,8 +29,6 @@ enum Commands {
     Settings,
     /// Reload config and themes of the running instance
     Reload,
-    /// Start the rmwk daemon explicitly (starts hidden)
-    Daemon,
 }
 
 fn init_logging() {
@@ -67,7 +62,7 @@ fn ensure_default_configs(menu_path: &Path, config_path: &Path) -> anyhow::Resul
         let default_config = r#"# Default UI configuration
 [ui]
 theme = "default"
-font = "Sans 11"
+font = "Sans"
 "#;
         fs::write(config_path, default_config)?;
     }
@@ -83,68 +78,44 @@ fn main() -> anyhow::Result<()> {
     launcher_core::register_embedded_font();
 
     let cli = Cli::parse();
-    let command = cli.command.clone().unwrap_or(Commands::Open { menu_name: None });
     let cli_menu_was_none = cli.menu.is_none();
+    let command = cli.command.clone();
 
     // Resolve config and menu paths using centralized XDG paths
     let menu_path = cli.menu.unwrap_or_else(launcher_core::paths::get_default_menu_path);
-    let config_path = cli.config.unwrap_or_else(launcher_core::paths::get_default_config_path);
+    let config_path = launcher_core::paths::get_default_config_path();
 
     if let Err(e) = ensure_default_configs(&menu_path, &config_path) {
         error!("Failed to initialize default configuration files: {}", e);
     }
 
     match command {
-        Commands::Open { menu_name } => {
+        Some(Commands::Open { menu_name }) => {
             if menu_name.is_none() && cli_menu_was_none {
-                info!("No menu specified. Doing nothing.");
+                info!(
+                    "No menu specified. Use 'rmwk open <menu>' or 'rmwk --menu <file>', \
+                     or run 'rmwk' alone to start the daemon."
+                );
                 return Ok(());
             }
 
-            let mut menu_path = menu_path.clone();
+            let mut resolved = menu_path.clone();
             if let Some(name) = &menu_name {
-                menu_path = launcher_core::paths::get_config_dir()
+                resolved = launcher_core::paths::get_config_dir()
                     .join("menus")
                     .join(format!("{}.toml", name));
             }
-            if !menu_path.exists() {
-                error!("Specified menu file does not exist: {:?}", menu_path);
-                return Ok(());
-            }
-
-            // Check if there is an active running instance we can toggle
-            let socket_path = launcher_ipc::get_socket_path();
-            let toggle_succeeded = if socket_path.exists() {
-                debug!("Socket file exists at {:?}, attempting to send OpenMenu command", socket_path);
-                match launcher_ipc::send_message_sync(
-                    &socket_path,
-                    &IpcMessage::OpenMenu { menu_path: menu_path.clone() },
-                ) {
-                    Ok(_) => {
-                        info!("Toggled running instance of rmwk with new menu");
-                        true
-                    }
-                    Err(e) => {
-                        debug!("Could not connect to existing socket: {}. Stale socket will be cleaned up by server.", e);
-                        false
-                    }
-                }
+            open_or_become(&resolved, &config_path)?;
+        }
+        None => {
+            // Bare `rmwk` starts the daemon; `rmwk --menu <file>` opens that menu.
+            if cli_menu_was_none {
+                start_daemon(&menu_path, &config_path)?;
             } else {
-                false
-            };
-
-            if toggle_succeeded {
-                return Ok(());
-            }
-
-            info!("Starting new launcher window...");
-            let app = launcher_ui::LauncherApp::new(menu_path, config_path, false);
-            let exit_code = app.run();
-            if exit_code != 0 {
-                std::process::exit(exit_code);
+                open_or_become(&menu_path, &config_path)?;
             }
         }
-        Commands::Settings => {
+        Some(Commands::Settings) => {
             info!("Starting settings window...");
             let mut resolved_menu_path = menu_path;
             if cli_menu_was_none {
@@ -165,7 +136,7 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(exit_code);
             }
         }
-        Commands::Reload => {
+        Some(Commands::Reload) => {
             let socket_path = launcher_ipc::get_socket_path();
             if socket_path.exists() {
                 match launcher_ipc::send_message_sync(&socket_path, &IpcMessage::ReloadConfig) {
@@ -180,24 +151,69 @@ fn main() -> anyhow::Result<()> {
                 error!("No running instance socket found at {:?}", socket_path);
             }
         }
-        Commands::Daemon => {
-            let socket_path = launcher_ipc::get_socket_path();
-            if socket_path.exists() {
-                let is_alive = launcher_ipc::send_message_sync(&socket_path, &IpcMessage::Open).is_ok();
-                if is_alive {
-                    error!("Daemon is already running!");
-                    std::process::exit(1);
-                }
-            }
-
-            info!("Starting rmwk daemon...");
-            let app = launcher_ui::LauncherApp::new(menu_path, config_path, true);
-            let exit_code = app.run();
-            if exit_code != 0 {
-                std::process::exit(exit_code);
-            }
-        }
     }
 
+    Ok(())
+}
+
+/// Toggle a menu on the running instance over IPC, or become the instance
+/// ourselves (visible) when no daemon is alive.
+fn open_or_become(menu_path: &Path, config_path: &Path) -> anyhow::Result<()> {
+    if !menu_path.exists() {
+        error!("Specified menu file does not exist: {:?}", menu_path);
+        return Ok(());
+    }
+
+    let socket_path = launcher_ipc::get_socket_path();
+    let toggle_succeeded = if socket_path.exists() {
+        debug!("Socket file exists at {:?}, attempting to send OpenMenu command", socket_path);
+        match launcher_ipc::send_message_sync(
+            &socket_path,
+            &IpcMessage::OpenMenu { menu_path: menu_path.to_path_buf() },
+        ) {
+            Ok(_) => {
+                info!("Toggled running instance of rmwk with new menu");
+                true
+            }
+            Err(e) => {
+                debug!("Could not connect to existing socket: {}. Stale socket will be cleaned up by server.", e);
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    if toggle_succeeded {
+        return Ok(());
+    }
+
+    info!("Starting new launcher window...");
+    let app = launcher_ui::LauncherApp::new(menu_path.to_path_buf(), config_path.to_path_buf(), false);
+    let exit_code = app.run();
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
+/// Start the daemon hidden, owning the IPC socket and tray icon.
+fn start_daemon(menu_path: &Path, config_path: &Path) -> anyhow::Result<()> {
+    let socket_path = launcher_ipc::get_socket_path();
+    // Pure connect probe: sending any message would disturb the running
+    // instance (e.g. popping the menu open).
+    let is_alive = socket_path.exists()
+        && std::os::unix::net::UnixStream::connect(&socket_path).is_ok();
+    if is_alive {
+        error!("Daemon is already running!");
+        std::process::exit(1);
+    }
+
+    info!("Starting rmwk daemon...");
+    let app = launcher_ui::LauncherApp::new(menu_path.to_path_buf(), config_path.to_path_buf(), true);
+    let exit_code = app.run();
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
     Ok(())
 }
