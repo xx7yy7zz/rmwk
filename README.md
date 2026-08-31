@@ -37,9 +37,25 @@ Primarily made as a quicker-to-open and simpler alternative to Kando, a similar 
 
 ---
 
-## Screenshots
+## How it looks
 
-<img src="">
+### Showcase
+
+### Sreenshots
+
+---
+
+#### Pie Mode
+
+<img src="./assets/s1.png">
+
+#### Floating Entries Mode
+
+<img src="./assets/s2.png">
+
+#### Floating Icons Mode
+
+<img src="./assets/s3.png">
 
 ## Installation & Compilation
 
