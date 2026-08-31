@@ -41,6 +41,8 @@ Primarily made as a quicker-to-open and simpler alternative to Kando, a similar 
 
 ### Showcase
 
+https://github.com/user-attachments/assets/90020c61-5258-4836-965d-a90e18d24831
+
 ### Sreenshots
 
 ---
