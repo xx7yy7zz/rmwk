@@ -186,6 +186,10 @@ struct MenuState {
     current_menu_path: PathBuf,
     root_items: Vec<launcher_core::MenuItem>,
     current_items: Vec<launcher_core::MenuItem>,
+    // Snapshot of current_items (+ optional Back entry), shared via Rc so
+    // the per-frame draw/hit-test paths never deep-clone the menu tree.
+    // Refreshed at every point that mutates current_items/history/back flag.
+    display_items_cache: Rc<Vec<launcher_core::MenuItem>>,
     history: Vec<Vec<launcher_core::MenuItem>>,
     forward_history: Vec<Vec<launcher_core::MenuItem>>,
     root_icon: Option<String>,
@@ -241,8 +245,10 @@ struct MenuState {
     // Cached Pango layouts for Material Symbols glyphs (avoids shaping every frame)
     material_layout_cache: HashMap<(char, u32), gtk::pango::Layout>,
 
-    // Cached Pango layouts for slice labels
-    label_layout_cache: HashMap<String, gtk::pango::Layout>,
+    // Cached Pango layouts for slice labels, keyed by (text, size, bold):
+    // the hub renders hovered labels at 16pt bold while pills use 14pt
+    // normal, so a text-only key let one style poison the other's layout.
+    label_layout_cache: HashMap<(String, u32, bool), gtk::pango::Layout>,
 
     // Extra interactivity margin beyond slices
     scale: f64,
@@ -262,6 +268,10 @@ struct MenuState {
 
     // Material Symbols codepoints index
     codepoints: HashMap<String, char>,
+
+    // Configured UI font (Pango description, e.g. "Adamina 11") used for
+    // labels and single-char icons; sizes are still overridden per use.
+    font: String,
 
     // Cached theme colors
     theme_colors: std::cell::RefCell<Option<ThemeColors>>,
@@ -286,9 +296,16 @@ impl MenuState {
         self.forward_history_offsets.clear();
         self.nav_offset = (0.0, 0.0);
         self.hovered_index = None;
+        self.refresh_display_items();
     }
 
-    fn get_display_items(&self) -> Vec<launcher_core::MenuItem> {
+    fn get_display_items(&self) -> Rc<Vec<launcher_core::MenuItem>> {
+        self.display_items_cache.clone()
+    }
+
+    /// Rebuilds the shared display-items snapshot. Must be called after
+    /// any change to current_items, history or hide_back_entry.
+    fn refresh_display_items(&mut self) {
         let mut items = self.current_items.clone();
         if !self.history.is_empty() && !self.hide_back_entry {
             items.push(launcher_core::MenuItem {
@@ -302,7 +319,7 @@ impl MenuState {
                 children: vec![],
             });
         }
-        items
+        self.display_items_cache = Rc::new(items);
     }
 
     fn get_display_items_count(&self) -> usize {
@@ -319,7 +336,7 @@ impl MenuState {
         if let Some(icon) = &self.current_icon {
             icons_to_load.push(icon.clone());
         }
-        for item in &display_items {
+        for item in display_items.iter() {
             if let Some(icon) = &item.icon {
                 icons_to_load.push(icon.clone());
             }
@@ -408,6 +425,13 @@ impl MenuState {
                 .as_deref()
                 .map_or(false, |i| self.anim_cache.contains_key(i))
         })
+    }
+
+    /// Pango font description parsed from the configured `ui.font`.
+    /// Callers override size/weight as needed; Material glyphs never use it.
+    fn font_desc(&self) -> gtk::pango::FontDescription {
+        let s = if self.font.trim().is_empty() { "Sans" } else { self.font.as_str() };
+        gtk::pango::FontDescription::from_string(s)
     }
 
     fn material_glyph_layout(
@@ -1130,11 +1154,10 @@ fn draw_small_icon(
             l.clone()
         } else {
             let l = area.create_pango_layout(Some(icon_name));
-            let mut font_desc = gtk::pango::FontDescription::new();
+            let mut font_desc = state_ref.font_desc();
             if state_ref.bold_single_chars {
                 font_desc.set_weight(gtk::pango::Weight::Bold);
             }
-            font_desc.set_family("Sans");
             let emoji_scale = if icon_name.chars().all(is_emoji_char) {
                 EMOJI_SIZE_SCALE
             } else {
@@ -1227,6 +1250,7 @@ fn go_back(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
         state.nav_offset = parent_offset;
         state.current_items = prev;
         state.hovered_index = None;
+        state.refresh_display_items();
         if let Some(display) = gdk::Display::default() {
             state.preload_icons(&display);
         }
@@ -1250,6 +1274,7 @@ fn go_forward(state: &mut MenuState, area: &gtk::DrawingArea) -> bool {
         state.nav_offset = next_offset;
         state.current_items = next;
         state.hovered_index = None;
+        state.refresh_display_items();
 
         if let Some(display) = gdk::Display::default() {
             state.preload_icons(&display);
@@ -1300,6 +1325,7 @@ fn activate_index(state: &mut MenuState, index: usize, area: &gtk::DrawingArea) 
             state.current_icon = selected.icon.clone();
             state.current_items = selected.children;
             state.hovered_index = None;
+            state.refresh_display_items();
             if let Some(display) = gdk::Display::default() {
                 state.preload_icons(&display);
             }
@@ -1607,6 +1633,7 @@ impl LauncherApp {
             current_menu_path: menu_path.clone(),
             root_items: menu_config.menu.clone(),
             current_items: menu_config.menu.clone(),
+            display_items_cache: Rc::new(Vec::new()),
             root_icon: menu_config.icon.clone(),
             current_icon: menu_config.icon.clone(),
             history: vec![],
@@ -1658,11 +1685,13 @@ impl LauncherApp {
             last_cy: 0.0,
             last_blur_key: None,
             codepoints,
+            font: ui_config.font.clone(),
             theme_colors: std::cell::RefCell::new(None),
             suppress_focus_loss: std::rc::Rc::new(std::cell::Cell::new(false)),
             _config_monitor: None,
             _menu_monitor: None,
         }));
+        state.borrow_mut().refresh_display_items();
 
         if let Some(display) = gdk::Display::default() {
             state.borrow_mut().preload_icons(&display);
@@ -2017,11 +2046,10 @@ impl LauncherApp {
                             l.clone()
                         } else {
                             let l = area.create_pango_layout(Some(icon_name));
-                            let mut font_desc = gtk::pango::FontDescription::new();
+                            let mut font_desc = state_ref.font_desc();
                             if state_ref.bold_single_chars {
                                 font_desc.set_weight(gtk::pango::Weight::Bold);
                             }
-                            font_desc.set_family("Sans");
                             let emoji_scale = if icon_name.chars().all(is_emoji_char) {
                                 EMOJI_SIZE_SCALE
                             } else {
@@ -2096,7 +2124,9 @@ impl LauncherApp {
                     // Threshold 10 keeps normal words intact (they wrap
                     // whole at spaces); only longer runs get break points
                     let soft = soft_break_long_runs(text, 10);
-                    let mut center_layout = if let Some(l) = state_ref.label_layout_cache.get(text)
+                    let hub_key = (text.clone(), 16u32, true);
+                    let mut center_layout = if let Some(l) =
+                        state_ref.label_layout_cache.get(&hub_key)
                     {
                         l.clone()
                     } else {
@@ -2106,12 +2136,11 @@ impl LauncherApp {
                         // hyphens that mid-word (WordChar) breaks do. Normal
                         // words stay whole and wrap at spaces.
                         let l = area.create_pango_layout(Some(&soft));
-                        let mut font_desc = gtk::pango::FontDescription::new();
-                        font_desc.set_family("Sans");
+                        let mut font_desc = state_ref.font_desc();
                         font_desc.set_weight(gtk::pango::Weight::Bold);
                         font_desc.set_absolute_size(16.0 * gtk::pango::SCALE as f64);
                         l.set_font_description(Some(&font_desc));
-                        state_ref.label_layout_cache.insert(text.clone(), l.clone());
+                        state_ref.label_layout_cache.insert(hub_key, l.clone());
                         l
                     };
                     // Text box: a wide horizontal rectangle through the
@@ -2155,8 +2184,7 @@ impl LauncherApp {
                     if pango_h as f64 > box_h {
                         let font_scale = (box_h / pango_h as f64).max(0.2);
                         let l = area.create_pango_layout(Some(&soft));
-                        let mut font_desc = gtk::pango::FontDescription::new();
-                        font_desc.set_family("Sans");
+                        let mut font_desc = state_ref.font_desc();
                         font_desc.set_weight(gtk::pango::Weight::Bold);
                         font_desc.set_absolute_size(16.0 * font_scale * gtk::pango::SCALE as f64);
                         l.set_font_description(Some(&font_desc));
@@ -2223,17 +2251,17 @@ impl LauncherApp {
 
                         // Measure text
                         let text = &item.label;
+                        let pill_key = (text.clone(), 14u32, false);
                         let text_layout = if icon_only {
                             None
-                        } else if let Some(l) = state_ref.label_layout_cache.get(text) {
+                        } else if let Some(l) = state_ref.label_layout_cache.get(&pill_key) {
                             Some(l.clone())
                         } else {
                             let l = area.create_pango_layout(Some(text));
-                            let mut font_desc = gtk::pango::FontDescription::new();
-                            font_desc.set_family("Sans");
+                            let mut font_desc = state_ref.font_desc();
                             font_desc.set_size(gtk::pango::units_from_double(14.0));
                             l.set_font_description(Some(&font_desc));
-                            state_ref.label_layout_cache.insert(text.clone(), l.clone());
+                            state_ref.label_layout_cache.insert(pill_key, l.clone());
                             Some(l)
                         };
                         let (tw, th) = if icon_only {
@@ -2263,8 +2291,7 @@ impl LauncherApp {
                                     l.clone()
                                 } else {
                                     let l = area.create_pango_layout(Some(icon_name));
-                                    let mut font_desc = gtk::pango::FontDescription::new();
-                                    font_desc.set_family("Sans");
+                                    let mut font_desc = state_ref.font_desc();
                                     let weight = if state_ref.bold_single_chars {
                                         gtk::pango::Weight::Bold
                                     } else {
@@ -2341,18 +2368,21 @@ impl LauncherApp {
                         let text_pill_h = r * 2.0; // Enforce strict height for all labels
 
                         // Minimum pill width for Top/Bottom entries based on a 4-character label
-                        let min_4ch_w = if let Some(l) = state_ref.label_layout_cache.get("MMM") {
+                        let min_4ch_w = if let Some(l) = state_ref
+                            .label_layout_cache
+                            .get(&("MMM".to_string(), 14u32, false))
+                        {
                             let (w, _) = l.pixel_size();
                             w as f64 * ease_progress
                         } else {
                             let l = area.create_pango_layout(Some("MMM"));
-                            let mut font_desc = gtk::pango::FontDescription::new();
-                            font_desc.set_family("Sans");
+                            let mut font_desc = state_ref.font_desc();
                             font_desc.set_size(gtk::pango::units_from_double(14.0));
                             l.set_font_description(Some(&font_desc));
-                            state_ref
-                                .label_layout_cache
-                                .insert("MMM".to_string(), l.clone());
+                            state_ref.label_layout_cache.insert(
+                                ("MMM".to_string(), 14u32, false),
+                                l.clone(),
+                            );
                             let (w, _) = l.pixel_size();
                             w as f64 * ease_progress
                         };
@@ -2939,8 +2969,7 @@ impl LauncherApp {
                                     l.clone()
                                 } else {
                                     let l = area.create_pango_layout(Some(icon_name));
-                                    let mut font_desc = gtk::pango::FontDescription::new();
-                                    font_desc.set_family("Sans");
+                                    let mut font_desc = state_ref.font_desc();
                                     let weight = if state_ref.bold_single_chars {
                                         gtk::pango::Weight::Bold
                                     } else {
@@ -3254,12 +3283,14 @@ impl LauncherApp {
         // Pausable frame clock controller: ensures 0.0% CPU when stationary/closed
         let is_animating = Rc::new(std::cell::Cell::new(false));
         let last_frame_time = Rc::new(RefCell::new(None));
+        let gif_last_draw = Rc::new(std::cell::Cell::new(0i64));
         let anim_gen = Rc::new(std::cell::Cell::new(0u64));
 
         let trigger_anim: Rc<dyn Fn()> = {
             let is_animating = is_animating.clone();
             let anim_gen = anim_gen.clone();
             let last_frame_time = last_frame_time.clone();
+            let gif_last_draw = gif_last_draw.clone();
             let tick_state = state.clone();
             let area_clone_tick = drawing_area.clone();
             let window_clone_tick = window.clone();
@@ -3303,6 +3334,7 @@ impl LauncherApp {
                 let anim_flag = is_animating.clone();
                 let gen_flag = anim_gen.clone();
                 let lft = last_frame_time.clone();
+                let gif_clock = gif_last_draw.clone();
 
                 area_clone_tick.add_tick_callback(move |_widget, frame_clock| {
                     // A newer trigger owns the animation now: retire
@@ -3363,14 +3395,22 @@ impl LauncherApp {
                         }
                     }
 
-                    // Animated icons (GIFs) keep the frame clock ticking and
-                    // force redraws so their frames advance while visible.
+                    // Animated icons (GIFs) keep the frame clock ticking,
+                    // but their frames advance far slower than the display
+                    // refresh: throttle GIF-only repaints to ~30fps. Hover
+                    // transitions still redraw every frame.
                     if state.has_visible_animation() {
                         still_animating = true;
-                        needs_redraw = true;
+                        if now - gif_clock.get() >= 33_000 {
+                            gif_clock.set(now);
+                            needs_redraw = true;
+                        }
                     }
 
                     if needs_redraw {
+                        // GTK4's GL renderer performs automatic damage
+                        // tracking on the render tree, so only the changed
+                        // menu pixels are actually repainted on screen.
                         area_tick.queue_draw();
                     }
 
@@ -4113,6 +4153,12 @@ impl LauncherApp {
                         let mut blur_needs_update = false;
                         if let Ok(cfg) = launcher_core::load_config(&config_path_clone) {
                             state.scale = cfg.ui.scale;
+                            if state.font != cfg.ui.font {
+                                state.font = cfg.ui.font.clone();
+                                // Cached layouts were shaped with the old family.
+                                state.text_layout_cache.clear();
+                                state.label_layout_cache.clear();
+                            }
                             state.extra_radius = cfg.ui.extra_radius;
                             state.enable_pie_spacing = cfg.ui.enable_pie_spacing;
                             state.pill_roundness = cfg.ui.pill_roundness;
@@ -4139,6 +4185,7 @@ impl LauncherApp {
                                 state.hover_visual_cue = cfg.ui.hover_visual_cue.clone();
                             }
                             state.hide_back_entry = cfg.ui.hide_back_entry;
+                            state.refresh_display_items();
                             state.spawn_at_cursor = cfg.ui.spawn_at_cursor;
                             if state.marking_mode != cfg.ui.marking_mode {
                                 state.marking_mode = cfg.ui.marking_mode;

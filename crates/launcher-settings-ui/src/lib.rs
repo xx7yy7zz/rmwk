@@ -25,6 +25,16 @@ fn marking_ms_from_pct(pct: f64) -> u32 {
 /// Whether the active icon theme can provide `icon_name`. Must query the
 /// display's configured theme: `IconTheme::default()` returns a detached
 /// theme with no search paths, which reports everything as missing.
+/// Strips a trailing point-size token from a Pango font description
+/// ("Adamina Bold 11" -> "Adamina Bold"): the launcher always sets sizes
+/// itself (Scale), so the config stores family/style only.
+fn strip_font_size(s: &str) -> String {
+    match s.rsplit_once(' ') {
+        Some((head, tail)) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit() || c == '.') => head.to_string(),
+        _ => s.to_string(),
+    }
+}
+
 fn icon_theme_has(icon_name: &str) -> bool {
     match gdk::Display::default() {
         Some(display) => gtk::IconTheme::for_display(&display).has_icon(icon_name),
@@ -1100,6 +1110,46 @@ impl SettingsApp {
         right_vbox.append(&right_scroll);
 
         settings_vbox.append(&scale_hbox);
+
+        let lbl_font = gtk::Label::new(Some("Font:"));
+        // A plain button driving FontDialog directly: GtkFontDialogButton
+        // keeps rendering the size in its label even with use-size=false,
+        // and the launcher overrides sizes itself anyway (Scale).
+        let font_dialog = gtk::FontDialog::new();
+        let font_button = gtk::Button::with_label(&strip_font_size(&ui_config.ui.font));
+        font_button.set_halign(gtk::Align::Start);
+        font_button.set_tooltip_text(Some("Font used for the menu labels and text icons. The size is controlled by the Scale setting."));
+        {
+            let dialog = font_dialog.clone();
+            font_button.connect_clicked(move |b| {
+                let dialog = dialog.clone();
+                let btn = b.clone();
+                let current = strip_font_size(&b.label().unwrap_or_else(|| "Sans".into()));
+                let initial = gtk::pango::FontDescription::from_string(&current);
+                let parent = b.root().and_downcast::<gtk::Window>();
+                gtk::glib::MainContext::default().spawn_local(async move {
+                    let result = dialog
+                        .choose_font_future(parent.as_ref(), Some(&initial))
+                        .await;
+                    if let Ok(desc) = result {
+                        btn.set_label(&strip_font_size(&desc.to_string()));
+                    }
+                });
+            });
+        }
+        let font_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        font_hbox.append(&lbl_font);
+        font_hbox.append(&font_button);
+        let btn_reset_font = icon_button("edit-undo-symbolic");
+        btn_reset_font.set_tooltip_text(Some("Reset font to default (Sans)"));
+        {
+            let btn = font_button.clone();
+            btn_reset_font.connect_clicked(move |_| {
+                btn.set_label("Sans");
+            });
+        }
+        font_hbox.append(&btn_reset_font);
+        settings_vbox.append(&font_hbox);
         settings_vbox.append(&extra_radius_hbox);
         right_scroll_box.append(&settings_vbox);
 
@@ -1224,6 +1274,7 @@ impl SettingsApp {
             let amp = active_menu_path.clone();
             let scale_adj = scale_adj.clone();
             let spin_r = spin_extra_radius.clone();
+            let font_btn = font_button.clone();
             let spin_pill = spin_pill_roundness.clone();
             let chk_pie = chk_pie_spacing.clone();
             let chk_sym = chk_symbolic_icons.clone();
@@ -1258,6 +1309,7 @@ impl SettingsApp {
                 let amp = amp.clone();
                 let scale_adj = scale_adj.clone();
                 let spin_r = spin_r.clone();
+                let font_btn = font_btn.clone();
                 let spin_pill = spin_pill.clone();
                 let chk_pie = chk_pie.clone();
                 let chk_sym = chk_sym.clone();
@@ -1280,6 +1332,7 @@ impl SettingsApp {
                         if let Ok(cfg) = launcher_core::load_config(&cp) {
                             scale_adj.set_value(cfg.ui.scale);
                             spin_r.set_value(cfg.ui.extra_radius);
+                            font_btn.set_label(&strip_font_size(&cfg.ui.font));
                             spin_pill.set_value(cfg.ui.pill_roundness * 100.0);
                             chk_pie.set_active(cfg.ui.enable_pie_spacing);
                             chk_sym.set_active(cfg.ui.use_symbolic_icons);
@@ -2328,6 +2381,7 @@ impl SettingsApp {
         let sys_overrides_save = sys_overrides.clone();
         let spin_extra_radius_save = spin_extra_radius.clone();
         let scale_slider_save = scale_slider.clone();
+        let font_button_save = font_button.clone();
         let spin_pill_roundness_save = spin_pill_roundness.clone();
         let chk_pie_spacing_save = chk_pie_spacing.clone();
         let chk_symbolic_icons_save = chk_symbolic_icons.clone();
@@ -2383,6 +2437,11 @@ impl SettingsApp {
                 cfg.ui.theme = theme_id.to_string();
                 cfg.ui.system_theme_overrides = Some(sys_overrides_save.borrow().clone());
                 cfg.ui.scale = (scale_slider_save.value() * 100.0).round() / 100.0;
+                cfg.ui.font = strip_font_size(
+                    &font_button_save
+                        .label()
+                        .unwrap_or_else(|| "Sans".into()),
+                );
                 cfg.ui.extra_radius = spin_extra_radius_save.value();
                 cfg.ui.pill_roundness = spin_pill_roundness_save.value() / 100.0;
                 cfg.ui.enable_pie_spacing = chk_pie_spacing_save.is_active();
@@ -2518,6 +2577,7 @@ impl SettingsApp {
         let combo_theme_watch = combo_theme.clone();
         let sys_overrides_watch = sys_overrides.clone();
         let spin_extra_radius_watch = spin_extra_radius.clone();
+        let font_button_watch = font_button.clone();
         let spin_pill_roundness_watch = spin_pill_roundness.clone();
         let chk_symbolic_icons_watch = chk_symbolic_icons.clone();
         let chk_bold_chars_watch = chk_bold_chars.clone();
@@ -2545,6 +2605,7 @@ impl SettingsApp {
             let cp_w = config_path_watch.clone();
             let combo_th = combo_theme_watch.clone();
             let spin_r = spin_extra_radius_watch.clone();
+            let font_btn = font_button_watch.clone();
             let spin_pill = spin_pill_roundness_watch.clone();
             let chk_sym = chk_symbolic_icons_watch.clone();
             let chk_bold = chk_bold_chars_watch.clone();
@@ -2576,6 +2637,7 @@ impl SettingsApp {
                     let cp_cb = cp_w.clone();
                     let combo_th_cb = combo_th.clone();
                     let spin_r_cb = spin_r.clone();
+                    let font_btn_cb = font_btn.clone();
                     let spin_pill_cb = spin_pill.clone();
                     let chk_sym_cb = chk_sym.clone();
                     let chk_bold_cb = chk_bold.clone();
@@ -2606,6 +2668,7 @@ impl SettingsApp {
                                     &cfg.ui.theme,
                                 );
                                 spin_r_cb.set_value(cfg.ui.extra_radius);
+                                font_btn_cb.set_label(&strip_font_size(&cfg.ui.font));
                                 spin_pill_cb.set_value(cfg.ui.pill_roundness * 100.0);
                                 chk_sym_cb.set_active(cfg.ui.use_symbolic_icons);
                                 chk_bold_cb.set_active(cfg.ui.bold_single_chars);

@@ -260,7 +260,7 @@ fn default_theme() -> String {
 }
 
 fn default_font() -> String {
-    "Sans 11".to_string()
+    "Sans".to_string()
 }
 
 fn default_menu_style() -> String {
